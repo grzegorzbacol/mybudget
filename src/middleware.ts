@@ -32,6 +32,11 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
+
+  if (pathname.startsWith("/api/")) {
+    return supabaseResponse;
+  }
+
   const isPublic = publicRoutes.some((r) => pathname.startsWith(r));
 
   if (!user && !isPublic && pathname !== "/") {
