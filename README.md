@@ -1,36 +1,73 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# MyBudget – Aplikacja budżetowa (YNAB-style)
 
-## Getting Started
+Aplikacja webowa do zarządzania budżetem domowym z budżetem rodzinnym, skanowaniem paragonów OCR i PWA.
 
-First, run the development server:
+## Stack
+
+- **Frontend:** Next.js 14, TypeScript, Tailwind CSS, shadcn/ui
+- **Backend:** Next.js API Routes
+- **Baza:** Supabase (PostgreSQL + Auth + Storage + Realtime)
+- **OCR:** Google Vision API + Tesseract.js (fallback)
+- **AI:** OpenAI GPT-4o-mini (parsowanie paragonów)
+
+## Szybki start
+
+### 1. Zależności
+
+```bash
+npm install
+```
+
+### 2. Supabase
+
+1. Utwórz projekt na [supabase.com](https://supabase.com)
+2. Uruchom migrację SQL z pliku `supabase/migrations/001_initial_schema.sql` w SQL Editor
+3. Włącz Realtime dla tabel `transactions` i `budget_allocations`
+
+### 3. Zmienne środowiskowe
+
+```bash
+cp .env.local.example .env.local
+```
+
+Uzupełnij klucze Supabase, OpenAI i opcjonalnie Google Vision API.
+
+### 4. Uruchomienie
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Aplikacja: [http://localhost:3000](http://localhost:3000)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Funkcje
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **Budżet miesięczny** – metoda kopert (envelope budgeting) jak YNAB
+- **Budżet rodzinny** – wielu użytkowników, role (owner/admin/member)
+- **Transakcje** – ręczne dodawanie, bulk edit, import CSV (PKO/ING/mBank)
+- **Skanowanie paragonów** – kamera PWA + OCR + AI
+- **Konta** – salda, korekta, wykres w czasie
+- **Raporty** – wykresy, eksport PDF
+- **Cele oszczędnościowe** – postęp i sugestie miesięczne
+- **PWA** – instalacja na telefonie, offline sync
+- **Realtime** – synchronizacja między członkami rodziny
 
-## Learn More
+## Testy E2E
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+npx playwright install
+npm run test:e2e
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Struktura
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```
+src/
+  app/           # Strony i API routes
+  components/    # Komponenty UI
+  hooks/         # React Query hooks
+  lib/           # Logika biznesowa, Supabase, OCR
+  providers/     # Context providers
+supabase/
+  migrations/    # Schemat bazy + RLS
+```

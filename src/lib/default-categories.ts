@@ -1,0 +1,15 @@
+export const DEFAULT_CATEGORIES = [
+  { group_name: "Przychody", name: "Wynagrodzenie", icon: "💰", color: "#22c55e", sort_order: 0 },
+  { group_name: "Przychody", name: "Inne przychody", icon: "📈", color: "#16a34a", sort_order: 1 },
+  { group_name: "Żywność", name: "Zakupy spożywcze", icon: "🛒", color: "#f59e0b", sort_order: 10 },
+  { group_name: "Żywność", name: "Restauracje", icon: "🍽️", color: "#d97706", sort_order: 11 },
+  { group_name: "Transport", name: "Paliwo", icon: "⛽", color: "#3b82f6", sort_order: 20 },
+  { group_name: "Transport", name: "Komunikacja", icon: "🚌", color: "#2563eb", sort_order: 21 },
+  { group_name: "Dom", name: "Czynsz / kredyt", icon: "🏠", color: "#8b5cf6", sort_order: 30 },
+  { group_name: "Dom", name: "Media", icon: "💡", color: "#7c3aed", sort_order: 31 },
+  { group_name: "Dom", name: "Utrzymanie", icon: "🔧", color: "#6d28d9", sort_order: 32 },
+  { group_name: "Rozrywka", name: "Hobby", icon: "🎮", color: "#ec4899", sort_order: 40 },
+  { group_name: "Rozrywka", name: "Subskrypcje", icon: "📺", color: "#db2777", sort_order: 41 },
+  { group_name: "Oszczędności", name: "Fundusz awaryjny", icon: "🛡️", color: "#14b8a6", sort_order: 50 },
+  { group_name: "Oszczędności", name: "Cele", icon: "🎯", color: "#0d9488", sort_order: 51 },
+];

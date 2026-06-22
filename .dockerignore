@@ -1,0 +1,13 @@
+node_modules
+.next
+.git
+.gitignore
+.env*.local
+README.md
+e2e
+playwright.config.ts
+test-results
+playwright-report
+coverage
+.DS_Store
+*.md
