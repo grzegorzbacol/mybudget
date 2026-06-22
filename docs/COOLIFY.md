@@ -35,8 +35,23 @@ W Coolify → **Environment Variables** ustaw jako **Build Variable** (dostępne
 | `NEXT_PUBLIC_SUPABASE_URL` | Powtórz (runtime) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Powtórz (runtime) |
 | `NEXT_PUBLIC_APP_URL` | URL produkcyjny |
+| `DATABASE_URL` | Połączenie do Postgres (self-hosted Supabase w Coolify) |
 
-### 4. Port
+### Self-hosted Supabase w Coolify
+
+Jeśli Supabase działa jako usługa w tym samym środowisku Coolify:
+
+| Zmienna | Wartość |
+|---------|---------|
+| `NEXT_PUBLIC_SUPABASE_URL` | `http://supabasekong-<ID>.51.38.132.184.sslip.io` (bez `:8000`) |
+| `DATABASE_URL` | `postgresql://postgres:<HASLO>@supabase-db-<ID>:5432/postgres` |
+
+Przy starcie kontenera migracja `supabase/migrations/001_initial_schema.sql` uruchamia się automatycznie (wymaga `DATABASE_URL`).
+
+W usłudze Supabase ustaw też:
+- `GOTRUE_SITE_URL` → URL aplikacji MyBudget
+- `API_EXTERNAL_URL` → URL Kong (bez `:8000`)
+- `ADDITIONAL_REDIRECT_URLS` → `https://twoja-domena/auth/callback`
 
 - **Port aplikacji:** `3000`
 - Coolify zwykle ustawia to automatycznie przy Dockerfile
