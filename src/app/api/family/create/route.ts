@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { familyCreateSchema } from "@/lib/validators";
 import { DEFAULT_CATEGORIES } from "@/lib/default-categories";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentYearMonth } from "@/lib/format";
 
 export async function POST(request: Request) {
@@ -14,7 +15,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: existing } = await supabase
+  const admin = createAdminClient();
+
+  const { data: existing } = await admin
     .from("family_members")
     .select("id")
     .eq("user_id", user.id)
@@ -30,7 +33,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { data: family, error: familyError } = await supabase
+  const { data: family, error: familyError } = await admin
     .from("families")
     .insert({ name: parsed.data.name, created_by: user.id })
     .select()
@@ -40,23 +43,27 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: familyError?.message }, { status: 500 });
   }
 
-  await supabase.from("family_members").insert({
+  const { error: memberError } = await admin.from("family_members").insert({
     family_id: family.id,
     user_id: user.id,
     role: "owner",
   });
+
+  if (memberError) {
+    return NextResponse.json({ error: memberError.message }, { status: 500 });
+  }
 
   const categories = DEFAULT_CATEGORIES.map((c) => ({
     ...c,
     family_id: family.id,
   }));
 
-  const { data: insertedCategories } = await supabase
+  const { data: insertedCategories } = await admin
     .from("budget_categories")
     .insert(categories)
     .select();
 
-  await supabase.from("accounts").insert({
+  await admin.from("accounts").insert({
     family_id: family.id,
     name: "Konto główne",
     type: "checking",
@@ -66,7 +73,7 @@ export async function POST(request: Request) {
 
   const { year, month } = getCurrentYearMonth();
   if (insertedCategories) {
-    await supabase.from("budget_allocations").insert(
+    await admin.from("budget_allocations").insert(
       insertedCategories.map((c) => ({
         family_id: family.id,
         category_id: c.id,

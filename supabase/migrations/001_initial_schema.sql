@@ -219,7 +219,10 @@ ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 
 -- Families policies
 CREATE POLICY "Users can view their families" ON families
-  FOR SELECT USING (id IN (SELECT get_user_family_ids()));
+  FOR SELECT USING (
+    id IN (SELECT get_user_family_ids())
+    OR created_by = auth.uid()
+  );
 
 CREATE POLICY "Users can create families" ON families
   FOR INSERT WITH CHECK (created_by = auth.uid());
