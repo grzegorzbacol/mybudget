@@ -31,7 +31,7 @@ export async function POST(request: Request) {
   } = ctx.supabase.storage.from("receipts").getPublicUrl(uploadData.path);
 
   try {
-    const result = await processReceiptImage(buffer, publicUrl);
+    const result = await processReceiptImage(buffer, publicUrl, file.type || "image/jpeg");
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Błąd OCR";

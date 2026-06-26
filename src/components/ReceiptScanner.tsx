@@ -36,6 +36,7 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [processingError, setProcessingError] = useState<string | null>(null);
   const [preview, setPreview] = useState<OcrReceiptResult | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [categoryId, setCategoryId] = useState("");
@@ -92,13 +93,31 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
 
   const processReceipt = async (blob: Blob) => {
     setProcessing(true);
+    setProcessingError(null);
     setPreviewUrl(URL.createObjectURL(blob));
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90_000);
 
     try {
       const formData = new FormData();
       formData.append("file", blob, "receipt.jpg");
 
-      const res = await fetch("/api/ocr", { method: "POST", body: formData });
+      const res = await fetch("/api/ocr", {
+        method: "POST",
+        body: formData,
+        signal: controller.signal,
+      });
+
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) {
+        throw new Error(
+          res.status === 401
+            ? "Sesja wygasła — zaloguj się ponownie"
+            : `Nieoczekiwana odpowiedź serwera (${res.status})`
+        );
+      }
+
       const data = await res.json();
 
       if (!res.ok) throw new Error(data.error || "Błąd OCR");
@@ -115,8 +134,16 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
       if (match) setCategoryId(match.id);
       if (accounts?.[0]) setAccountId(accounts[0].id);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Błąd przetwarzania");
+      const message =
+        err instanceof Error
+          ? err.name === "AbortError"
+            ? "Przetwarzanie trwało zbyt długo — spróbuj ponownie"
+            : err.message
+          : "Błąd przetwarzania";
+      setProcessingError(message);
+      toast.error(message);
     } finally {
+      clearTimeout(timeoutId);
       setProcessing(false);
     }
   };
@@ -225,6 +252,9 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
               <p className="text-center text-sm text-muted-foreground">
                 Przetwarzanie paragonu...
               </p>
+            )}
+            {processingError && !processing && (
+              <p className="text-center text-sm text-destructive">{processingError}</p>
             )}
           </div>
         ) : (
