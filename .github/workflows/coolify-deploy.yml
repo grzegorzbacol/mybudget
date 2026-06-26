@@ -1,0 +1,32 @@
+name: Deploy to Coolify
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: coolify-deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Coolify deployment
+        env:
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+          COOLIFY_APP_UUID: zso000wkg0gokc8040cc8cw8
+          COOLIFY_URL: http://51.38.132.184:8000
+        run: |
+          if [ -z "$COOLIFY_TOKEN" ]; then
+            echo "COOLIFY_TOKEN secret is not configured — skipping Coolify deploy."
+            echo "Run: COOLIFY_TOKEN=<token> ./scripts/setup-coolify-autodeploy.sh"
+            exit 0
+          fi
+
+          response=$(curl -fsS -G "${COOLIFY_URL}/api/v1/deploy" \
+            --data-urlencode "uuid=${COOLIFY_APP_UUID}" \
+            -H "Authorization: Bearer ${COOLIFY_TOKEN}")
+
+          echo "$response"
+          echo "Coolify deployment queued."

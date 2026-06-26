@@ -75,6 +75,31 @@ Po zapisaniu zmiennych: **Deploy** w Coolify.
 
 Pierwszy build może trwać 5–10 min (Tesseract, PWA, Next.js).
 
+## Auto-deploy po pushu na GitHub
+
+Coolify działa po **HTTP** (`http://51.38.132.184:8000`), więc natywne webhooki GitHuba (wymagają HTTPS) mogą nie działać. Zamiast tego repo ma workflow **`.github/workflows/coolify-deploy.yml`**, który po każdym pushu na `main` wywołuje API Coolify.
+
+### Jednorazowa konfiguracja
+
+1. W Coolify: **Keys & Tokens** → utwórz token API z uprawnieniem **deploy**
+2. Włącz API: **Settings → Advanced → API** (jeśli wyłączone)
+3. Uruchom lokalnie:
+
+```bash
+COOLIFY_TOKEN=twoj-token ./scripts/setup-coolify-autodeploy.sh
+```
+
+Skrypt:
+- włącza `is_auto_deploy_enabled` w aplikacji MyBudget,
+- zapisuje `COOLIFY_TOKEN` w sekretach GitHub,
+- od razu uruchamia deploy.
+
+Od tego momentu **każdy `git push` na `main`** automatycznie buduje i wdraża aplikację.
+
+### Alternatywa (HTTPS)
+
+Po dodaniu HTTPS do panelu Coolify możesz włączyć **Auto Deploy** w ustawieniach aplikacji (GitHub App) — wtedy webhooki GitHuba też zadziałają bez Actions.
+
 ## Troubleshooting
 
 - **Biały ekran / brak auth:** sprawdź `NEXT_PUBLIC_*` przy buildzie
