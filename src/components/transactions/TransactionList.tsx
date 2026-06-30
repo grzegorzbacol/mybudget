@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Camera } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -17,6 +18,8 @@ import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useFamily } from "@/hooks/use-family";
 import { useQuery } from "@tanstack/react-query";
+import { TransactionDetail } from "./TransactionDetail";
+import type { Transaction } from "@/lib/types";
 
 interface TransactionListProps {
   year?: number;
@@ -34,6 +37,7 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkCategory, setBulkCategory] = useState("");
+  const [detail, setDetail] = useState<Transaction | null>(null);
   const bulkUpdate = useBulkUpdateCategory();
   const { data: familyData } = useFamily();
   const supabase = createClient();
@@ -50,7 +54,8 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
     },
   });
 
-  const toggleSelect = (id: string) => {
+  const toggleSelect = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     const next = new Set(selected);
     if (next.has(id)) next.delete(id);
     else next.add(id);
@@ -97,28 +102,33 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
         {transactions?.map((t) => (
           <div
             key={t.id}
-            className="flex items-center gap-3 rounded-lg border px-3 py-3"
+            className="flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 transition-colors hover:bg-muted/30"
+            onClick={() => setDetail(t)}
           >
-            <Checkbox
-              checked={selected.has(t.id)}
-              onCheckedChange={() => toggleSelect(t.id)}
-            />
-            <Avatar className="h-8 w-8">
+            <div onClick={(e) => toggleSelect(t.id, e)}>
+              <Checkbox checked={selected.has(t.id)} />
+            </div>
+            <Avatar className="h-8 w-8 shrink-0">
               <AvatarFallback className="text-xs">
                 {t.profile?.display_name?.slice(0, 2).toUpperCase() ?? "??"}
               </AvatarFallback>
             </Avatar>
             <div className="min-w-0 flex-1">
-              <p className="truncate font-medium">{t.payee}</p>
+              <div className="flex items-center gap-1.5">
+                <p className="truncate font-medium">{t.payee}</p>
+                {t.receipt_url && (
+                  <Camera className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                )}
+              </div>
               <p className="text-xs text-muted-foreground">
                 {t.date}
                 {t.category && ` · ${t.category.icon} ${t.category.name}`}
-                {t.account && ` · ${t.account.name}`}
+                {t.account && ` · ${t.account.type === "cash" ? "💵 " : "🏦 "}${t.account.name}`}
               </p>
             </div>
             <span
               className={cn(
-                "font-semibold",
+                "shrink-0 font-semibold",
                 t.amount < 0 ? "text-red-500" : "text-green-600"
               )}
             >
@@ -130,6 +140,8 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
           <p className="py-8 text-center text-muted-foreground">Brak transakcji</p>
         )}
       </div>
+
+      <TransactionDetail transaction={detail} onOpenChange={(open) => !open && setDetail(null)} />
     </div>
   );
 }
