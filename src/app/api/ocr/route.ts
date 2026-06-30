@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { processReceiptImage } from "@/lib/ocr";
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 90;
+
 export async function POST(request: Request) {
   const ctx = await getAuthContext();
   if ("error" in ctx) {
@@ -16,22 +19,33 @@ export async function POST(request: Request) {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
-  const fileName = `${ctx.family.id}/${Date.now()}-${file.name}`;
 
-  const { data: uploadData, error: uploadError } = await ctx.supabase.storage
-    .from("receipts")
-    .upload(fileName, buffer, { contentType: file.type, upsert: false });
-
-  if (uploadError) {
-    return NextResponse.json({ error: uploadError.message }, { status: 500 });
+  // Upload to storage is best-effort — OCR runs regardless
+  let receiptUrl: string | undefined;
+  try {
+    const fileName = `${ctx.family.id}/${Date.now()}-${file.name}`;
+    const uploadPromise = ctx.supabase.storage
+      .from("receipts")
+      .upload(fileName, buffer, { contentType: file.type, upsert: false });
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("storage timeout")), 15_000)
+    );
+    const { data: uploadData, error: uploadError } = await Promise.race([
+      uploadPromise,
+      timeoutPromise,
+    ]);
+    if (!uploadError && uploadData) {
+      const { data: { publicUrl } } = ctx.supabase.storage
+        .from("receipts")
+        .getPublicUrl(uploadData.path);
+      receiptUrl = publicUrl;
+    }
+  } catch {
+    // Storage upload failed — proceed without receipt URL
   }
 
-  const {
-    data: { publicUrl },
-  } = ctx.supabase.storage.from("receipts").getPublicUrl(uploadData.path);
-
   try {
-    const result = await processReceiptImage(buffer, publicUrl, file.type || "image/jpeg");
+    const result = await processReceiptImage(buffer, receiptUrl, file.type || "image/jpeg");
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Błąd OCR";

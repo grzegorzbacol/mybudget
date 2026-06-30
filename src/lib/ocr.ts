@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import { createWorker } from "tesseract.js";
 import { ocrResultSchema } from "./validators";
 import type { OcrReceiptResult } from "./types";
 
@@ -98,18 +97,6 @@ async function extractTextWithVision(imageBase64: string): Promise<string | null
   return data.responses?.[0]?.fullTextAnnotation?.text ?? null;
 }
 
-async function extractTextWithTesseract(buffer: Buffer): Promise<string> {
-  const worker = await createWorker("pol+eng");
-  try {
-    const {
-      data: { text },
-    } = await worker.recognize(buffer);
-    return text;
-  } finally {
-    await worker.terminate();
-  }
-}
-
 async function parseReceiptWithAI(rawText: string): Promise<OcrReceiptResult> {
   const openai = getOpenAIClient();
   if (!openai) {
@@ -142,35 +129,24 @@ export async function processReceiptImage(
 
   // Primary: GPT-4o-mini reads the image directly (fast, works in Docker)
   if (getOpenAIClient()) {
-    try {
-      const result = await withTimeout(
-        parseReceiptWithOpenAIVision(buffer, mimeType),
-        60_000,
-        "Analiza paragonu"
-      );
-      return { ...result, receipt_url: receiptUrl };
-    } catch (visionErr) {
-      console.error("OpenAI vision failed, falling back to OCR text:", visionErr);
-    }
+    const result = await withTimeout(
+      parseReceiptWithOpenAIVision(buffer, mimeType),
+      60_000,
+      "Analiza paragonu"
+    );
+    return { ...result, receipt_url: receiptUrl };
   }
 
+  // Fallback: Google Vision text extraction + GPT-4o-mini text parsing
   const base64 = buffer.toString("base64");
-  let rawText = await withTimeout(
+  const rawText = await withTimeout(
     extractTextWithVision(base64),
     30_000,
     "Google Vision"
   ).catch(() => null);
 
   if (!rawText?.trim()) {
-    rawText = await withTimeout(
-      extractTextWithTesseract(buffer),
-      25_000,
-      "Tesseract OCR"
-    ).catch(() => null);
-  }
-
-  if (!rawText?.trim()) {
-    throw new Error("Nie udało się odczytać tekstu z paragonu");
+    throw new Error("Nie udało się odczytać tekstu z paragonu (brak Google Vision API key)");
   }
 
   const result = await withTimeout(
