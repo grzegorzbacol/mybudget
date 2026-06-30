@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Camera, Upload, X } from "lucide-react";
+import { Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,8 +44,11 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
   const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [type, setType] = useState<"expense" | "income">(
+    prefill?.amount != null && prefill.amount > 0 ? "income" : "expense"
+  );
   const [payee, setPayee] = useState(prefill?.payee ?? "");
-  const [amount, setAmount] = useState(prefill?.amount != null ? String(prefill.amount) : "");
+  const [amount, setAmount] = useState(prefill?.amount != null ? String(Math.abs(prefill.amount)) : "");
   const [date, setDate] = useState(prefill?.date ?? new Date().toISOString().slice(0, 10));
   const [memo, setMemo] = useState("");
   const [accountId, setAccountId] = useState(prefill?.accountId ?? "");
@@ -104,7 +107,8 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
     e.preventDefault();
     if (!familyData?.family.id || !accountId) return;
 
-    const numAmount = parseFloat(amount);
+    const absAmount = Math.abs(parseFloat(amount));
+    const numAmount = type === "expense" ? -absAmount : absAmount;
     await createTransaction.mutateAsync({
       family_id: familyData.family.id,
       account_id: accountId,
@@ -132,22 +136,54 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Dodaj wydatek</DialogTitle>
+          <DialogTitle>Dodaj transakcję</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Income / Expense toggle */}
+          <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+            <button
+              type="button"
+              onClick={() => setType("expense")}
+              className={`rounded-md py-1.5 text-sm font-medium transition-colors ${
+                type === "expense"
+                  ? "bg-background text-red-500 shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Wydatek
+            </button>
+            <button
+              type="button"
+              onClick={() => setType("income")}
+              className={`rounded-md py-1.5 text-sm font-medium transition-colors ${
+                type === "income"
+                  ? "bg-background text-green-600 shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Przychód
+            </button>
+          </div>
+
           <div>
-            <Label>Sklep / odbiorca</Label>
-            <Input value={payee} onChange={(e) => setPayee(e.target.value)} required placeholder="np. Biedronka" />
+            <Label>{type === "income" ? "Źródło przychodu" : "Sklep / odbiorca"}</Label>
+            <Input
+              value={payee}
+              onChange={(e) => setPayee(e.target.value)}
+              required
+              placeholder={type === "income" ? "np. Pracodawca, Freelance" : "np. Biedronka"}
+            />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label>Kwota</Label>
+              <Label>Kwota (PLN)</Label>
               <Input
                 type="number"
                 step="0.01"
+                min="0"
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder="-50.00"
+                placeholder="0.00"
                 required
               />
             </div>
@@ -247,10 +283,14 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
 
           <Button
             type="submit"
-            className="w-full"
+            className={`w-full ${type === "income" ? "bg-green-600 hover:bg-green-700" : ""}`}
             disabled={createTransaction.isPending || uploading}
           >
-            {createTransaction.isPending ? "Zapisywanie..." : "Zapisz wydatek"}
+            {createTransaction.isPending
+              ? "Zapisywanie..."
+              : type === "income"
+              ? "Zapisz przychód"
+              : "Zapisz wydatek"}
           </Button>
         </form>
       </DialogContent>
