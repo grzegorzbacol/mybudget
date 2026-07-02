@@ -19,7 +19,10 @@ function buildParsePrompt(categoryNames?: string[]): string {
   "total": number,
   "items": [{ "name": string, "amount": number, "category_hint": string }]
 }
-Dane w PLN, przecinek dziesiętny zamień na kropkę. Jeśli data nieczytelna użyj dzisiejszej. ${categoryRule}
+Dane w PLN, przecinek dziesiętny zamień na kropkę. ${categoryRule}
+
+"store_name" przepisz dokładnie z nagłówka paragonu — nie parafrazuj.
+"date" przepisz DOKŁADNIE z paragonu (data jest zwykle u góry obok godziny albo na dole przy potwierdzeniu płatności). NIGDY nie zgaduj daty — jeśli jest nieczytelna, zwróć "".
 
 Zasady odczytu pozycji:
 1. Linia produktu ma format: NAZWA, litera stawki VAT (A/B/C/D), ILOŚĆ xCENA_JEDNOSTKOWA, WARTOŚĆ. Przykład: "PIWO TATRA 0,5L PU A 6 x2,49 14,94A" → amount to 14.94 (wartość linii = ilość × cena jednostkowa), NIGDY cena jednostkowa (2.49).
@@ -29,7 +32,17 @@ Zasady odczytu pozycji:
 5. Ten sam produkt może występować w kilku liniach (np. dwa ważenia) — zwróć każdą linię jako osobną pozycję.
 6. Pomiń linie podsumowania: SPRZEDAŻ OPODATKOWANA, PTU, SUMA PTU, ROZLICZENIE PŁATNOŚCI.
 7. "total" to kwota przy "SUMA PLN".
-8. Przed zwróceniem sprawdź, że suma amount wszystkich pozycji równa się total — jeśli nie, przeczytaj wartości linii jeszcze raz.`;
+8. Przed zwróceniem sprawdź, że suma amount wszystkich pozycji równa się total — jeśli nie, przeczytaj wartości linii jeszcze raz.
+9. Przepisuj WYŁĄCZNIE liczby wydrukowane na paragonie. Nigdy nie wymyślaj kwot ani nie dopasowuj ich tak, żeby suma się zgadzała.`;
+}
+
+// Model ma zwrócić "" gdy data nieczytelna; łapiemy też zmyślone/nieparsowalne daty
+function normalizeReceiptDate(date: string): string {
+  const today = new Date().toISOString().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return today;
+  if (Number.isNaN(new Date(`${date}T00:00:00Z`).getTime())) return today;
+  if (date > today) return today; // paragon z przyszłości = błąd odczytu
+  return date;
 }
 
 function sumItems(result: OcrReceiptResult): number {
@@ -58,7 +71,7 @@ async function repairMismatchedItems(
       { role: "assistant", content: JSON.stringify(firstAttempt) },
       {
         role: "user",
-        content: `Suma pozycji (${sumItems(firstAttempt).toFixed(2)}) nie zgadza się z total (${firstAttempt.total.toFixed(2)}). Najczęstsze błędy: wzięta cena jednostkowa zamiast wartości linii, pominięty rabat lub pozycja. Przeczytaj paragon ponownie i zwróć poprawiony JSON w tym samym formacie.`,
+        content: `Suma pozycji (${sumItems(firstAttempt).toFixed(2)}) nie zgadza się z total (${firstAttempt.total.toFixed(2)}). Najczęstsze błędy: wzięta cena jednostkowa zamiast wartości linii, pominięty rabat lub pozycja. Przeczytaj paragon ponownie i przepisz DOKŁADNIE wydrukowane wartości linii — nie wymyślaj kwot, żeby suma się zgodziła. Zwróć poprawiony JSON w tym samym formacie.`,
       },
     ],
   });
@@ -210,7 +223,7 @@ export async function processReceiptImage(
       80_000,
       "Analiza paragonu"
     );
-    return { ...result, receipt_url: receiptUrl };
+    return { ...result, date: normalizeReceiptDate(result.date), receipt_url: receiptUrl };
   }
 
   // Fallback: Google Vision text extraction + GPT-4o-mini text parsing
@@ -230,5 +243,5 @@ export async function processReceiptImage(
     60_000,
     "Parsowanie paragonu"
   );
-  return { ...result, receipt_url: receiptUrl };
+  return { ...result, date: normalizeReceiptDate(result.date), receipt_url: receiptUrl };
 }
