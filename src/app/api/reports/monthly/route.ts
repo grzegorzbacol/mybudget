@@ -29,7 +29,7 @@ export async function GET(request: Request) {
       .eq("month", month),
     ctx.supabase
       .from("transactions")
-      .select("*, profile:profiles!transactions_added_by_fkey(*)")
+      .select("*")
       .eq("family_id", ctx.family.id)
       .gte("date", start)
       .lt("date", end)
@@ -39,6 +39,20 @@ export async function GET(request: Request) {
   const categories = categoriesRes.data ?? [];
   const allocations = allocationsRes.data ?? [];
   const transactions = transactionsRes.data ?? [];
+
+  // added_by wskazuje na auth.users, nie na profiles — nazwy członków
+  // dociągamy osobnym zapytaniem zamiast embedowania w PostgREST.
+  const memberIds = Array.from(
+    new Set(transactions.map((t) => t.added_by).filter(Boolean))
+  ) as string[];
+  const profileById = new Map<string, { display_name?: string }>();
+  if (memberIds.length > 0) {
+    const { data: profiles } = await ctx.supabase
+      .from("profiles")
+      .select("id, display_name")
+      .in("id", memberIds);
+    for (const p of profiles ?? []) profileById.set(p.id, p);
+  }
 
   const byCategory = categories.map((cat) => {
     const alloc = allocations.find((a) => a.category_id === cat.id);
@@ -58,7 +72,7 @@ export async function GET(request: Request) {
   const memberMap = new Map<string, { userId: string; displayName: string; spent: number }>();
   for (const t of transactions) {
     const uid = t.added_by ?? "unknown";
-    const name = t.profile?.display_name ?? "Nieznany";
+    const name = profileById.get(uid)?.display_name ?? "Nieznany";
     const current = memberMap.get(uid) ?? { userId: uid, displayName: name, spent: 0 };
     current.spent += Math.abs(Number(t.amount));
     memberMap.set(uid, current);

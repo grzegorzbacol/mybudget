@@ -20,9 +20,11 @@ export function useTransactions(filters: TransactionFilters = {}) {
   return useQuery({
     queryKey: ["transactions", filters],
     queryFn: async () => {
+      // added_by wskazuje na auth.users, nie na profiles — PostgREST nie ma
+      // relacji transactions->profiles, więc profile dociągamy osobnym zapytaniem.
       let query = supabase
         .from("transactions")
-        .select("*, account:accounts(*), category:budget_categories(*), profile:profiles!transactions_added_by_fkey(*)")
+        .select("*, account:accounts(*), category:budget_categories(*)")
         .order("date", { ascending: false })
         .order("created_at", { ascending: false });
 
@@ -39,7 +41,22 @@ export function useTransactions(filters: TransactionFilters = {}) {
 
       const { data, error } = await query;
       if (error) throw error;
-      return data as Transaction[];
+
+      const transactions = (data ?? []) as Transaction[];
+      const userIds = Array.from(
+        new Set(transactions.map((t) => t.added_by).filter(Boolean))
+      ) as string[];
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("*")
+          .in("id", userIds);
+        const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
+        for (const t of transactions) {
+          t.profile = t.added_by ? profileById.get(t.added_by) : undefined;
+        }
+      }
+      return transactions;
     },
   });
 }
