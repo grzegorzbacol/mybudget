@@ -33,7 +33,9 @@ Zasady odczytu pozycji:
 6. Pomiń linie podsumowania: SPRZEDAŻ OPODATKOWANA, PTU, SUMA PTU, ROZLICZENIE PŁATNOŚCI.
 7. "total" to kwota przy "SUMA PLN".
 8. Przed zwróceniem sprawdź, że suma amount wszystkich pozycji równa się total — jeśli nie, przeczytaj wartości linii jeszcze raz.
-9. Przepisuj WYŁĄCZNIE liczby wydrukowane na paragonie. Nigdy nie wymyślaj kwot ani nie dopasowuj ich tak, żeby suma się zgadzała.`;
+9. Przepisuj WYŁĄCZNIE liczby wydrukowane na paragonie. Nigdy nie wymyślaj kwot ani nie dopasowuj ich tak, żeby suma się zgadzała.
+10. UWAGA na przesunięte wiersze: na wielu wydrukach nazwa produktu i jej linia liczb (ILOŚĆ xCENA WARTOŚĆ) są w OSOBNYCH wierszach przesuniętych w pionie — linia liczb może leżeć optycznie wyżej lub niżej niż nazwa. Paruj po KOLEJNOŚCI: pierwsza nazwa ↔ pierwsza linia liczb, druga nazwa ↔ druga linia liczb itd. Nazw jest tyle samo co linii liczbowych. Nigdy nie paruj po wyrównaniu optycznym.
+11. Weryfikacja krzyżowa: suma pozycji z literą A musi się równać "SPRZEDAŻ OPODATKOWANA A", suma pozycji z literą B — "SPRZEDAŻ OPODATKOWANA B" itd. Jeśli się nie zgadza, parowanie nazw z kwotami jest przesunięte — popraw je.`;
 }
 
 // Model ma zwrócić "" gdy data nieczytelna; łapiemy też zmyślone/nieparsowalne daty
@@ -71,7 +73,7 @@ async function repairMismatchedItems(
       { role: "assistant", content: JSON.stringify(firstAttempt) },
       {
         role: "user",
-        content: `Suma pozycji (${sumItems(firstAttempt).toFixed(2)}) nie zgadza się z total (${firstAttempt.total.toFixed(2)}). Najczęstsze błędy: wzięta cena jednostkowa zamiast wartości linii, pominięty rabat lub pozycja. Przeczytaj paragon ponownie i przepisz DOKŁADNIE wydrukowane wartości linii — nie wymyślaj kwot, żeby suma się zgodziła. Zwróć poprawiony JSON w tym samym formacie.`,
+        content: `Suma pozycji (${sumItems(firstAttempt).toFixed(2)}) nie zgadza się z total (${firstAttempt.total.toFixed(2)}). Najczęstsze błędy: wzięta cena jednostkowa zamiast wartości linii, pominięty rabat lub pozycja, albo przesunięte parowanie nazw z liniami kwot (paruj po kolejności, nie po wyrównaniu optycznym; sprawdź sumy per litera VAT z liniami SPRZEDAŻ OPODATKOWANA). Przeczytaj paragon ponownie i przepisz DOKŁADNIE wydrukowane wartości linii — nie wymyślaj kwot, żeby suma się zgodziła. Zwróć poprawiony JSON w tym samym formacie.`,
       },
     ],
   });
