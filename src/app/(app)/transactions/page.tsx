@@ -7,10 +7,13 @@ import { TransactionForm } from "@/components/transactions/TransactionForm";
 import { TransactionList } from "@/components/transactions/TransactionList";
 import { CsvImport } from "@/components/transactions/CsvImport";
 import { ReceiptScanner } from "@/components/ReceiptScanner";
+import { MonthSwitcher } from "@/components/MonthSwitcher";
 import { getCurrentYearMonth } from "@/lib/format";
 
 export default function TransactionsPage() {
-  const { year, month } = getCurrentYearMonth();
+  const { year: initYear, month: initMonth } = getCurrentYearMonth();
+  const [year, setYear] = useState(initYear);
+  const [month, setMonth] = useState(initMonth);
   const [formOpen, setFormOpen] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
 
@@ -29,6 +32,15 @@ export default function TransactionsPage() {
           </Button>
         </div>
       </div>
+
+      <MonthSwitcher
+        year={year}
+        month={month}
+        onChange={(y, m) => {
+          setYear(y);
+          setMonth(m);
+        }}
+      />
 
       <TransactionList year={year} month={month} />
       <TransactionForm open={formOpen} onOpenChange={setFormOpen} />
