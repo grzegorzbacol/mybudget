@@ -1,17 +1,220 @@
 import OpenAI from "openai";
+import { z } from "zod";
 import { ocrResultSchema } from "./validators";
 import type { OcrReceiptResult } from "./types";
 
 // gpt-4o-mini notorycznie myli cenę jednostkową z wartością linii na paragonach
 const OCR_MODEL = process.env.OCR_MODEL?.trim() || "gpt-4o";
 
+function buildCategoryRule(categoryNames?: string[]): string {
+  return categoryNames && categoryNames.length > 0
+    ? `category_hint MUSI być dokładnie jedną z tych kategorii: ${categoryNames
+        .map((n) => `"${n}"`)
+        .join(", ")}. Wybierz najlepiej pasującą do produktu; jeśli żadna nie pasuje, użyj "".`
+    : `category_hint po polsku (np. "Żywność", "Transport").`;
+}
+
+// ---------------------------------------------------------------------------
+// Ścieżka deterministyczna: model tylko przepisuje tekst z obrazu, a parowanie
+// nazw z kwotami, rabaty i sumę liczy kod. Modele vision zawodnie parują nazwy
+// z kwotami (przesunięte wiersze wydruku), a przyciśnięte weryfikacją sumy
+// potrafią zmyślać kwoty — regex na standardowym formacie fiskalnym
+// "ILOŚĆ xCENA WARTOŚĆ<litera VAT>" nie ma tego problemu.
+// ---------------------------------------------------------------------------
+
+export interface ParsedReceiptText {
+  items: Array<{ name: string; amount: number }>;
+  total: number | null;
+}
+
+const ITEM_NUMBERS_RE =
+  /^(.*?)(\d+(?:[.,]\d+)?)\s*[xX×*]\s*(\d+(?:\s?\d{3})*[.,]\d{2})\s+(-?\d+(?:\s?\d{3})*[.,]\d{2})\s*([A-G])?$/;
+const BARE_AMOUNT_RE = /^(-?\d+(?:\s?\d{3})*[.,]\d{2})\s*([A-G])?$/;
+const DISCOUNT_RE = /\b(rabat|opust|upust)\b/i;
+const SUMMARY_RE =
+  /SPRZEDA[ZŻ]\s+OPODAT|SUMA\s+PTU|^PTU\b|ROZLICZENIE|PŁATNO|GOTÓWKA|KARTA|RESZTA/i;
+const TOTAL_RE = /SUMA\s+PLN\s*:?\s*(-?\d+(?:\s?\d{3})*[.,]\d{2})/i;
+
+function parseAmount(raw: string): number {
+  return parseFloat(raw.replace(/\s/g, "").replace(",", "."));
+}
+
+function round2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+export function parseReceiptText(rawText: string): ParsedReceiptText {
+  const allLines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const startIdx = allLines.findIndex((l) => /PARAGON\s+FISKALNY/i.test(l));
+  const lines = allLines.slice(startIdx + 1); // startIdx === -1 → cała lista
+
+  // Nazwy i linie kwot bywają wydrukowane w osobnych, przesuniętych wierszach,
+  // więc zbieramy je jako dwa strumienie i parujemy po kolejności — nigdy po
+  // optycznym wyrównaniu (to właśnie na nim wykładają się modele vision).
+  const names: string[] = [];
+  const amounts: number[] = [];
+  let total: number | null = null;
+  let inSummary = false;
+  let discountPending = false;
+
+  for (const line of lines) {
+    const totalMatch = line.match(TOTAL_RE);
+    if (totalMatch) {
+      total = parseAmount(totalMatch[1]);
+      inSummary = true;
+      continue;
+    }
+    if (SUMMARY_RE.test(line)) {
+      inSummary = true;
+      continue;
+    }
+    if (inSummary) continue;
+
+    if (DISCOUNT_RE.test(line)) {
+      const discount = line.match(/(\d+(?:\s?\d{3})*[.,]\d{2})/);
+      if (discount && amounts.length > 0) {
+        amounts[amounts.length - 1] = round2(
+          amounts[amounts.length - 1] - parseAmount(discount[1])
+        );
+        discountPending = true; // pod rabatem bywa wydrukowana cena po rabacie
+      }
+      continue;
+    }
+
+    const bare = line.match(BARE_AMOUNT_RE);
+    if (bare) {
+      if (discountPending && amounts.length > 0) {
+        amounts[amounts.length - 1] = parseAmount(bare[1]);
+        discountPending = false;
+      }
+      continue;
+    }
+
+    const numbers = line.match(ITEM_NUMBERS_RE);
+    if (numbers) {
+      discountPending = false;
+      const inlineName = numbers[1].trim().replace(/\s+[A-G]$/, "");
+      if (inlineName && /[a-ząćęłńóśźż]/i.test(inlineName)) names.push(inlineName);
+      amounts.push(parseAmount(numbers[4]));
+      continue;
+    }
+
+    if (/[a-ząćęłńóśźż]{2,}/i.test(line) && !/^\d/.test(line)) {
+      names.push(line.replace(/\s+[A-G]$/, "").trim());
+    }
+  }
+
+  if (amounts.length === 0 || names.length !== amounts.length) {
+    return { items: [], total };
+  }
+  return {
+    items: names.map((name, i) => ({ name, amount: amounts[i] })),
+    total,
+  };
+}
+
+const TRANSCRIBE_PROMPT = `Jesteś systemem OCR. Przepisz cały tekst z obrazu paragonu DOKŁADNIE, linia po linii, od góry do dołu, zachowując oryginalną pisownię, liczby i kolejność. Jeśli nazwa produktu i jej liczby (ILOŚĆ xCENA WARTOŚĆ) są wydrukowane w osobnych wierszach, przepisz je jako osobne linie — nie łącz ich i nie zmieniaj kolejności. Nie interpretuj, nie podsumowuj, nie dodawaj komentarzy — zwróć wyłącznie przepisany tekst.`;
+
+async function transcribeReceipt(openai: OpenAI, dataUrl: string): Promise<string> {
+  const completion = await openai.chat.completions.create({
+    model: OCR_MODEL,
+    messages: [
+      { role: "system", content: TRANSCRIBE_PROMPT },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Przepisz ten paragon:" },
+          { type: "image_url", image_url: { url: dataUrl, detail: "high" } },
+        ],
+      },
+    ],
+  });
+  return completion.choices[0]?.message?.content ?? "";
+}
+
+const receiptMetaSchema = z.object({
+  store_name: z.string(),
+  date: z.string(),
+  category_hints: z.array(z.string()),
+});
+
+async function extractMetaFromTranscript(
+  openai: OpenAI,
+  transcript: string,
+  itemNames: string[],
+  categoryNames?: string[]
+): Promise<z.infer<typeof receiptMetaSchema>> {
+  const completion = await openai.chat.completions.create({
+    model: OCR_MODEL,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: `Dostaniesz treść polskiego paragonu fiskalnego i ponumerowaną listę pozycji. Zwróć JSON:
+{ "store_name": string, "date": string, "category_hints": string[] }
+"store_name" przepisz dokładnie z nagłówka paragonu — nie parafrazuj.
+"date" (YYYY-MM-DD) przepisz dokładnie z paragonu; jeśli jest nieczytelna lub jej nie ma, zwróć "".
+"category_hints" ma dokładnie ${itemNames.length} elementów — i-ty element to kategoria i-tej pozycji z listy. ${buildCategoryRule(categoryNames)}`,
+      },
+      {
+        role: "user",
+        content: `Paragon:\n${transcript}\n\nPozycje:\n${itemNames
+          .map((n, i) => `${i + 1}. ${n}`)
+          .join("\n")}`,
+      },
+    ],
+  });
+  return receiptMetaSchema.parse(
+    JSON.parse(completion.choices[0]?.message?.content ?? "{}")
+  );
+}
+
+// Zwraca wynik tylko, gdy deterministycznie sparowane kwoty sumują się do
+// SUMA PLN z paragonu — inaczej null i wołający spada na ścieżkę LLM-JSON.
+async function resultFromTranscript(
+  openai: OpenAI,
+  transcript: string,
+  categoryNames?: string[]
+): Promise<OcrReceiptResult | null> {
+  const parsed = parseReceiptText(transcript);
+  if (parsed.total === null || parsed.items.length === 0) return null;
+  const sum = parsed.items.reduce((s, it) => s + it.amount, 0);
+  if (Math.abs(sum - parsed.total) >= 0.05) return null;
+
+  let meta: z.infer<typeof receiptMetaSchema> = {
+    store_name: "",
+    date: "",
+    category_hints: [],
+  };
+  try {
+    meta = await extractMetaFromTranscript(
+      openai,
+      transcript,
+      parsed.items.map((i) => i.name),
+      categoryNames
+    );
+  } catch {
+    // metadane są edytowalne w formularzu — kwoty są ważniejsze
+  }
+
+  return {
+    store_name: meta.store_name,
+    date: meta.date,
+    total: parsed.total,
+    items: parsed.items.map((it, i) => ({
+      name: it.name,
+      amount: it.amount,
+      category_hint: meta.category_hints[i] ?? "",
+    })),
+    raw_text: transcript,
+  };
+}
+
 function buildParsePrompt(categoryNames?: string[]): string {
-  const categoryRule =
-    categoryNames && categoryNames.length > 0
-      ? `category_hint MUSI być dokładnie jedną z tych kategorii: ${categoryNames
-          .map((n) => `"${n}"`)
-          .join(", ")}. Wybierz najlepiej pasującą do produktu; jeśli żadna nie pasuje, użyj "".`
-      : `category_hint po polsku (np. "Żywność", "Transport").`;
+  const categoryRule = buildCategoryRule(categoryNames);
   return `Przeanalizuj polski paragon fiskalny i zwróć JSON:
 {
   "store_name": string,
@@ -132,6 +335,16 @@ async function parseReceiptWithOpenAIVision(
   const base64 = buffer.toString("base64");
   const dataUrl = `data:${mimeType || "image/jpeg"};base64,${base64}`;
 
+  // Najpierw transkrypcja + deterministyczne parowanie kwot w kodzie;
+  // jednostrzałowy JSON z vision zostaje jako fallback.
+  try {
+    const transcript = await transcribeReceipt(openai, dataUrl);
+    const deterministic = await resultFromTranscript(openai, transcript, categoryNames);
+    if (deterministic) return deterministic;
+  } catch {
+    // transkrypcja nie wyszła — próbujemy ścieżki JSON
+  }
+
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: buildParsePrompt(categoryNames) },
     {
@@ -188,6 +401,12 @@ async function parseReceiptWithAI(
   if (!openai) {
     throw new Error("Brak OPENAI_API_KEY — ustaw klucz w zmiennych środowiskowych");
   }
+
+  // Tekst z Google Vision też najpierw przez parser deterministyczny
+  const deterministic = await resultFromTranscript(openai, rawText, categoryNames).catch(
+    () => null
+  );
+  if (deterministic) return deterministic;
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: buildParsePrompt(categoryNames) },
