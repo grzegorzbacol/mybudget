@@ -2,14 +2,22 @@ import OpenAI from "openai";
 import { ocrResultSchema } from "./validators";
 import type { OcrReceiptResult } from "./types";
 
-const PARSE_SYSTEM_PROMPT = `Przeanalizuj paragon i zwróć JSON:
+function buildParsePrompt(categoryNames?: string[]): string {
+  const categoryRule =
+    categoryNames && categoryNames.length > 0
+      ? `category_hint MUSI być dokładnie jedną z tych kategorii: ${categoryNames
+          .map((n) => `"${n}"`)
+          .join(", ")}. Wybierz najlepiej pasującą do produktu; jeśli żadna nie pasuje, użyj "".`
+      : `category_hint po polsku (np. "Żywność", "Transport").`;
+  return `Przeanalizuj paragon i zwróć JSON:
 {
   "store_name": string,
   "date": string (YYYY-MM-DD),
   "total": number,
   "items": [{ "name": string, "amount": number, "category_hint": string }]
 }
-Dane w PLN. Jeśli data nieczytelna użyj dzisiejszej. category_hint po polsku (np. "Żywność", "Transport").`;
+Dane w PLN. Jeśli data nieczytelna użyj dzisiejszej. ${categoryRule}`;
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -42,7 +50,8 @@ async function parseReceiptJson(content: string, rawText?: string): Promise<OcrR
 
 async function parseReceiptWithOpenAIVision(
   buffer: Buffer,
-  mimeType: string
+  mimeType: string,
+  categoryNames?: string[]
 ): Promise<OcrReceiptResult> {
   const openai = getOpenAIClient();
   if (!openai) {
@@ -56,7 +65,7 @@ async function parseReceiptWithOpenAIVision(
     model: "gpt-4o-mini",
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: PARSE_SYSTEM_PROMPT },
+      { role: "system", content: buildParsePrompt(categoryNames) },
       {
         role: "user",
         content: [
@@ -97,7 +106,10 @@ async function extractTextWithVision(imageBase64: string): Promise<string | null
   return data.responses?.[0]?.fullTextAnnotation?.text ?? null;
 }
 
-async function parseReceiptWithAI(rawText: string): Promise<OcrReceiptResult> {
+async function parseReceiptWithAI(
+  rawText: string,
+  categoryNames?: string[]
+): Promise<OcrReceiptResult> {
   const openai = getOpenAIClient();
   if (!openai) {
     throw new Error("Brak OPENAI_API_KEY — ustaw klucz w zmiennych środowiskowych");
@@ -107,7 +119,7 @@ async function parseReceiptWithAI(rawText: string): Promise<OcrReceiptResult> {
     model: "gpt-4o-mini",
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: PARSE_SYSTEM_PROMPT },
+      { role: "system", content: buildParsePrompt(categoryNames) },
       { role: "user", content: rawText },
     ],
   });
@@ -119,7 +131,8 @@ async function parseReceiptWithAI(rawText: string): Promise<OcrReceiptResult> {
 export async function processReceiptImage(
   buffer: Buffer,
   receiptUrl?: string,
-  mimeType = "image/jpeg"
+  mimeType = "image/jpeg",
+  categoryNames?: string[]
 ): Promise<OcrReceiptResult> {
   if (!getOpenAIClient() && !process.env.GOOGLE_VISION_API_KEY) {
     throw new Error(
@@ -130,7 +143,7 @@ export async function processReceiptImage(
   // Primary: GPT-4o-mini reads the image directly (fast, works in Docker)
   if (getOpenAIClient()) {
     const result = await withTimeout(
-      parseReceiptWithOpenAIVision(buffer, mimeType),
+      parseReceiptWithOpenAIVision(buffer, mimeType, categoryNames),
       60_000,
       "Analiza paragonu"
     );
@@ -150,7 +163,7 @@ export async function processReceiptImage(
   }
 
   const result = await withTimeout(
-    parseReceiptWithAI(rawText),
+    parseReceiptWithAI(rawText, categoryNames),
     45_000,
     "Parsowanie paragonu"
   );

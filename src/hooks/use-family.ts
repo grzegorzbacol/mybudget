@@ -39,13 +39,27 @@ export function useFamilyMembers() {
     queryKey: ["family-members", familyData?.family.id],
     enabled: !!familyData?.family.id,
     queryFn: async () => {
+      // user_id wskazuje na auth.users, nie na profiles — PostgREST nie ma
+      // relacji family_members->profiles, więc profile dociągamy osobno.
       const { data, error } = await supabase
         .from("family_members")
-        .select("*, profile:profiles(*)")
+        .select("*")
         .eq("family_id", familyData!.family.id);
 
       if (error) throw error;
-      return data as FamilyMember[];
+      const members = (data ?? []) as FamilyMember[];
+      const userIds = members.map((m) => m.user_id);
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("*")
+          .in("id", userIds);
+        const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
+        for (const m of members) {
+          m.profile = profileById.get(m.user_id);
+        }
+      }
+      return members;
     },
   });
 }

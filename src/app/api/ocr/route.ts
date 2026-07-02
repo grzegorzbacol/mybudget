@@ -44,8 +44,21 @@ export async function POST(request: Request) {
     // Storage upload failed — proceed without receipt URL
   }
 
+  // Kategorie rodziny trafiają do promptu OCR, żeby AI wybierało z istniejącej listy
+  const { data: familyCategories } = await ctx.supabase
+    .from("budget_categories")
+    .select("name, group_name")
+    .eq("family_id", ctx.family.id)
+    .neq("group_name", "Przychody");
+  const categoryNames = (familyCategories ?? []).map((c) => c.name);
+
   try {
-    const result = await processReceiptImage(buffer, receiptUrl, file.type || "image/jpeg");
+    const result = await processReceiptImage(
+      buffer,
+      receiptUrl,
+      file.type || "image/jpeg",
+      categoryNames
+    );
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Błąd OCR";
