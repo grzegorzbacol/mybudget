@@ -243,6 +243,15 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
   const cashAccounts = accounts?.filter((a) => a.type === "cash") ?? [];
   const bankAccounts = accounts?.filter((a) => a.type !== "cash") ?? [];
 
+  const editedItemsSum =
+    preview?.items?.reduce(
+      (sum, item, idx) => sum + (parseFloat(itemAmounts[idx] ?? "") || item.amount),
+      0
+    ) ?? 0;
+  const sumMismatch =
+    (preview?.items?.length ?? 0) > 0 &&
+    Math.abs(editedItemsSum - (preview?.total ?? 0)) > 0.05;
+
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
@@ -386,6 +395,13 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
                 <p className="text-sm font-medium">
                   Pozycje paragonu ({preview.items!.length})
                 </p>
+                {sumMismatch && (
+                  <p className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 p-2 text-xs text-yellow-600 dark:text-yellow-500">
+                    Suma pozycji ({formatCurrency(editedItemsSum)}) różni się od sumy
+                    paragonu ({formatCurrency(preview.total)}) — OCR mógł źle odczytać
+                    kwoty, sprawdź je przed zapisem.
+                  </p>
+                )}
                 <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
                   {preview.items!.map((item, idx) => (
                     <div key={idx} className="rounded-lg border p-3 space-y-2 bg-muted/30">

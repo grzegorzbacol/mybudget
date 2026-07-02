@@ -172,18 +172,24 @@ async function extractMetaFromTranscript(
   );
 }
 
-// Zwraca wynik tylko, gdy deterministycznie sparowane kwoty sumują się do
-// SUMA PLN z paragonu — inaczej null i wołający spada na ścieżkę LLM-JSON.
-async function resultFromTranscript(
+function sumParsed(parsed: ParsedReceiptText): number {
+  return parsed.items.reduce((s, it) => s + it.amount, 0);
+}
+
+function parsedReconciles(parsed: ParsedReceiptText): boolean {
+  return (
+    parsed.total !== null &&
+    parsed.items.length > 0 &&
+    Math.abs(sumParsed(parsed) - parsed.total) < 0.05
+  );
+}
+
+async function assembleFromParsed(
   openai: OpenAI,
   transcript: string,
+  parsed: ParsedReceiptText,
   categoryNames?: string[]
-): Promise<OcrReceiptResult | null> {
-  const parsed = parseReceiptText(transcript);
-  if (parsed.total === null || parsed.items.length === 0) return null;
-  const sum = parsed.items.reduce((s, it) => s + it.amount, 0);
-  if (Math.abs(sum - parsed.total) >= 0.05) return null;
-
+): Promise<OcrReceiptResult> {
   let meta: z.infer<typeof receiptMetaSchema> = {
     store_name: "",
     date: "",
@@ -203,13 +209,35 @@ async function resultFromTranscript(
   return {
     store_name: meta.store_name,
     date: meta.date,
-    total: parsed.total,
+    total: parsed.total ?? round2(sumParsed(parsed)),
     items: parsed.items.map((it, i) => ({
       name: it.name,
       amount: it.amount,
       category_hint: meta.category_hints[i] ?? "",
     })),
     raw_text: transcript,
+  };
+}
+
+// Gdy ani parser, ani LLM nie bilansują się z sumą paragonu, wolimy prawdziwe
+// (choć może niepełne) liczby z transkrypcji od potencjalnie zmyślonych przez
+// model — użytkownik poprawi kwoty w formularzu, widząc ostrzeżenie o sumie.
+async function chooseResult(
+  openai: OpenAI,
+  transcript: string,
+  parsed: ParsedReceiptText,
+  llmResult: OcrReceiptResult,
+  categoryNames?: string[]
+): Promise<OcrReceiptResult> {
+  if (itemsMatchTotal(llmResult) || parsed.items.length === 0) {
+    return transcript ? { ...llmResult, raw_text: transcript } : llmResult;
+  }
+  console.log("[OCR] LLM nie bilansuje się z sumą — zwracam liczby z transkrypcji");
+  const det = await assembleFromParsed(openai, transcript, parsed, categoryNames);
+  return {
+    ...det,
+    store_name: det.store_name || llmResult.store_name,
+    date: det.date || llmResult.date,
   };
 }
 
@@ -337,14 +365,27 @@ async function parseReceiptWithOpenAIVision(
 
   // Najpierw transkrypcja + deterministyczne parowanie kwot w kodzie;
   // jednostrzałowy JSON z vision zostaje jako fallback.
+  let transcript = "";
+  let parsed: ParsedReceiptText = { items: [], total: null };
   try {
-    const transcript = await transcribeReceipt(openai, dataUrl);
-    const deterministic = await resultFromTranscript(openai, transcript, categoryNames);
-    if (deterministic) return deterministic;
-  } catch {
-    // transkrypcja nie wyszła — próbujemy ścieżki JSON
+    transcript = await transcribeReceipt(openai, dataUrl);
+    parsed = parseReceiptText(transcript);
+    console.log(`[OCR] transkrypcja:\n${transcript}`);
+    console.log(
+      `[OCR] deterministycznie: pozycje=${parsed.items.length}, suma=${sumParsed(parsed).toFixed(2)}, total=${parsed.total ?? "brak"}`
+    );
+    if (parsedReconciles(parsed)) {
+      console.log("[OCR] suma zgodna — wynik z parsera deterministycznego");
+      return assembleFromParsed(openai, transcript, parsed, categoryNames);
+    }
+  } catch (err) {
+    console.log(
+      "[OCR] transkrypcja nieudana:",
+      err instanceof Error ? err.message : String(err)
+    );
   }
 
+  console.log("[OCR] fallback: jednostrzałowy JSON z vision");
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: buildParsePrompt(categoryNames) },
     {
@@ -364,7 +405,8 @@ async function parseReceiptWithOpenAIVision(
 
   const content = completion.choices[0]?.message?.content ?? "{}";
   const result = await parseReceiptJson(content);
-  return repairMismatchedItems(openai, messages, result);
+  const repaired = await repairMismatchedItems(openai, messages, result);
+  return chooseResult(openai, transcript, parsed, repaired, categoryNames);
 }
 
 async function extractTextWithVision(imageBase64: string): Promise<string | null> {
@@ -403,10 +445,13 @@ async function parseReceiptWithAI(
   }
 
   // Tekst z Google Vision też najpierw przez parser deterministyczny
-  const deterministic = await resultFromTranscript(openai, rawText, categoryNames).catch(
-    () => null
+  const parsed = parseReceiptText(rawText);
+  console.log(
+    `[OCR] Google Vision, deterministycznie: pozycje=${parsed.items.length}, suma=${sumParsed(parsed).toFixed(2)}, total=${parsed.total ?? "brak"}`
   );
-  if (deterministic) return deterministic;
+  if (parsedReconciles(parsed)) {
+    return assembleFromParsed(openai, rawText, parsed, categoryNames);
+  }
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: buildParsePrompt(categoryNames) },
@@ -422,7 +467,7 @@ async function parseReceiptWithAI(
   const content = completion.choices[0]?.message?.content ?? "{}";
   const result = await parseReceiptJson(content);
   const repaired = await repairMismatchedItems(openai, messages, result);
-  return { ...repaired, raw_text: rawText };
+  return chooseResult(openai, rawText, parsed, repaired, categoryNames);
 }
 
 export async function processReceiptImage(
