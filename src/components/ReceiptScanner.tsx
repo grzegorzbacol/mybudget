@@ -457,6 +457,17 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
               </div>
             )}
 
+            {preview.raw_text && (
+              <details className="rounded-lg border bg-muted/30 p-2 text-xs">
+                <summary className="cursor-pointer text-muted-foreground">
+                  Surowy odczyt OCR (diagnostyka)
+                </summary>
+                <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap font-mono text-[10px] leading-tight">
+                  {preview.raw_text}
+                </pre>
+              </details>
+            )}
+
             <div className="flex gap-2 pt-1">
               <Button variant="outline" onClick={() => setPreview(null)} className="flex-1">
                 <X className="mr-2 h-4 w-4" />
