@@ -1,9 +1,31 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isSupabaseConfigured } from "@/lib/supabase/config";
 
-const publicRoutes = ["/login", "/register", "/auth/callback", "/api/setup"];
+const publicRoutes = ["/login", "/register", "/auth/callback", "/api/setup", "/onboarding"];
+
+function redirectToLogin(request: NextRequest) {
+  const url = request.nextUrl.clone();
+  url.pathname = "/login";
+  return NextResponse.redirect(url);
+}
 
 export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  if (pathname.startsWith("/api/")) {
+    return NextResponse.next();
+  }
+
+  const isPublic = publicRoutes.some((r) => pathname.startsWith(r));
+
+  if (!isSupabaseConfigured()) {
+    if (!isPublic && pathname !== "/") {
+      return redirectToLogin(request);
+    }
+    return NextResponse.next();
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -31,18 +53,8 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const { pathname } = request.nextUrl;
-
-  if (pathname.startsWith("/api/")) {
-    return supabaseResponse;
-  }
-
-  const isPublic = publicRoutes.some((r) => pathname.startsWith(r));
-
   if (!user && !isPublic && pathname !== "/") {
-    const url = request.nextUrl.clone();
-    url.pathname = "/login";
-    return NextResponse.redirect(url);
+    return redirectToLogin(request);
   }
 
   if (user && (pathname === "/login" || pathname === "/register")) {

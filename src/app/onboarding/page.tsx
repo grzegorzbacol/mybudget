@@ -62,7 +62,7 @@ export default function OnboardingPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center px-4">
+    <div className="flex min-h-[100dvh] items-center justify-center px-4 px-safe py-6">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle>Witaj w MyBudget!</CardTitle>

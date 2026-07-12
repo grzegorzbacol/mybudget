@@ -9,10 +9,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   useRealtimeSync();
 
   return (
-    <div className="min-h-screen pb-20 md:pb-0">
+    <div className="min-h-[100dvh] pb-bottom-nav md:pb-0">
       <OfflineSync />
       <AppHeader />
-      <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-6xl px-4 px-safe py-4 md:py-6">{children}</main>
       <BottomNav />
     </div>
   );

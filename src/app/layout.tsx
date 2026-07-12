@@ -13,14 +13,23 @@ export const metadata: Metadata = {
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "default",
+    statusBarStyle: "black-translucent",
     title: "MyBudget",
+  },
+  icons: {
+    apple: [{ url: "/icons/icon-192.png", sizes: "192x192", type: "image/png" }],
+  },
+  formatDetection: {
+    telephone: false,
   },
 };
 
 export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: light)", color: "#7c3aed" },
     { media: "(prefers-color-scheme: dark)", color: "#0a0a0a" },
   ],
 };
@@ -36,7 +45,7 @@ export default function RootLayout({
         <ThemeProvider>
           <QueryProvider>
             {children}
-            <Toaster position="top-center" richColors />
+            <Toaster position="top-center" richColors offset="max(12px, env(safe-area-inset-top))" />
           </QueryProvider>
         </ThemeProvider>
       </body>

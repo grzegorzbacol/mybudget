@@ -16,10 +16,18 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Pixel 5"] },
     },
+    {
+      name: "iphone",
+      use: { ...devices["iPhone 14"] },
+    },
   ],
   webServer: {
     command: "npm run dev",
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
+    env: {
+      NEXT_PUBLIC_SUPABASE_URL: "https://placeholder.supabase.co",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "placeholder-anon-key",
+    },
   },
 });

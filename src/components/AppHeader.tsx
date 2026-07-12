@@ -20,19 +20,18 @@ export function AppHeader() {
   const pathname = usePathname();
 
   return (
-    <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur">
-      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
-        <div className="flex items-center gap-6">
-          <div>
+    <header className="sticky top-0 z-30 border-b bg-background/95 pt-safe backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 px-safe">
+        <div className="flex min-w-0 items-center gap-4 md:gap-6">
+          <div className="min-w-0">
             <Link href="/budget" className="text-lg font-bold">
               MyBudget
             </Link>
             {data?.family && (
-              <p className="text-xs text-muted-foreground">{data.family.name}</p>
+              <p className="truncate text-xs text-muted-foreground">{data.family.name}</p>
             )}
           </div>
-          {/* Desktop nav */}
-          <nav className="hidden md:flex items-center gap-1">
+          <nav className="hidden items-center gap-1 md:flex">
             {navItems.map(({ href, label }) => (
               <Link
                 key={href}
@@ -41,7 +40,7 @@ export function AppHeader() {
                   "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                   pathname.startsWith(href)
                     ? "bg-muted text-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
                 )}
               >
                 {label}
@@ -49,13 +48,13 @@ export function AppHeader() {
             ))}
           </nav>
         </div>
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="icon" asChild>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button variant="ghost" size="icon" className="touch-target hidden md:flex" asChild>
             <Link href="/goals" aria-label="Cele">
               <Target className="h-5 w-5" />
             </Link>
           </Button>
-          <Button variant="ghost" size="icon" asChild>
+          <Button variant="ghost" size="icon" className="touch-target hidden md:flex" asChild>
             <Link href="/settings" aria-label="Ustawienia">
               <Settings className="h-5 w-5" />
             </Link>
