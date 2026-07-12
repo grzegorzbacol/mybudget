@@ -86,34 +86,48 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                   key={row.category.id}
                   type="button"
                   onClick={() => setSelected(row)}
-                  className="grid w-full grid-cols-1 gap-2 border-b px-4 py-3 text-left transition-colors hover:bg-muted/30 md:grid-cols-12 md:items-center"
+                  className="w-full border-b px-4 py-3 text-left transition-colors hover:bg-muted/30"
                 >
-                  <div className="col-span-2 text-xs font-medium text-muted-foreground md:text-sm">
-                    {idx === 0 ? group.groupName : ""}
-                  </div>
-                  <div className="col-span-3 flex items-center gap-2">
-                    <span>{row.category.icon}</span>
-                    <span className="font-medium">{row.category.name}</span>
-                  </div>
-                  <div className="col-span-2 text-right text-sm md:block">
-                    {formatCurrency(row.allocation.allocated)}
-                  </div>
-                  <div className="col-span-2 text-right text-sm">
-                    {formatCurrency(row.allocation.activity)}
-                  </div>
-                  <div className="col-span-3 space-y-1">
-                    <p
-                      className={cn(
-                        "text-right font-semibold",
-                        overBudget ? "text-red-500" : "text-green-600 dark:text-green-400"
-                      )}
-                    >
-                      {formatCurrency(row.allocation.available)}
-                    </p>
-                    <Progress
-                      value={pct}
-                      className={cn("h-1.5", overBudget && "[&>div]:bg-red-500")}
-                    />
+                  <div className="md:grid md:grid-cols-12 md:items-center md:gap-2">
+                    <div className="col-span-2 hidden text-xs font-medium text-muted-foreground md:block md:text-sm">
+                      {idx === 0 ? group.groupName : ""}
+                    </div>
+
+                    <div className="col-span-3 flex items-center gap-2 md:col-span-3">
+                      <span className="text-lg">{row.category.icon}</span>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{row.category.name}</p>
+                        {idx === 0 && (
+                          <p className="text-xs text-muted-foreground md:hidden">{group.groupName}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 grid grid-cols-3 gap-2 md:col-span-7 md:mt-0 md:grid-cols-6">
+                      <div className="md:col-span-2 md:text-right">
+                        <p className="text-xs text-muted-foreground md:hidden">Zaplanowane</p>
+                        <p className="text-sm">{formatCurrency(row.allocation.allocated)}</p>
+                      </div>
+                      <div className="md:col-span-2 md:text-right">
+                        <p className="text-xs text-muted-foreground md:hidden">Wydane</p>
+                        <p className="text-sm">{formatCurrency(row.allocation.activity)}</p>
+                      </div>
+                      <div className="space-y-1 md:col-span-2">
+                        <p className="text-xs text-muted-foreground md:hidden">Dostępne</p>
+                        <p
+                          className={cn(
+                            "text-sm font-semibold md:text-right",
+                            overBudget ? "text-red-500" : "text-green-600 dark:text-green-400"
+                          )}
+                        >
+                          {formatCurrency(row.allocation.available)}
+                        </p>
+                        <Progress
+                          value={pct}
+                          className={cn("h-1.5", overBudget && "[&>div]:bg-red-500")}
+                        />
+                      </div>
+                    </div>
                   </div>
                 </button>
               );
