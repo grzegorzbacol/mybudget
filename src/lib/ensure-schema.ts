@@ -11,13 +11,23 @@ export async function applyEnsureSchema(
 
   const client = new Client({ connectionString: databaseUrl });
   let applied = 0;
+  const errors: string[] = [];
   try {
     await client.connect();
     for (const sql of ENSURE_SCHEMA_STATEMENTS) {
-      await client.query(sql);
-      applied += 1;
+      try {
+        await client.query(sql);
+        applied += 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "ensure-schema statement failed";
+        console.error("[ensure-schema]", message);
+        errors.push(message);
+      }
     }
-    return { ok: true, applied };
+    if (errors.length && applied === 0) {
+      return { ok: false, applied, error: errors[0] };
+    }
+    return { ok: errors.length === 0, applied, error: errors.length ? errors.join(" | ") : undefined };
   } catch (error) {
     const message = error instanceof Error ? error.message : "ensure-schema failed";
     console.error("[ensure-schema]", message);

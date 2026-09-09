@@ -257,6 +257,7 @@ export interface CashflowOverview {
   budget: BudgetMonthData;
   cashflow: CashflowData;
   scheduled: ScheduledTransaction[];
+  warning?: string;
   wealth: WealthSnapshot;
   supervision: CashflowSupervision;
 }

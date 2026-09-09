@@ -34,10 +34,10 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
       fi
     done
 
-    # Always repair transfer columns — 002 may be marked applied or aborted on
-    # ALTER PUBLICATION without leaving transactions.transfer_account_id in place.
+    # Always repair transfer columns + scheduled_transactions — 002 may be marked
+    # applied or aborted on ALTER PUBLICATION without leaving the live schema in place.
     if [ -f /app/scripts/ensure-schema.sql ]; then
-      echo "Ensuring transfer columns (scripts/ensure-schema.sql)..."
+      echo "Ensuring schema repairs (scripts/ensure-schema.sql)..."
       if psql "$dburl" -v ON_ERROR_STOP=0 -f /app/scripts/ensure-schema.sql; then
         echo "ensure-schema finished"
       else
@@ -49,11 +49,16 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     if [ "$missing" != "1" ]; then
       echo "WARNING: transactions.transfer_account_id is still missing. DATABASE_URL may point at the wrong database."
     fi
+
+    scheduled=$(psql "$dburl" -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='scheduled_transactions'" 2>/dev/null | tr -d ' ')
+    if [ "$scheduled" != "1" ]; then
+      echo "WARNING: public.scheduled_transactions is still missing. DATABASE_URL may point at the wrong database."
+    fi
   else
     echo "WARNING: Could not connect to database. Check DATABASE_URL / POSTGRES_URL."
   fi
 else
-  echo "WARNING: DATABASE_URL not set, skipping migration. Budget APIs need transactions.transfer_account_id on the PostgREST database."
+  echo "WARNING: DATABASE_URL not set, skipping migration. Budget/cashflow need transfer columns and scheduled_transactions on the PostgREST database."
 fi
 
 exec node server.js

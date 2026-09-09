@@ -3,7 +3,7 @@
 ## Wymagania
 
 - Repozytorium Git (GitHub / GitLab / Gitea)
-- Projekt Supabase z uruchomionymi migracjami `supabase/migrations/*.sql` (w tym `002_ynab_model.sql` i `006_transfer_columns.sql`)
+- Projekt Supabase z uruchomionymi migracjami `supabase/migrations/*.sql` (w tym `002_ynab_model.sql`, `006_transfer_columns.sql` i `007_scheduled_transactions.sql`)
 - Klucze API: Supabase, OpenAI (opcjonalnie Google Vision)
 
 ## Kroki w Coolify
@@ -52,7 +52,11 @@ Przy starcie kontenera (`scripts/docker-entrypoint.sh`) migracje z `supabase/mig
 `GET /api/budget/2026/9 → 500 {"error":"column transactions.transfer_account_id does not exist"}`.
 `002_ynab_model.sql` dodaje tę kolumnę, ale boot kończył plik na `ALTER PUBLICATION supabase_realtime` (często brak publikacji) i **przerywał** kolejkę — albo `DATABASE_URL` nie był ustawiony, więc 002 w ogóle nie trafiło do bazy PostgREST. Naprawa: `006_transfer_columns.sql` + ensure-schema przy każdym starcie + fallback API bez kolumn transferu.
 
-Po merge kodu: **Coolify → Redeploy**. Sprawdź log startu: `Ensuring transfer columns` i brak warninga `transfer_account_id is still missing`. Jeśli warning zostaje, `DATABASE_URL` wskazuje inną bazę niż Supabase.
+**Potwierdzony incydent (2026-09-09, deploy 5944f87):** `/budget` wrócił do 200, ale
+`GET /api/cashflow?days=60&bucket=week → 500` z błędem schema cache / `relation "public.scheduled_transactions" does not exist`.
+Tabela jest w `002`, ale 002 może być oznaczone jako applied albo urwać się przed `CREATE TABLE`. Naprawa: `007_scheduled_transactions.sql` + `CREATE TABLE IF NOT EXISTS` w `scripts/ensure-schema.sql` na każdym starcie + cashflow zwraca 200 z pustym harmonogramem zamiast 500.
+
+Po merge kodu: **Coolify → Redeploy**. Sprawdź log startu: `Ensuring schema repairs` i brak warningów `transfer_account_id is still missing` oraz `scheduled_transactions is still missing`. Jeśli warning zostaje, `DATABASE_URL` wskazuje inną bazę niż Supabase.
 
 W usłudze Supabase ustaw też:
 - `GOTRUE_SITE_URL` → URL aplikacji MyBudget
@@ -113,6 +117,7 @@ Po dodaniu HTTPS do panelu Coolify możesz włączyć **Auto Deploy** w ustawien
 ## Troubleshooting
 
 - **Budżet pusty / 500 `transfer_account_id does not exist`:** Redeploy; w logach startu musi przejść `006_transfer_columns.sql` albo `ensure-schema.sql`. `DATABASE_URL` = baza PostgREST. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/006_transfer_columns.sql`
+- **Cashflow 500 `scheduled_transactions` / schema cache:** Redeploy; w logach startu `007_scheduled_transactions.sql` albo `ensure-schema.sql` musi utworzyć tabelę. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/007_scheduled_transactions.sql`
 - **Biały ekran / brak auth:** sprawdź `NEXT_PUBLIC_*` przy buildzie
 - **OCR nie działa:** `OPENAI_API_KEY` w runtime
 - **Magic link nie działa:** redirect URL w Supabase

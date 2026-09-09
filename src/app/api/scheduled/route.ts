@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
+import { isMissingRelationError } from "@/lib/schema";
 import { scheduledSchema } from "@/lib/validators";
 
 export async function GET() {
@@ -21,6 +22,19 @@ export async function GET() {
       .eq("family_id", ctx.family.id)
       .order("next_date");
     if (fallback.error) {
+      if (isMissingRelationError(fallback.error.message)) {
+        const { applyEnsureSchema } = await import("@/lib/ensure-schema");
+        await applyEnsureSchema();
+        const retried = await ctx.supabase
+          .from("scheduled_transactions")
+          .select("*")
+          .eq("family_id", ctx.family.id)
+          .order("next_date");
+        if (!retried.error) {
+          return NextResponse.json(retried.data ?? []);
+        }
+        return NextResponse.json([], { status: 200 });
+      }
       return NextResponse.json({ error: fallback.error.message }, { status: 500 });
     }
     return NextResponse.json(fallback.data ?? []);
