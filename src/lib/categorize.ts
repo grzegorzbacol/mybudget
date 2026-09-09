@@ -1,8 +1,9 @@
 export function normalizePayee(payee: string): string {
   return payee
     .toLowerCase()
+    .replace(/[^a-z0-9ąćęłńóśźż ]+/gi, " ")
+    .replace(/\b\d+\b/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/[^a-z0-9ąćęłńóśźż ]/gi, "")
     .trim();
 }
 

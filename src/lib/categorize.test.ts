@@ -15,6 +15,7 @@ describe("payee categorization rules", () => {
       { payee: "Wynagrodzenie", category_id: null, amount: 8000, date: "2026-09-10" },
     ]);
     expect(suggestCategoryForPayee("biedronka", rules)).toBe("groceries");
+    expect(suggestCategoryForPayee("Biedronka 99", rules)).toBe("groceries");
   });
 
   it("applies rules only to uncategorized rows", () => {

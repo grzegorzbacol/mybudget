@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, Circle } from "lucide-react";
@@ -123,14 +123,14 @@ export default function ReviewPage() {
     return start.toISOString().slice(0, 10);
   }, []);
   const storageKey = `ritual-${weekKey}`;
-  const [checked, setChecked] = useState<Record<string, boolean>>(() => {
-    if (typeof window === "undefined") return {};
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  useEffect(() => {
     try {
-      return JSON.parse(localStorage.getItem(storageKey) ?? "{}") as Record<string, boolean>;
+      setChecked(JSON.parse(localStorage.getItem(storageKey) ?? "{}") as Record<string, boolean>);
     } catch {
-      return {};
+      setChecked({});
     }
-  });
+  }, [storageKey]);
   const toggleManual = (id: string, autoDone: boolean) => {
     if (autoDone) return;
     const next = { ...checked, [id]: !checked[id] };

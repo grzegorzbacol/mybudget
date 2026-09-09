@@ -171,7 +171,7 @@ export function useApplyCategoryMap() {
         ids.push(row.id);
         grouped.set(row.categoryId, ids);
       }
-      for (const [categoryId, ids] of grouped) {
+      for (const [categoryId, ids] of Array.from(grouped.entries())) {
         const { error } = await supabase
           .from("transactions")
           .update({ category_id: categoryId })
