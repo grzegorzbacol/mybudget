@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { insertRowWithSchemaRepair, insertRowsWithSchemaRepair, isGoalTypeCheckError } from "./schema-write";
+import { isGoalTypeCheckError } from "./schema-write";
 
 describe("insertRowWithSchemaRepair", () => {
   it("retries after ensure-schema when paid_by is missing from the schema cache", async () => {
