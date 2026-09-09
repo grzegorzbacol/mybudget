@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# Fail fast if Postgres is unreachable so Coolify healthchecks are not blocked.
+export PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-10}"
+
 dburl="${DATABASE_URL:-${POSTGRES_URL:-${SUPABASE_DB_URL:-${DIRECT_URL:-}}}}"
 
 if [ -n "$dburl" ]; then
