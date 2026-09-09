@@ -73,6 +73,7 @@ export interface Transaction {
   account_id: string;
   category_id: string | null;
   added_by: string | null;
+  paid_by?: string | null;
   amount: number;
   payee: string;
   memo: string;
