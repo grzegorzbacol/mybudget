@@ -1,10 +1,13 @@
-import { addDays, addMonthsToDate, money } from "./money";
+import { isOnBudget, isTransferTx } from "./budget";
+import { addDays, addMonthsToDate, money, yearMonthFromDate } from "./money";
 import type {
   Account,
   BudgetCategory,
   BudgetCategoryRow,
+  CashflowBucket,
   CashflowData,
   CashflowItem,
+  LedgerTransaction,
   ScheduledTransaction,
 } from "./types";
 
@@ -179,5 +182,72 @@ export function computeCashflow(input: {
     totalCount: items.length,
     items,
     byCategory,
+    timeline: [],
   };
+}
+
+export function isoWeekStart(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  const day = d.getUTCDay();
+  const offset = day === 0 ? -6 : 1 - day;
+  return addDays(date, offset);
+}
+
+export function buildCashflowTimeline(input: {
+  from: string;
+  to: string;
+  transactions: LedgerTransaction[];
+  accounts: Account[];
+  scheduled: ScheduledTransaction[];
+  bucket?: "week" | "month";
+}): CashflowBucket[] {
+  const bucket = input.bucket ?? "week";
+  const onBudgetIds = new Set(input.accounts.filter(isOnBudget).map((account) => account.id));
+  const buckets = new Map<string, CashflowBucket>();
+
+  const keyFor = (date: string) => {
+    if (bucket === "month") {
+      const { year, month } = yearMonthFromDate(date);
+      const key = `${year}-${String(month).padStart(2, "0")}`;
+      return { key, label: `${month}/${year}` };
+    }
+    const start = isoWeekStart(date);
+    const end = addDays(start, 6);
+    return { key: start, label: `${start.slice(5)} – ${end.slice(5)}` };
+  };
+
+  const ensure = (date: string) => {
+    const { key, label } = keyFor(date);
+    let row = buckets.get(key);
+    if (!row) {
+      row = { key, label, actualIn: 0, actualOut: 0, plannedIn: 0, plannedOut: 0 };
+      buckets.set(key, row);
+    }
+    return row;
+  };
+
+  for (let cursor = input.from; cursor <= input.to; cursor = addDays(cursor, bucket === "month" ? 14 : 7)) {
+    ensure(cursor);
+  }
+  ensure(input.to);
+
+  for (const tx of input.transactions) {
+    if (tx.date < input.from || tx.date > input.to) continue;
+    if (isTransferTx(tx)) continue;
+    if (!onBudgetIds.has(tx.account_id)) continue;
+    const row = ensure(tx.date);
+    const amount = Number(tx.amount);
+    if (amount > 0 && !tx.category_id) row.actualIn = money(row.actualIn + amount);
+    if (amount < 0) row.actualOut = money(row.actualOut + Math.abs(amount));
+  }
+
+  for (const occ of generateScheduleOccurrences(input.scheduled, input.from, input.to)) {
+    if (!onBudgetIds.has(occ.accountId)) continue;
+    if (occ.transferAccountId && onBudgetIds.has(occ.transferAccountId)) continue;
+    const row = ensure(occ.date);
+    if (occ.amount >= 0) row.plannedIn = money(row.plannedIn + occ.amount);
+    else row.plannedOut = money(row.plannedOut + Math.abs(occ.amount));
+  }
+
+  return Array.from(buckets.values()).sort((a, b) => a.key.localeCompare(b.key));
 }

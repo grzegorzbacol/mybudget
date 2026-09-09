@@ -25,6 +25,7 @@ import { useFamily } from "@/hooks/use-family";
 import { useBudget, useAllocateBudget } from "@/hooks/use-budget";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency, getCurrentYearMonth } from "@/lib/format";
+import { addMonths } from "@/lib/money";
 import { suggestMonthlyContribution } from "@/lib/budget";
 import type { Goal } from "@/lib/types";
 import { toast } from "sonner";
@@ -35,7 +36,9 @@ export default function SavingsPage() {
   const supabase = createClient();
   const queryClient = useQueryClient();
   const { year, month } = getCurrentYearMonth();
+  const prev = addMonths(year, month, -1);
   const { data: budget } = useBudget(year, month);
+  const { data: lastBudget } = useBudget(prev.year, prev.month);
   const allocate = useAllocateBudget();
   const [open, setOpen] = useState(false);
   const [contributeFor, setContributeFor] = useState<Goal | null>(null);
@@ -61,6 +64,7 @@ export default function SavingsPage() {
     () => budget?.groups.flatMap((g) => g.categories) ?? [],
     [budget]
   );
+  const lastMonthRows = lastBudget?.groups.flatMap((g) => g.categories) ?? [];
   const savingsRows = categories.filter(
     (row) =>
       row.category.group_name.toLowerCase().includes("oszczęd") ||
@@ -188,6 +192,9 @@ export default function SavingsPage() {
                 <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
                   <span>Zostało {formatCurrency(remaining)}</span>
                   <span>W tym miesiącu {formatCurrency(assigned)}</span>
+                  <span>
+                    Poprzedni miesiąc {formatCurrency(lastMonthRows.find((r) => r.category.id === goal.category_id)?.assigned ?? 0)}
+                  </span>
                   {goal.target_date && (
                     <span>Do {new Date(goal.target_date).toLocaleDateString("pl-PL")}</span>
                   )}

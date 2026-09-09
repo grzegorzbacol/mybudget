@@ -31,6 +31,21 @@ export function isExpenseCategory(category: BudgetCategory): boolean {
   return (category.kind ?? "expense") !== "income";
 }
 
+export function uncategorizedExpenses(
+  transactions: LedgerTransaction[],
+  year?: number,
+  month?: number
+): LedgerTransaction[] {
+  return transactions.filter((tx) => {
+    if (isTransferTx(tx) || Number(tx.amount) >= 0 || tx.category_id) return false;
+    if (year != null && month != null) {
+      const ym = yearMonthFromDate(tx.date);
+      if (ym.year !== year || ym.month !== month) return false;
+    }
+    return true;
+  });
+}
+
 type MonthKey = `${number}-${number}`;
 
 function monthKey(year: number, month: number): MonthKey {
@@ -232,6 +247,7 @@ export function buildBudgetMonthData(
     totalActivity,
     totalAvailable,
     onBudgetBalance: balance,
+    uncategorizedCount: uncategorizedExpenses(transactions, year, month).length,
     groups,
   };
 }

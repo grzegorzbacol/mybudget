@@ -25,6 +25,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { isExpenseCategory, isOnBudget } from "@/lib/budget";
 import { customSplits, equalSplits, splitsMatchTotal } from "@/lib/splits";
+import { cn } from "@/lib/utils";
 
 interface TransactionFormProps {
   open: boolean;
@@ -61,6 +62,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
   const [categoryId, setCategoryId] = useState(prefill?.categoryId ?? "");
   const [cleared, setCleared] = useState(false);
   const [splitMode, setSplitMode] = useState<"none" | "equal" | "custom">("none");
+  const [splitUnit, setSplitUnit] = useState<"pln" | "pct">("pln");
   const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
   const [paidBy, setPaidBy] = useState("");
   const [receiptUrl, setReceiptUrl] = useState(prefill?.receiptUrl ?? "");
@@ -80,6 +82,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
     setMemo("");
     setToAccountId("");
     setSplitMode("none");
+    setSplitUnit("pln");
     setCustomAmounts({});
   }, [open, prefill]);
 
@@ -92,6 +95,20 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
         .select("*")
         .eq("family_id", familyData!.family.id);
       return data ?? [];
+    },
+  });
+
+  const { data: payees } = useQuery({
+    queryKey: ["payees", familyData?.family.id],
+    enabled: !!familyData?.family.id,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("transactions")
+        .select("payee")
+        .eq("family_id", familyData!.family.id)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      return Array.from(new Set((data ?? []).map((row) => row.payee).filter(Boolean)));
     },
   });
 
@@ -199,7 +216,13 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
           splitMode === "equal"
             ? equalSplits(memberIds, absAmount)
             : customSplits(
-                memberIds.map((id) => ({ user_id: id, amount: customAmounts[id] ?? "0" })),
+                memberIds.map((id) => {
+                  const raw = parseFloat((customAmounts[id] ?? "0").replace(",", ".")) || 0;
+                  return {
+                    user_id: id,
+                    amount: splitUnit === "pct" ? (absAmount * raw) / 100 : raw,
+                  };
+                }),
                 absAmount
               );
         if (!splitsMatchTotal(splits, absAmount)) {
@@ -287,11 +310,17 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
             <div>
               <Label>{type === "income" ? "Źródło przychodu" : "Sklep / odbiorca"}</Label>
               <Input
+                list="payee-suggestions"
                 value={payee}
                 onChange={(e) => setPayee(e.target.value)}
                 required
                 placeholder={type === "income" ? "np. Wynagrodzenie" : "np. Biedronka"}
               />
+              <datalist id="payee-suggestions">
+                {(payees ?? []).map((name) => (
+                  <option key={name} value={name} />
+                ))}
+              </datalist>
             </div>
           )}
 
@@ -409,13 +438,31 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
                   <SelectContent>
                     <SelectItem value="none">Bez podziału (tylko budżet)</SelectItem>
                     <SelectItem value="equal">Równo</SelectItem>
-                    <SelectItem value="custom">Własne kwoty</SelectItem>
+                    <SelectItem value="custom">Własne kwoty / %</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Koperta i konto schodzą w całości. Podział służy do rozliczeń „kto komu”.
                 </p>
               </div>
+              {splitMode === "custom" && (
+                <div className="flex gap-1 rounded-md bg-muted p-1 text-xs">
+                  <button
+                    type="button"
+                    className={cn("flex-1 rounded py-1", splitUnit === "pln" && "bg-background shadow")}
+                    onClick={() => setSplitUnit("pln")}
+                  >
+                    zł
+                  </button>
+                  <button
+                    type="button"
+                    className={cn("flex-1 rounded py-1", splitUnit === "pct" && "bg-background shadow")}
+                    onClick={() => setSplitUnit("pct")}
+                  >
+                    %
+                  </button>
+                </div>
+              )}
               {splitMode !== "none" && (
                 <div className="space-y-2">
                   {members?.map((m) => (

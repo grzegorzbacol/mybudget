@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Camera } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -30,6 +32,7 @@ interface TransactionListProps {
 }
 
 export function TransactionList({ year, month, accountId, categoryId }: TransactionListProps) {
+  const searchParams = useSearchParams();
   const { data: transactions, isLoading } = useTransactions({
     year,
     month,
@@ -39,6 +42,8 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkCategory, setBulkCategory] = useState("");
   const [detail, setDetail] = useState<Transaction | null>(null);
+  const [query, setQuery] = useState("");
+  const [kind, setKind] = useState(searchParams.get("filter") ?? "all");
   const bulkUpdate = useBulkUpdateCategory();
   const updateTx = useUpdateTransaction();
   const { data: familyData } = useFamily();
@@ -73,12 +78,49 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
     setSelected(new Set());
   };
 
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return (transactions ?? []).filter((t) => {
+      if (kind === "expense" && (t.amount >= 0 || isTransferTx(t))) return false;
+      if (kind === "income" && (t.amount <= 0 || isTransferTx(t))) return false;
+      if (kind === "transfer" && !isTransferTx(t)) return false;
+      if (kind === "uncategorized" && (isTransferTx(t) || t.amount >= 0 || t.category_id)) return false;
+      if (!q) return true;
+      return (
+        t.payee.toLowerCase().includes(q) ||
+        (t.memo ?? "").toLowerCase().includes(q) ||
+        (t.category?.name ?? "").toLowerCase().includes(q) ||
+        (t.account?.name ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [transactions, query, kind]);
+
   if (isLoading) {
     return <p className="p-4 text-center text-muted-foreground">Ładowanie...</p>;
   }
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Szukaj (sklep, notatka, konto)"
+          className="min-w-[180px] flex-1"
+        />
+        <Select value={kind} onValueChange={setKind}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Wszystkie</SelectItem>
+            <SelectItem value="expense">Wydatki</SelectItem>
+            <SelectItem value="income">Przychody</SelectItem>
+            <SelectItem value="transfer">Transfery</SelectItem>
+            <SelectItem value="uncategorized">Bez kategorii</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
       {selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-lg border bg-muted/50 p-3">
           <span className="text-sm">Zaznaczono: {selected.size}</span>
@@ -101,7 +143,7 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
       )}
 
       <div className="space-y-2">
-        {transactions?.map((t) => (
+        {visible.map((t) => (
           <div
             key={t.id}
             className="flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 transition-colors hover:bg-muted/30"
@@ -164,20 +206,26 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
             </span>
           </div>
         ))}
-        {transactions?.length === 0 && (
+        {visible.length === 0 && (
           <div className="rounded-lg border border-dashed px-4 py-8 text-center">
-            <p className="font-medium">Brak transakcji w tym okresie</p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Dodaj wydatek, przychód albo transfer. Możesz też wczytać CSV z mBank/PKO/ING albo dane przykładowe.
+            <p className="font-medium">
+              {(transactions?.length ?? 0) === 0 ? "Brak transakcji w tym okresie" : "Brak wyników tego filtra"}
             </p>
-            <div className="mt-3 flex flex-wrap justify-center gap-2">
-              <Button asChild variant="outline" size="sm">
-                <a href="/setup">Kreator startu</a>
-              </Button>
-              <Button asChild variant="outline" size="sm">
-                <a href="/cashflow">Zaplanuj stałe opłaty</a>
-              </Button>
-            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {(transactions?.length ?? 0) === 0
+                ? "Dodaj wydatek, przychód albo transfer. Możesz też wczytać CSV z mBank/PKO/ING albo dane przykładowe."
+                : "Zmień wyszukiwanie albo filtr."}
+            </p>
+            {(transactions?.length ?? 0) === 0 && (
+              <div className="mt-3 flex flex-wrap justify-center gap-2">
+                <Button asChild variant="outline" size="sm">
+                  <a href="/setup">Kreator startu</a>
+                </Button>
+                <Button asChild variant="outline" size="sm">
+                  <a href="/cashflow">Zaplanuj stałe opłaty</a>
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>

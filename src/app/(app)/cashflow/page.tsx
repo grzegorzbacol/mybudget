@@ -30,6 +30,10 @@ import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { StatusStrip } from "@/components/overview/StatusStrip";
 import {
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -228,6 +232,31 @@ export default function CashflowPage() {
             </Card>
           </div>
 
+          {(cashflow.timeline?.length ?? 0) > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Wpływy vs wydatki (tydzień)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="mb-3 text-sm text-muted-foreground">
+                  Słupki = faktyczne ruchy na kontach w budżecie. Linie = zaplanowane wypłaty i rachunki.
+                </p>
+                <ResponsiveContainer width="100%" height={240}>
+                  <ComposedChart data={cashflow.timeline}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 10 }} />
+                    <Tooltip formatter={(v) => formatCurrency(Number(v))} />
+                    <Legend />
+                    <Bar dataKey="actualIn" fill="#16a34a" name="Wpływy" />
+                    <Bar dataKey="actualOut" fill="#ef4444" name="Wydatki" />
+                    <Line type="monotone" dataKey="plannedIn" stroke="#86efac" name="Plan wpływy" />
+                    <Line type="monotone" dataKey="plannedOut" stroke="#fca5a5" name="Plan wydatki" />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
           {data.supervision?.runway && data.supervision.runway.length > 0 && (
             <Card>
               <CardHeader>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TransactionForm } from "@/components/transactions/TransactionForm";
@@ -46,7 +46,9 @@ export default function TransactionsPage() {
         }}
       />
 
-      <TransactionList year={year} month={month} />
+      <Suspense fallback={<p className="text-center text-muted-foreground">Ładowanie...</p>}>
+        <TransactionList year={year} month={month} />
+      </Suspense>
       <TransactionForm open={formOpen} onOpenChange={setFormOpen} />
       <ReceiptScanner open={scannerOpen} onOpenChange={setScannerOpen} />
     </div>

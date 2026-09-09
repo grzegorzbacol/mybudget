@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,6 +33,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
   const [addOpen, setAddOpen] = useState(false);
   const [groupName, setGroupName] = useState("Życie codzienne");
   const [catName, setCatName] = useState("");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const allocateMany = useAllocateMany();
   const queryClient = useQueryClient();
 
@@ -77,8 +78,8 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
 
       <div
         className={cn(
-          "rounded-lg border p-4",
-          rtaPositive ? "border-green-500/30 bg-green-500/5" : "border-red-500/30 bg-red-500/5"
+          "sticky top-14 z-20 rounded-lg border p-4 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/90",
+          rtaPositive ? "border-green-500/30 bg-green-500/10" : "border-red-500/30 bg-red-500/10"
         )}
       >
         <p className="text-sm text-muted-foreground">Do rozdzielenia</p>
@@ -108,6 +109,15 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
           <p className="mt-3 text-sm text-muted-foreground">
             Nadaj każdej złotówce zadanie — przydziel przychód do kopert.
           </p>
+        )}
+        {(data.uncategorizedCount ?? 0) > 0 && (
+          <a
+            href="/transactions?filter=uncategorized"
+            className="mt-3 block rounded-md border border-amber-500/40 bg-background px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
+          >
+            {data.uncategorizedCount}{" "}
+            {data.uncategorizedCount === 1 ? "transakcja bez kategorii" : "transakcji bez kategorii"} — przypisz koperty.
+          </a>
         )}
         {gapPlan.length > 0 && data.readyToAssign > 0 && (
           <Button
@@ -155,7 +165,21 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
         {data.groups.map((group) => (
           <div key={group.groupName}>
             <div className="grid grid-cols-12 items-center gap-2 border-b bg-muted/40 px-4 py-2 text-sm font-semibold">
-              <div className="col-span-12 md:col-span-4">{group.groupName}</div>
+              <button
+                type="button"
+                className="col-span-12 flex items-center gap-2 text-left md:col-span-4"
+                onClick={() => {
+                  const next = new Set(collapsed);
+                  if (next.has(group.groupName)) next.delete(group.groupName);
+                  else next.add(group.groupName);
+                  setCollapsed(next);
+                }}
+              >
+                <ChevronDown
+                  className={cn("h-4 w-4 shrink-0 transition-transform", collapsed.has(group.groupName) && "-rotate-90")}
+                />
+                {group.groupName}
+              </button>
               <div className="col-span-4 hidden text-right tabular-nums md:col-span-2 md:block">
                 {formatCurrency(group.assigned)}
               </div>
@@ -167,7 +191,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
               </div>
             </div>
 
-            {group.categories.map((row) => {
+            {!collapsed.has(group.groupName) && group.categories.map((row) => {
               const overBudget = row.available < 0;
               const unfunded = row.upcoming > 0 && row.available + 0.0001 < row.upcoming;
 

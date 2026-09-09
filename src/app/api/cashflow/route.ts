@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { buildBudgetMonthData } from "@/lib/budget";
-import { computeCashflow, upcomingByCategory } from "@/lib/cashflow";
+import { computeCashflow, upcomingByCategory, buildCashflowTimeline } from "@/lib/cashflow";
 import { addDays, monthRange } from "@/lib/money";
 import { getAuthContext, ensureMonthAllocations, loadBudgetSnapshot } from "@/lib/api-helpers";
 import { getCurrentYearMonth } from "@/lib/format";
@@ -43,6 +43,14 @@ export async function GET(request: Request) {
     categories: snapshot.categories,
     accounts: snapshot.accounts,
     rows,
+  });
+  cashflow.timeline = buildCashflowTimeline({
+    from: addDays(today, -28),
+    to,
+    transactions: snapshot.transactions,
+    accounts: snapshot.accounts,
+    scheduled: snapshot.scheduled,
+    bucket: "week",
   });
   const actual = monthCashActual(snapshot.transactions, snapshot.accounts, year, month);
   const remainingIncome = cashflow.items

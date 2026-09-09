@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeCashflow, generateScheduleOccurrences, nextScheduleDate } from "./cashflow";
+import { computeCashflow, generateScheduleOccurrences, nextScheduleDate, buildCashflowTimeline } from "./cashflow";
 import type { Account, BudgetCategory, BudgetCategoryRow, ScheduledTransaction } from "./types";
 
 const rent: ScheduledTransaction = {
@@ -101,5 +101,36 @@ describe("scheduled cashflow", () => {
     expect(cashflow.unfundedTotal).toBe(1500);
     expect(cashflow.items.find((i) => i.payee === "Czynsz")?.funded).toBe(false);
     expect(cashflow.byCategory[0].shortfall).toBe(1500);
+  });
+
+  it("builds weekly actual vs planned inflow and outflow", () => {
+    const checking: Account = {
+      id: "checking",
+      family_id: "fam",
+      name: "Konto",
+      type: "checking",
+      balance: 1000,
+      currency: "PLN",
+      owner_user_id: null,
+      created_at: "",
+      on_budget: true,
+    };
+    const timeline = buildCashflowTimeline({
+      from: "2026-09-01",
+      to: "2026-09-14",
+      accounts: [checking],
+      scheduled: [rent, payday],
+      transactions: [
+        { account_id: "checking", category_id: null, amount: 8000, date: "2026-09-10" },
+        { account_id: "checking", category_id: "rent", amount: -2000, date: "2026-09-05" },
+      ],
+      bucket: "week",
+    });
+    const weekOfRent = timeline.find((row) => row.key <= "2026-09-05" && row.key >= "2026-08-31");
+    expect(weekOfRent?.actualOut).toBe(2000);
+    expect(weekOfRent?.plannedOut).toBe(2000);
+    const weekOfPay = timeline.find((row) => row.plannedIn === 8000 || row.actualIn === 8000);
+    expect(weekOfPay?.actualIn).toBe(8000);
+    expect(weekOfPay?.plannedIn).toBe(8000);
   });
 });

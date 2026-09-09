@@ -142,6 +142,7 @@ export interface BudgetMonthData {
   totalActivity: number;
   totalAvailable: number;
   onBudgetBalance: number;
+  uncategorizedCount: number;
   groups: BudgetGroup[];
 }
 
@@ -190,6 +191,15 @@ export interface CashflowItem {
   shortfall: number;
 }
 
+export interface CashflowBucket {
+  key: string;
+  label: string;
+  actualIn: number;
+  actualOut: number;
+  plannedIn: number;
+  plannedOut: number;
+}
+
 export interface CashflowData {
   from: string;
   to: string;
@@ -208,6 +218,7 @@ export interface CashflowData {
     funded: boolean;
     shortfall: number;
   }>;
+  timeline: CashflowBucket[];
 }
 
 export interface WealthSnapshot {

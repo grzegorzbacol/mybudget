@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, planFillEnvelopeGaps } from "./budget";
+import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, planFillEnvelopeGaps, uncategorizedExpenses } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -238,5 +238,15 @@ describe("YNAB envelope math", () => {
       { category_id: "rent", allocated: 800, add: 800 },
       { category_id: "food", allocated: 140, add: 40 },
     ]);
+  });
+
+  it("flags uncategorized outflows for the month", () => {
+    const txs = [
+      tx({ amount: -40, date: "2026-09-02" }),
+      tx({ amount: -12, date: "2026-09-03", category_id: "groceries" }),
+      tx({ amount: -9, date: "2026-08-20" }),
+    ];
+    expect(uncategorizedExpenses(txs, 2026, 9)).toHaveLength(1);
+    expect(buildBudgetMonthData(2026, 9, [category("groceries", "Zakupy")], [], [account("checking", 100)], txs).uncategorizedCount).toBe(1);
   });
 });

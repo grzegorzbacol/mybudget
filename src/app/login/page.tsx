@@ -53,12 +53,14 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl">MyBudget</CardTitle>
-          <CardDescription>Zaloguj się do swojego budżetu</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleLogin} className="space-y-4">
+          <CardHeader className="text-center">
+            <CardTitle className="text-2xl">MyBudget</CardTitle>
+            <CardDescription>
+              Budżet kopertowy: nadaj każdej złotówce zadanie. Do rozdzielenia, kategorie, konta i przepływy.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleLogin} className="flex flex-col gap-4">
             <div>
               <Label htmlFor="email">Email</Label>
               <Input
