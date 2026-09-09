@@ -3,7 +3,7 @@
 ## Wymagania
 
 - Repozytorium Git (GitHub / GitLab / Gitea)
-- Projekt Supabase z uruchomionymi migracjami `supabase/migrations/*.sql` (w tym `002_ynab_model.sql`, `006_transfer_columns.sql` i `007_scheduled_transactions.sql`)
+- Projekt Supabase z uruchomionymi migracjami `supabase/migrations/*.sql` (w tym `002_ynab_model.sql`, `006_transfer_columns.sql`, `007_scheduled_transactions.sql` i `008_account_columns.sql`)
 - Klucze API: Supabase, OpenAI (opcjonalnie Google Vision)
 
 ## Kroki w Coolify
@@ -118,6 +118,7 @@ Po dodaniu HTTPS do panelu Coolify możesz włączyć **Auto Deploy** w ustawien
 
 - **Budżet pusty / 500 `transfer_account_id does not exist`:** Redeploy; w logach startu musi przejść `006_transfer_columns.sql` albo `ensure-schema.sql`. `DATABASE_URL` = baza PostgREST. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/006_transfer_columns.sql`
 - **Cashflow 500 `scheduled_transactions` / schema cache:** Redeploy; w logach startu `007_scheduled_transactions.sql` albo `ensure-schema.sql` musi utworzyć tabelę. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/007_scheduled_transactions.sql`
+- **Nie da się utworzyć konta / „nie znaleziono konta” przy wydatku:** brak `accounts.on_budget` albo stary `accounts_type_check`. Redeploy; `008_account_columns.sql` + ensure-schema. UI idzie przez `POST /api/accounts` (retry bez kolumny / po naprawie constraintu).
 - **Biały ekran / brak auth:** sprawdź `NEXT_PUBLIC_*` przy buildzie
 - **OCR nie działa:** `OPENAI_API_KEY` w runtime
 - **Magic link nie działa:** redirect URL w Supabase

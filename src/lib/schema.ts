@@ -31,6 +31,19 @@ export function missingScheduledTableMessage(raw?: string | null): string {
 export const ENSURE_SCHEMA_STATEMENTS = [
   `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
   `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS on_budget boolean NOT NULL DEFAULT true`,
+  `ALTER TABLE accounts DROP CONSTRAINT IF EXISTS accounts_type_check`,
+  `DO $$
+BEGIN
+  ALTER TABLE accounts
+    ADD CONSTRAINT accounts_type_check
+    CHECK (type IN (
+      'checking', 'savings', 'cash', 'credit',
+      'investment', 'property', 'vehicle', 'other_asset',
+      'loan', 'mortgage', 'other_liability'
+    ));
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$`,
   `ALTER TABLE budget_categories ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'expense'`,
   `ALTER TABLE budget_allocations ADD COLUMN IF NOT EXISTS moved numeric NOT NULL DEFAULT 0`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid`,

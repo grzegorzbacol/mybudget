@@ -54,6 +54,11 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     if [ "$scheduled" != "1" ]; then
       echo "WARNING: public.scheduled_transactions is still missing. DATABASE_URL may point at the wrong database."
     fi
+
+    onbudget=$(psql "$dburl" -tAc "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='accounts' AND column_name='on_budget'" 2>/dev/null | tr -d ' ')
+    if [ "$onbudget" != "1" ]; then
+      echo "WARNING: accounts.on_budget is still missing. DATABASE_URL may point at the wrong database."
+    fi
   else
     echo "WARNING: Could not connect to database. Check DATABASE_URL / POSTGRES_URL."
   fi

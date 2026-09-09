@@ -21,7 +21,7 @@ import {
 import { useCreateTransaction, useCreateTransfer } from "@/hooks/use-transactions";
 import { useFamily, useFamilyMembers } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { isExpenseCategory, isOnBudget } from "@/lib/budget";
 import { customSplits, equalSplits, splitsMatchTotal } from "@/lib/splits";
@@ -48,6 +48,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
   const { data: members } = useFamilyMembers();
   const createTransaction = useCreateTransaction();
   const createTransfer = useCreateTransfer();
+  const queryClient = useQueryClient();
   const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -86,6 +87,27 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
     setSplitUnit("pln");
     setCustomAmounts({});
   }, [open, prefill]);
+
+  const createDefaultAccount = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Konto główne", type: "checking", on_budget: true }),
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.id) {
+        throw new Error(typeof json.error === "string" ? json.error : "Nie udało się utworzyć konta");
+      }
+      return json as { id: string };
+    },
+    onSuccess: (account) => {
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      setAccountId(account.id);
+      toast.success("Utworzono Konto główne");
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Nie udało się utworzyć konta"),
+  });
 
   const { data: accounts } = useQuery({
     queryKey: ["accounts", familyData?.family.id],
@@ -366,13 +388,20 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
           </div>
 
           {(!accounts || accounts.length === 0) && (
-            <p className="text-sm text-amber-600">
-              Nie masz jeszcze konta. Dodaj je w{" "}
-              <a className="underline" href="/accounts">
-                Kontach
-              </a>{" "}
-              albo w kreatorze startu.
-            </p>
+            <div className="space-y-2 rounded-md border border-amber-500/40 px-3 py-2">
+              <p className="text-sm text-amber-800">
+                Nie masz jeszcze konta — bez niego nie da się dodać wydatku.
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={createDefaultAccount.isPending}
+                onClick={() => createDefaultAccount.mutate()}
+              >
+                {createDefaultAccount.isPending ? "Tworzenie..." : "Utwórz Konto główne"}
+              </Button>
+            </div>
           )}
 
           <div>
@@ -563,7 +592,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
           <Button
             type="submit"
             className={`w-full ${type === "income" ? "bg-green-600 hover:bg-green-700" : ""}`}
-            disabled={pending}
+            disabled={pending || !accountId}
           >
             {pending
               ? "Zapisywanie..."

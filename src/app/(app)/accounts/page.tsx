@@ -79,22 +79,19 @@ export default function AccountsPage() {
 
   const createAccount = useMutation({
     mutationFn: async () => {
-      const { data: created, error } = await supabase
-        .from("accounts")
-        .insert({
-          family_id: familyData!.family.id,
-          name,
-          type,
-          balance: 0,
-          currency: familyData!.family.currency,
-          on_budget: onBudget,
-        })
-        .select()
-        .single();
-      if (error) throw error;
+      const res = await fetch("/api/accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, type, on_budget: onBudget }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(typeof json.error === "string" ? json.error : "Błąd tworzenia konta");
+      }
+      const created = json;
 
       const openingAmount = parseFloat(opening) || 0;
-      if (openingAmount !== 0 && created) {
+      if (openingAmount !== 0 && created?.id) {
         const signed = isLiabilityType(type) ? -Math.abs(openingAmount) : openingAmount;
         const { error: txError } = await supabase.from("transactions").insert({
           family_id: familyData!.family.id,
@@ -119,7 +116,7 @@ export default function AccountsPage() {
       setOpening("");
       setOnBudget(true);
     },
-    onError: () => toast.error("Błąd tworzenia konta"),
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd tworzenia konta"),
   });
 
   const reconcile = useMutation({

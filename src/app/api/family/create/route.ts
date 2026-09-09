@@ -4,6 +4,7 @@ import { DEFAULT_CATEGORIES } from "@/lib/default-categories";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentYearMonth } from "@/lib/format";
+import { createAccountRow } from "@/lib/accounts";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
     .insert(categories)
     .select();
 
-  await admin.from("accounts").insert({
+  const createdAccount = await createAccountRow(admin, {
     family_id: family.id,
     name: "Konto główne",
     type: "checking",
@@ -71,6 +72,9 @@ export async function POST(request: Request) {
     currency: "PLN",
     on_budget: true,
   });
+  if (!createdAccount.account) {
+    console.error("[family/create] default account", createdAccount.error);
+  }
 
   const { year, month } = getCurrentYearMonth();
   if (insertedCategories) {
