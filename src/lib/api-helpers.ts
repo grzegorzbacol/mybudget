@@ -96,18 +96,28 @@ export async function loadBudgetSnapshot(
       supabase.from("scheduled_transactions").select("*").eq("family_id", familyId),
     ]);
 
+  let transactions = (transactionsRes.data ?? []) as LedgerTransaction[];
+  let transactionsError = transactionsRes.error?.message;
+  if (transactionsRes.error) {
+    const fallback = await supabase
+      .from("transactions")
+      .select("id, account_id, category_id, amount, date, cleared")
+      .eq("family_id", familyId);
+    transactions = (fallback.data ?? []) as LedgerTransaction[];
+    transactionsError = fallback.error?.message;
+  }
+
   return {
     categories: (categoriesRes.data ?? []) as BudgetCategory[],
     allocations: (allocationsRes.data ?? []) as BudgetAllocation[],
     accounts: (accountsRes.data ?? []) as Account[],
-    transactions: (transactionsRes.data ?? []) as LedgerTransaction[],
+    transactions,
     scheduled: (scheduledRes.data ?? []) as ScheduledTransaction[],
     error:
       categoriesRes.error?.message ||
       allocationsRes.error?.message ||
       accountsRes.error?.message ||
-      transactionsRes.error?.message ||
-      scheduledRes.error?.message,
+      transactionsError,
   };
 }
 

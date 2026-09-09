@@ -10,8 +10,11 @@ export function useBudget(year: number, month: number) {
     queryKey: ["budget", year, month],
     queryFn: async () => {
       const res = await fetch(`/api/budget/${year}/${month}`);
-      if (!res.ok) throw new Error("Nie udało się pobrać budżetu");
-      return res.json();
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof payload.error === "string" ? payload.error : "Nie udało się pobrać budżetu");
+      }
+      return payload;
     },
   });
 }

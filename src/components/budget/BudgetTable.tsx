@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { useAllocateMany, useBudget } from "@/hooks/use-budget";
 import { formatCurrency, getMonthLabel } from "@/lib/format";
-import { planFillEnvelopeGaps } from "@/lib/budget";
+import { envelopeRowsFromBudget, planFillEnvelopeGaps } from "@/lib/budget";
 import { cn } from "@/lib/utils";
 import { CategoryPanel } from "./CategoryPanel";
 import { AssignedInput, Money } from "./AssignedInput";
@@ -28,7 +28,7 @@ interface BudgetTableProps {
 }
 
 export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
-  const { data, isLoading } = useBudget(year, month);
+  const { data, isPending, isError, error, refetch, isFetching } = useBudget(year, month);
   const [selected, setSelected] = useState<BudgetCategoryRow | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [groupName, setGroupName] = useState("Życie codzienne");
@@ -50,15 +50,15 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
     onMonthChange(y, m);
   };
 
-  if (isLoading) {
+  if (isPending && !data) {
     return <div className="p-8 text-center text-muted-foreground">Ładowanie budżetu...</div>;
   }
 
-  if (!data) return null;
-
-  const rtaPositive = data.readyToAssign >= 0;
-  const allRows = data.groups.flatMap((g) => g.categories);
-  const gapPlan = planFillEnvelopeGaps(allRows, data.readyToAssign);
+  const groups = Array.isArray(data?.groups) ? data.groups : [];
+  const allRows = envelopeRowsFromBudget(data);
+  const readyToAssign = Number(data?.readyToAssign) || 0;
+  const rtaPositive = readyToAssign >= 0;
+  const gapPlan = planFillEnvelopeGaps(allRows, readyToAssign);
   const gapTotal = gapPlan.reduce((sum, row) => sum + row.add, 0);
   const selectedRow = selected
     ? allRows.find((row) => row.category.id === selected.category.id) ?? selected
@@ -84,42 +84,53 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
       >
         <p className="text-sm text-muted-foreground">Do rozdzielenia</p>
         <p className={cn("text-2xl font-bold", !rtaPositive && "text-red-500")}>
-          {formatCurrency(data.readyToAssign)}
+          {formatCurrency(readyToAssign)}
         </p>
         <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
           <div>
             <p className="text-muted-foreground">Przychody w miesiącu</p>
-            <p className="font-medium">{formatCurrency(data.incomeThisMonth)}</p>
+            <p className="font-medium">{formatCurrency(data?.incomeThisMonth ?? 0)}</p>
           </div>
           <div>
             <p className="text-muted-foreground">Przydzielone</p>
-            <p className="font-medium">{formatCurrency(data.totalAllocated)}</p>
+            <p className="font-medium">{formatCurrency(data?.totalAllocated ?? 0)}</p>
           </div>
           <div>
             <p className="text-muted-foreground">Saldo w budżecie</p>
-            <p className="font-medium">{formatCurrency(data.onBudgetBalance)}</p>
+            <p className="font-medium">{formatCurrency(data?.onBudgetBalance ?? 0)}</p>
           </div>
         </div>
-        {!rtaPositive && (
+        {isError && (
+          <div className="mt-3 rounded-md border border-amber-500/40 bg-background p-3 text-sm">
+            <p className="font-medium">Nie udało się wczytać kopert</p>
+            <p className="mt-1 text-muted-foreground">
+              {error instanceof Error ? error.message : "Sprawdź połączenie i spróbuj ponownie."}
+            </p>
+            <Button className="mt-2" size="sm" variant="outline" disabled={isFetching} onClick={() => refetch()}>
+              {isFetching ? "Wczytywanie…" : "Spróbuj ponownie"}
+            </Button>
+          </div>
+        )}
+        {!rtaPositive && data && (
           <p className="mt-3 text-sm text-red-600 dark:text-red-400">
             Przydzieliłeś więcej, niż masz. Cofnij przydział albo przenieś środki z kategorii.
           </p>
         )}
-        {rtaPositive && data.readyToAssign > 0 && (
+        {rtaPositive && readyToAssign > 0 && (
           <p className="mt-3 text-sm text-muted-foreground">
             Nadaj każdej złotówce zadanie — przydziel przychód do kopert.
           </p>
         )}
-        {(data.uncategorizedCount ?? 0) > 0 && (
+        {(data?.uncategorizedCount ?? 0) > 0 && (
           <a
             href="/transactions?filter=uncategorized"
             className="mt-3 block rounded-md border border-amber-500/40 bg-background px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
           >
-            {data.uncategorizedCount}{" "}
-            {data.uncategorizedCount === 1 ? "transakcja bez kategorii" : "transakcji bez kategorii"} — przypisz koperty.
+            {data?.uncategorizedCount}{" "}
+            {data?.uncategorizedCount === 1 ? "transakcja bez kategorii" : "transakcji bez kategorii"} — przypisz koperty.
           </a>
         )}
-        {gapPlan.length > 0 && data.readyToAssign > 0 && (
+        {gapPlan.length > 0 && readyToAssign > 0 && (
           <Button
             className="mt-3"
             size="sm"
@@ -139,7 +150,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             Zasil braki ({formatCurrency(gapTotal)})
           </Button>
         )}
-        {data.onBudgetBalance === 0 && data.incomeThisMonth === 0 && (
+        {data && data.onBudgetBalance === 0 && data.incomeThisMonth === 0 && (
           <div className="mt-3 rounded-md border bg-background p-3 text-sm">
             <p className="font-medium">Pierwsza sesja</p>
             <ol className="mt-1 list-decimal space-y-1 pl-4 text-muted-foreground">
@@ -163,7 +174,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
           <div className="col-span-3 text-right">Dostępne</div>
         </div>
 
-        {data.groups.map((group) => (
+        {groups.map((group) => (
           <div key={group.groupName}>
             <div className="grid grid-cols-12 items-center gap-2 border-b bg-muted/40 px-4 py-2 text-sm font-semibold">
               <button
@@ -192,7 +203,8 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
               </div>
             </div>
 
-            {!collapsed.has(group.groupName) && group.categories.map((row) => {
+            {!collapsed.has(group.groupName) && (group.categories ?? []).map((row) => {
+              if (!row?.category?.id) return null;
               const overBudget = row.available < 0;
               const unfunded = row.upcoming > 0 && row.available + 0.0001 < row.upcoming;
 
@@ -265,9 +277,11 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
         ))}
       </div>
 
-      {data.groups.length === 0 && (
+      {groups.length === 0 && (
         <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-          Brak kopert. Dodaj pierwszą kategorię, żeby zacząć przydzielać pieniądze.
+          {isError
+            ? "Koperty pojawią się tutaj po ponownym wczytaniu budżetu."
+            : "Brak kopert. Dodaj pierwszą kategorię, żeby zacząć przydzielać pieniądze."}
         </div>
       )}
 
@@ -281,7 +295,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
           row={selectedRow}
           year={year}
           month={month}
-          readyToAssign={data.readyToAssign}
+          readyToAssign={readyToAssign}
           categories={allRows}
           open={!!selected}
           onOpenChange={(open) => !open && setSelected(null)}

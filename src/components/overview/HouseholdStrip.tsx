@@ -24,7 +24,7 @@ export function HouseholdStrip() {
   });
 
   if (!members?.length) return null;
-  const debt = settle?.debts[0];
+  const debt = settle?.debts?.[0];
 
   return (
     <Card>
@@ -33,7 +33,7 @@ export function HouseholdStrip() {
         <div className="min-w-[180px] flex-1">
           <p className="text-sm font-medium">Wspólny budżet</p>
           <p className="text-xs text-muted-foreground">
-            {members.length} {members.length === 1 ? "osoba" : "osoby"} · wspólne koperty i Do rozdzielenia
+            {members.length} {members.length === 1 ? "osoba" : members.length < 5 ? "osoby" : "osób"} · wspólne koperty i Do rozdzielenia
             {" · "}
             {members.map((m) => m.profile?.display_name ?? "Domownik").join(", ")}
           </p>
