@@ -70,6 +70,33 @@ export default function SettingsPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle className="text-base">Pierwsza sesja</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <Button variant="outline" asChild>
+            <Link href="/setup">Kreator startu</Link>
+          </Button>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              const res = await fetch("/api/setup/demo", { method: "POST" });
+              const data = await res.json();
+              if (!res.ok) {
+                toast.error(typeof data.error === "string" ? data.error : "Błąd");
+                return;
+              }
+              toast.success("Wczytano dane przykładowe");
+              queryClient.invalidateQueries();
+              router.push("/budget");
+            }}
+          >
+            Wczytaj dane przykładowe
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle className="text-base">Rodzina</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">

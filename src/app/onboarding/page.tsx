@@ -33,7 +33,7 @@ export default function OnboardingPage() {
       if (!res.ok) throw new Error(data.error);
 
       toast.success("Rodzina utworzona!");
-      router.push("/budget");
+      router.push("/setup");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Błąd");
     } finally {

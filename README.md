@@ -32,9 +32,11 @@ npm install
 2. W SQL Editor uruchom migracje po kolei:
    - `supabase/migrations/001_initial_schema.sql`
    - `supabase/migrations/002_ynab_model.sql`
+   - `supabase/migrations/003_household_splits.sql`
+   - `supabase/migrations/004_wealth_accounts.sql`
 3. Włącz Realtime dla `transactions`, `budget_allocations` i `scheduled_transactions` (002 robi to automatycznie, jeśli publikacja istnieje).
 
-Istniejąca baza: wystarczy odpalić `002_ynab_model.sql` (jest idempotentna).
+Istniejąca baza: odpal `002`, `003` i `004` (są idempotentne) albo zredeployuj Docker/Coolify.
 
 ### 3. Zmienne środowiskowe
 
@@ -52,7 +54,9 @@ npm run dev
 
 Aplikacja: [http://localhost:3000](http://localhost:3000)
 
-Zarejestruj konto, utwórz gospodarstwo, dodaj saldo początkowe na koncie, zapisz przychód, przydziel do kopert.
+Zarejestruj konto → utwórz gospodarstwo → kreator startu (saldo albo dane przykładowe) → przydziel Do rozdzielenia.
+
+Dane przykładowe (tylko pusty budżet): Ustawienia → **Wczytaj dane przykładowe**, albo `POST /api/setup/demo` po zalogowaniu.
 
 ## Funkcje
 
@@ -67,6 +71,7 @@ Zarejestruj konto, utwórz gospodarstwo, dodaj saldo początkowe na koncie, zapi
 - **Wspólny budżet** — zaproszenia, podział wydatków, rozliczenia kto komu
 - **Import CSV/OFX** — PKO / ING / mBank (żywe PSD2 z mBank — później, przez agregator)
 - **Raporty** — wykresy, PDF
+- **Majątek** — aktywa, zobowiązania, wartość netto i trend
 - **PWA** — instalacja na telefonie
 
 ## Testy

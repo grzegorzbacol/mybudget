@@ -28,6 +28,7 @@ import type { ScheduledInput } from "@/lib/validators";
 import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import { StatusStrip } from "@/components/overview/StatusStrip";
 
 interface CashflowResponse {
   budget: BudgetMonthData;
@@ -165,8 +166,10 @@ export default function CashflowPage() {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        YNAB nie prognozuje salda konta „w ciemno”. Tu widać nadchodzące ruchy i czy koperty są na nie zasilone.
+        Koperty mówią, czy plan jest zasilony. Poniżej: czy wychodzisz na plus i kiedy saldo w budżecie mogłoby spaść poniżej zera przy zaplanowanych ruchach.
       </p>
+
+      <StatusStrip />
 
       {isLoading && <p className="text-center text-muted-foreground">Ładowanie...</p>}
 

@@ -4,6 +4,7 @@ import { computeCashflow, upcomingByCategory } from "@/lib/cashflow";
 import { addDays, monthRange } from "@/lib/money";
 import { getAuthContext, ensureMonthAllocations, loadBudgetSnapshot } from "@/lib/api-helpers";
 import { getCurrentYearMonth } from "@/lib/format";
+import { computeNetWorth, computeRunway, monthCashActual, netWorthHistory } from "@/lib/wealth";
 
 export async function GET(request: Request) {
   const ctx = await getAuthContext();
@@ -43,10 +44,39 @@ export async function GET(request: Request) {
     accounts: snapshot.accounts,
     rows,
   });
+  const actual = monthCashActual(snapshot.transactions, snapshot.accounts, year, month);
+  const remainingIncome = cashflow.items
+    .filter((item) => item.kind === "income" && item.date >= start && item.date < end)
+    .reduce((sum, item) => sum + item.amount, 0);
+  const remainingSpend = cashflow.items
+    .filter((item) => item.kind === "expense" && item.date >= start && item.date < end)
+    .reduce((sum, item) => sum + Math.abs(item.amount), 0);
+  const projectedNet = actual.net + remainingIncome - remainingSpend;
+  const runway = computeRunway({
+    onBudgetBalance: budget.onBudgetBalance,
+    accounts: snapshot.accounts,
+    scheduled: snapshot.scheduled,
+    from: today,
+    to,
+  });
+  const totals = computeNetWorth(snapshot.accounts);
 
   return NextResponse.json({
     budget,
     cashflow,
     scheduled: snapshot.scheduled,
+    wealth: {
+      ...totals,
+      history: netWorthHistory(snapshot.accounts, snapshot.transactions),
+    },
+    supervision: {
+      actualIncome: actual.income,
+      actualSpending: actual.spending,
+      monthNet: actual.net,
+      inTheBlack: projectedNet >= 0 && cashflow.unfundedTotal <= 0.005 && budget.readyToAssign >= 0,
+      tightOn: runway.tightOn,
+      tightPayee: runway.tightPayee,
+      runway: runway.points,
+    },
   });
 }

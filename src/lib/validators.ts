@@ -64,7 +64,19 @@ export const familyJoinSchema = z.object({
 
 export const accountSchema = z.object({
   name: z.string().min(1),
-  type: z.enum(["checking", "savings", "cash", "credit"]),
+  type: z.enum([
+    "checking",
+    "savings",
+    "cash",
+    "credit",
+    "investment",
+    "property",
+    "vehicle",
+    "other_asset",
+    "loan",
+    "mortgage",
+    "other_liability",
+  ]),
   balance: z.number().optional(),
   owner_user_id: z.string().uuid().nullable().optional(),
   on_budget: z.boolean().optional(),

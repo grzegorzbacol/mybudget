@@ -27,7 +27,7 @@ test.describe("Authentication", () => {
     await expect(page).toHaveURL(/\/login/);
     await page.goto("/savings");
     await expect(page).toHaveURL(/\/login/);
-    await page.goto("/settle");
+    await page.goto("/wealth");
     await expect(page).toHaveURL(/\/login/);
   });
 });

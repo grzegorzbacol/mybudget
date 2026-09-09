@@ -1,5 +1,16 @@
 export type FamilyRole = "owner" | "admin" | "member";
-export type AccountType = "checking" | "savings" | "cash" | "credit";
+export type AccountType =
+  | "checking"
+  | "savings"
+  | "cash"
+  | "credit"
+  | "investment"
+  | "property"
+  | "vehicle"
+  | "other_asset"
+  | "loan"
+  | "mortgage"
+  | "other_liability";
 export type TransactionSource = "manual" | "ocr" | "import";
 export type GoalType = "target_balance" | "monthly_contribution" | "pay_off";
 export type CategoryKind = "expense" | "income";
@@ -197,6 +208,23 @@ export interface CashflowData {
     funded: boolean;
     shortfall: number;
   }>;
+}
+
+export interface WealthSnapshot {
+  assets: number;
+  liabilities: number;
+  netWorth: number;
+  history: Array<{ date: string; netWorth: number; assets: number; liabilities: number }>;
+}
+
+export interface CashflowSupervision {
+  actualIncome: number;
+  actualSpending: number;
+  monthNet: number;
+  inTheBlack: boolean;
+  tightOn: string | null;
+  tightPayee: string | null;
+  runway: Array<{ date: string; payee: string; amount: number; balance: number }>;
 }
 
 export interface OcrReceiptResult {

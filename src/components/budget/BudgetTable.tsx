@@ -95,7 +95,9 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
           <div className="mt-3 rounded-md border bg-background p-3 text-sm">
             <p className="font-medium">Pierwsza sesja</p>
             <ol className="mt-1 list-decimal space-y-1 pl-4 text-muted-foreground">
-              <li>W Kontach wpisz saldo początkowe (albo dodaj przychód).</li>
+              <li>
+                Otwórz <a className="underline" href="/setup">kreator startu</a> i wpisz saldo, albo wczytaj dane przykładowe.
+              </li>
               <li>Wróć tutaj — kwota spadnie do „Do rozdzielenia”.</li>
               <li>Przydziel pieniądze do kopert, aż Do rozdzielenia = 0 zł.</li>
               <li>W Przepływach zaplanuj wypłatę i stałe opłaty.</li>

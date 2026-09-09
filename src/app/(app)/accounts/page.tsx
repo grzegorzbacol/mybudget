@@ -32,16 +32,11 @@ import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/format";
 import { isOnBudget } from "@/lib/budget";
+import { ACCOUNT_TYPE_META, computeNetWorth, isLiabilityType } from "@/lib/wealth";
 import type { Account, Transaction } from "@/lib/types";
 import { toast } from "sonner";
 import { TransactionList } from "@/components/transactions/TransactionList";
-
-const TYPE_LABEL: Record<string, string> = {
-  checking: "Rozliczeniowe",
-  savings: "Oszczędnościowe",
-  cash: "Gotówka",
-  credit: "Kredytowe",
-};
+import Link from "next/link";
 
 export default function AccountsPage() {
   const { data: familyData } = useFamily();
@@ -100,10 +95,11 @@ export default function AccountsPage() {
 
       const openingAmount = parseFloat(opening) || 0;
       if (openingAmount !== 0 && created) {
+        const signed = isLiabilityType(type) ? -Math.abs(openingAmount) : openingAmount;
         const { error: txError } = await supabase.from("transactions").insert({
           family_id: familyData!.family.id,
           account_id: created.id,
-          amount: openingAmount,
+          amount: signed,
           payee: "Saldo początkowe",
           memo: "Opening balance",
           date: new Date().toISOString().slice(0, 10),
@@ -157,6 +153,7 @@ export default function AccountsPage() {
   const trackingAccounts = accounts?.filter((a) => !isOnBudget(a)) ?? [];
   const totalOnBudget = onBudgetAccounts.reduce((s, a) => s + Number(a.balance), 0);
   const totalTracking = trackingAccounts.reduce((s, a) => s + Number(a.balance), 0);
+  const wealth = computeNetWorth(accounts ?? []);
 
   const clearedByAccount = useMemo(() => {
     const map = new Map<string, number>();
@@ -195,7 +192,7 @@ export default function AccountsPage() {
             <button type="button" className="text-left" onClick={() => setSelected(account)}>
               <p className="font-medium">{account.name}</p>
               <p className="text-xs text-muted-foreground">
-                {TYPE_LABEL[account.type] ?? account.type}
+                {ACCOUNT_TYPE_META[account.type]?.label ?? account.type}
                 {isOnBudget(account) ? "" : " · śledzone (poza budżetem)"}
               </p>
             </button>
@@ -234,7 +231,18 @@ export default function AccountsPage() {
         </Button>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Wartość netto</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-3xl font-bold">{formatCurrency(wealth.netWorth)}</p>
+            <Button variant="link" className="h-auto px-0" asChild>
+              <Link href="/wealth">Zobacz majątek</Link>
+            </Button>
+          </CardContent>
+        </Card>
         <Card>
           <CardHeader>
             <CardTitle className="text-base">W budżecie</CardTitle>
@@ -250,7 +258,7 @@ export default function AccountsPage() {
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-bold">{formatCurrency(totalTracking)}</p>
-            <p className="text-sm text-muted-foreground">Poza budżetem (np. inwestycje).</p>
+            <p className="text-sm text-muted-foreground">Poza budżetem (np. inwestycje, mieszkanie).</p>
           </CardContent>
         </Card>
       </div>
@@ -307,15 +315,23 @@ export default function AccountsPage() {
             </div>
             <div>
               <Label>Typ</Label>
-              <Select value={type} onValueChange={setType}>
+              <Select
+                value={type}
+                onValueChange={(value) => {
+                  setType(value);
+                  const meta = ACCOUNT_TYPE_META[value as keyof typeof ACCOUNT_TYPE_META];
+                  if (meta) setOnBudget(meta.onBudget);
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="checking">Rozliczeniowe</SelectItem>
-                  <SelectItem value="savings">Oszczędnościowe</SelectItem>
-                  <SelectItem value="cash">Gotówka</SelectItem>
-                  <SelectItem value="credit">Kredytowe</SelectItem>
+                  {Object.entries(ACCOUNT_TYPE_META).map(([value, meta]) => (
+                    <SelectItem key={value} value={value}>
+                      {meta.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -328,10 +344,16 @@ export default function AccountsPage() {
                 onChange={(e) => setOpening(e.target.value)}
                 placeholder="0.00"
               />
-              {onBudget && (
+              {isLiabilityType(type) ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Wpisz kwotę zadłużenia (dodatnią). Zapiszemy ją jako zobowiązanie.
+                </p>
+              ) : onBudget ? (
                 <p className="mt-1 text-xs text-muted-foreground">
                   Trafi do „Do rozdzielenia”, potem przydzielasz je do kopert.
                 </p>
+              ) : (
+                <p className="mt-1 text-xs text-muted-foreground">Poza budżetem — liczy się do majątku.</p>
               )}
             </div>
             <label className="flex items-center gap-2 text-sm">

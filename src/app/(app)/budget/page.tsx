@@ -5,6 +5,7 @@ import { Camera } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BudgetTable } from "@/components/budget/BudgetTable";
 import { ReceiptScanner } from "@/components/ReceiptScanner";
+import { StatusStrip } from "@/components/overview/StatusStrip";
 import { getCurrentYearMonth } from "@/lib/format";
 
 export default function BudgetPage() {
@@ -25,6 +26,8 @@ export default function BudgetPage() {
           Skanuj paragon
         </Button>
       </div>
+
+      <StatusStrip />
 
       <BudgetTable
         year={year}

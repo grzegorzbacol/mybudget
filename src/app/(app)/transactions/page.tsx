@@ -33,6 +33,10 @@ export default function TransactionsPage() {
         </div>
       </div>
 
+      <p className="text-sm text-muted-foreground">
+        Wydatek schodzi z koperty, przychód idzie do Do rozdzielenia, transfer tylko między kontami. Import: CSV mBank/PKO/ING albo OFX.
+      </p>
+
       <MonthSwitcher
         year={year}
         month={month}
