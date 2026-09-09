@@ -3,6 +3,7 @@ import { getAuthContext, ensureMonthAllocations } from "@/lib/api-helpers";
 import { createAccountRow } from "@/lib/accounts";
 import { getCurrentYearMonth } from "@/lib/format";
 import { ACCOUNT_TYPE_META } from "@/lib/wealth";
+import { insertRowWithSchemaRepair, insertRowsWithSchemaRepair } from "@/lib/schema-write";
 
 export async function POST() {
   const ctx = await getAuthContext();
@@ -108,7 +109,8 @@ export async function POST() {
     },
   ];
 
-  const { error: txError } = await ctx.supabase.from("transactions").insert(
+  const txResult = await insertRowsWithSchemaRepair(
+    (rows) => ctx.supabase.from("transactions").insert(rows).select(),
     txs.map((tx) => ({
       family_id: ctx.family.id,
       account_id: checking!.id,
@@ -117,10 +119,11 @@ export async function POST() {
       source: "manual",
       cleared: true,
       ...tx,
-    }))
+    })),
+    ["paid_by"]
   );
-  if (txError) {
-    return NextResponse.json({ error: txError.message }, { status: 500 });
+  if (txResult.error) {
+    return NextResponse.json({ error: txResult.error }, { status: 500 });
   }
 
   const assigns = [
@@ -173,14 +176,18 @@ export async function POST() {
   ]);
 
   if (emergency) {
-    await ctx.supabase.from("goals").insert({
-      family_id: ctx.family.id,
-      category_id: emergency.id,
-      target_amount: 15000,
-      target_date: `${year + 1}-12-31`,
-      type: "emergency_fund",
-      priority: 1,
-    });
+    await insertRowWithSchemaRepair(
+      (row) => ctx.supabase.from("goals").insert(row).select().single(),
+      {
+        family_id: ctx.family.id,
+        category_id: emergency.id,
+        target_amount: 15000,
+        target_date: `${year + 1}-12-31`,
+        type: "emergency_fund",
+        priority: 1,
+      },
+      ["priority"]
+    );
   }
 
   return NextResponse.json({ ok: true });

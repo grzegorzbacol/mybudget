@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
+import { insertRowsWithSchemaRepair } from "@/lib/schema-write";
 import { transferSchema } from "@/lib/validators";
 
 export async function POST(request: Request) {
@@ -42,9 +43,9 @@ export async function POST(request: Request) {
   const transferId = crypto.randomUUID();
   const abs = Math.abs(amount);
 
-  const { data, error } = await ctx.supabase
-    .from("transactions")
-    .insert([
+  const created = await insertRowsWithSchemaRepair(
+    (rows) => ctx.supabase.from("transactions").insert(rows).select(),
+    [
       {
         family_id: ctx.family.id,
         account_id: from_account_id,
@@ -73,12 +74,13 @@ export async function POST(request: Request) {
         source: "manual",
         added_by: ctx.user.id,
       },
-    ])
-    .select();
+    ],
+    ["transfer_account_id", "transfer_id", "scheduled_id"]
+  );
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!created.data) {
+    return NextResponse.json({ error: created.error }, { status: 500 });
   }
 
-  return NextResponse.json(data);
+  return NextResponse.json(created.data);
 }

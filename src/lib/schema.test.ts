@@ -3,6 +3,8 @@ import { join } from "path";
 import { describe, expect, it } from "vitest";
 import {
   ENSURE_SCHEMA_STATEMENTS,
+  REQUIRED_SCHEMA_COLUMNS,
+  REQUIRED_SCHEMA_TABLES,
   isMissingRelationError,
   isSchemaLagError,
   missingScheduledTableMessage,
@@ -35,16 +37,26 @@ describe("schema lag helpers", () => {
     expect(message).toContain("DATABASE_URL");
   });
 
-  it("includes transfer columns and scheduled_transactions in the boot repair list", () => {
+  it("includes every live write-path column and table in the boot repair list", () => {
     const joined = ENSURE_SCHEMA_STATEMENTS.join("\n");
     expect(joined).toContain("transfer_account_id");
     expect(joined).toContain("transfer_id");
     expect(joined).toContain("scheduled_id");
+    expect(joined).toContain("paid_by");
+    expect(joined).toContain("ADD COLUMN IF NOT EXISTS kind");
+    expect(joined).toContain("ADD COLUMN IF NOT EXISTS priority");
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
-    expect(joined).toContain("transfer_account_id uuid");
+    expect(joined).toContain("CREATE TABLE IF NOT EXISTS expense_splits");
+    expect(joined).toContain("CREATE TABLE IF NOT EXISTS settlements");
     expect(joined).toContain("accounts_type_check");
     expect(joined).toContain("on_budget");
     expect(joined).toContain("NOTIFY pgrst");
+    for (const column of REQUIRED_SCHEMA_COLUMNS) {
+      expect(joined).toContain(column.split(".")[1]);
+    }
+    for (const table of REQUIRED_SCHEMA_TABLES) {
+      expect(joined).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+    }
   });
 
   it("resolves DATABASE_URL aliases used on Coolify", () => {
@@ -53,8 +65,12 @@ describe("schema lag helpers", () => {
     expect(resolveDatabaseUrl({})).toBeUndefined();
   });
 
-  it("keeps boot SQL in sync for scheduled_transactions and account columns", () => {
+  it("keeps boot SQL and 009 in sync for every live schema gap", () => {
     const ensureSql = readFileSync(join(process.cwd(), "scripts/ensure-schema.sql"), "utf8");
+    const liveSql = readFileSync(
+      join(process.cwd(), "supabase/migrations/009_live_schema_gaps.sql"),
+      "utf8"
+    );
     const scheduledSql = readFileSync(
       join(process.cwd(), "supabase/migrations/007_scheduled_transactions.sql"),
       "utf8"
@@ -63,9 +79,16 @@ describe("schema lag helpers", () => {
       join(process.cwd(), "supabase/migrations/008_account_columns.sql"),
       "utf8"
     );
-    expect(ensureSql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
-    expect(ensureSql).toContain("accounts_type_check");
-    expect(ensureSql).toContain("on_budget");
+    for (const sql of [ensureSql, liveSql]) {
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS paid_by");
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS kind");
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS priority");
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS on_budget");
+      expect(sql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
+      expect(sql).toContain("CREATE TABLE IF NOT EXISTS expense_splits");
+      expect(sql).toContain("CREATE TABLE IF NOT EXISTS settlements");
+      expect(sql).toContain("NOTIFY pgrst");
+    }
     expect(scheduledSql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
     expect(accountSql).toContain("ADD COLUMN IF NOT EXISTS on_budget");
     expect(accountSql).toContain("accounts_type_check");

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { parseBankFile } from "@/lib/ofx-import";
 import { applyPayeeRules, buildPayeeCategoryRules } from "@/lib/categorize";
+import { insertRowsWithSchemaRepair } from "@/lib/schema-write";
 import { z } from "zod";
 
 const importSchema = z.object({
@@ -54,14 +55,15 @@ export async function POST(request: Request) {
     category_id: row.amount < 0 ? row.category_id : null,
   }));
 
-  const { data, error } = await ctx.supabase
-    .from("transactions")
-    .insert(transactions)
-    .select();
+  const created = await insertRowsWithSchemaRepair(
+    (rows) => ctx.supabase.from("transactions").insert(rows).select(),
+    transactions,
+    ["paid_by"]
+  );
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!created.data) {
+    return NextResponse.json({ error: created.error }, { status: 500 });
   }
 
-  return NextResponse.json({ imported: data?.length ?? 0, transactions: data });
+  return NextResponse.json({ imported: created.data.length, transactions: created.data });
 }

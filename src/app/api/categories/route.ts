@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
+import { insertRowWithSchemaRepair } from "@/lib/schema-write";
 import { categorySchema } from "@/lib/validators";
 
 export async function POST(request: Request) {
@@ -22,9 +23,9 @@ export async function POST(request: Request) {
     .limit(1)
     .maybeSingle();
 
-  const { data, error } = await ctx.supabase
-    .from("budget_categories")
-    .insert({
+  const created = await insertRowWithSchemaRepair(
+    (row) => ctx.supabase.from("budget_categories").insert(row).select().single(),
+    {
       family_id: ctx.family.id,
       group_name: parsed.data.group_name,
       name: parsed.data.name,
@@ -32,13 +33,15 @@ export async function POST(request: Request) {
       color: parsed.data.color ?? "#6366f1",
       sort_order: parsed.data.sort_order ?? (Number(last?.sort_order ?? 0) + 1),
       kind: parsed.data.kind ?? "expense",
-    })
-    .select()
-    .single();
+    },
+    ["kind"]
+  );
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!created.data) {
+    return NextResponse.json({ error: created.error }, { status: 500 });
   }
 
-  return NextResponse.json(data);
+  return NextResponse.json(
+    created.warning ? { ...created.data, warning: created.warning } : created.data
+  );
 }

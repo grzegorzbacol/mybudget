@@ -3,7 +3,7 @@
 ## Wymagania
 
 - Repozytorium Git (GitHub / GitLab / Gitea)
-- Projekt Supabase z uruchomionymi migracjami `supabase/migrations/*.sql` (w tym `002_ynab_model.sql`, `006_transfer_columns.sql`, `007_scheduled_transactions.sql` i `008_account_columns.sql`)
+- Projekt Supabase z uruchomionymi migracjami `supabase/migrations/*.sql` (w tym `002`–`009`; `009_live_schema_gaps.sql` dociąga `paid_by`, `kind` i pozostałe kolumny)
 - Klucze API: Supabase, OpenAI (opcjonalnie Google Vision)
 
 ## Kroki w Coolify
@@ -56,7 +56,15 @@ Przy starcie kontenera (`scripts/docker-entrypoint.sh`) migracje z `supabase/mig
 `GET /api/cashflow?days=60&bucket=week → 500` z błędem schema cache / `relation "public.scheduled_transactions" does not exist`.
 Tabela jest w `002`, ale 002 może być oznaczone jako applied albo urwać się przed `CREATE TABLE`. Naprawa: `007_scheduled_transactions.sql` + `CREATE TABLE IF NOT EXISTS` w `scripts/ensure-schema.sql` na każdym starcie + cashflow zwraca 200 z pustym harmonogramem zamiast 500.
 
-Po merge kodu: **Coolify → Redeploy**. Sprawdź log startu: `Ensuring schema repairs` i brak warningów `transfer_account_id is still missing` oraz `scheduled_transactions is still missing`. Jeśli warning zostaje, `DATABASE_URL` wskazuje inną bazę niż Supabase.
+**Potwierdzony incydent (2026-09-09, deploy b28b594):** konto i `/api/cashflow` 200, ale
+`POST /api/transactions → 500` (`transactions.paid_by`) oraz tworzenie celu oszczędnościowego
+`POST /api/categories → 500` (`budget_categories.kind`). 003 dodaje `paid_by` z FK do `auth.users`
+i urywa się na Coolify; 002 może być oznaczone applied bez `kind`. Naprawa: `009_live_schema_gaps.sql`
++ ensure-schema IF NOT EXISTS dla wszystkich kolumn zapisu + retry w API (strip `paid_by`/`kind`).
+
+Po merge kodu: **Coolify → Redeploy**. Sprawdź log startu: `Ensuring schema repairs` i brak warningów
+`paid_by` / `kind` / `transfer_account_id is still missing` oraz `scheduled_transactions is still missing`.
+Jeśli warning zostaje, `DATABASE_URL` wskazuje inną bazę niż Supabase.
 
 W usłudze Supabase ustaw też:
 - `GOTRUE_SITE_URL` → URL aplikacji MyBudget
@@ -119,6 +127,7 @@ Po dodaniu HTTPS do panelu Coolify możesz włączyć **Auto Deploy** w ustawien
 - **Budżet pusty / 500 `transfer_account_id does not exist`:** Redeploy; w logach startu musi przejść `006_transfer_columns.sql` albo `ensure-schema.sql`. `DATABASE_URL` = baza PostgREST. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/006_transfer_columns.sql`
 - **Cashflow 500 `scheduled_transactions` / schema cache:** Redeploy; w logach startu `007_scheduled_transactions.sql` albo `ensure-schema.sql` musi utworzyć tabelę. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/007_scheduled_transactions.sql`
 - **Nie da się utworzyć konta / „nie znaleziono konta” przy wydatku:** brak `accounts.on_budget` albo stary `accounts_type_check`. Redeploy; `008_account_columns.sql` + ensure-schema. UI idzie przez `POST /api/accounts` (retry bez kolumny / po naprawie constraintu).
+- **Wydatek 500 `paid_by` / cel 500 `kind`:** Redeploy; `009_live_schema_gaps.sql` + ensure-schema. API transakcji i kategorii retry po naprawie, a w ostateczności zapisuje bez tych kolumn.
 - **Biały ekran / brak auth:** sprawdź `NEXT_PUBLIC_*` przy buildzie
 - **OCR nie działa:** `OPENAI_API_KEY` w runtime
 - **Magic link nie działa:** redirect URL w Supabase

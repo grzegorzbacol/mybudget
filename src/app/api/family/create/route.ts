@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getCurrentYearMonth } from "@/lib/format";
 import { createAccountRow } from "@/lib/accounts";
+import { insertRowsWithSchemaRepair } from "@/lib/schema-write";
 
 export async function POST(request: Request) {
   const supabase = await createClient();
@@ -59,10 +60,12 @@ export async function POST(request: Request) {
     family_id: family.id,
   }));
 
-  const { data: insertedCategories } = await admin
-    .from("budget_categories")
-    .insert(categories)
-    .select();
+  const inserted = await insertRowsWithSchemaRepair(
+    (rows) => admin.from("budget_categories").insert(rows).select(),
+    categories as Record<string, unknown>[],
+    ["kind"]
+  );
+  const insertedCategories = inserted.data;
 
   const createdAccount = await createAccountRow(admin, {
     family_id: family.id,
@@ -77,18 +80,20 @@ export async function POST(request: Request) {
   }
 
   const { year, month } = getCurrentYearMonth();
-  if (insertedCategories) {
-    await admin.from("budget_allocations").insert(
+  if (insertedCategories?.length) {
+    await insertRowsWithSchemaRepair(
+      (rows) => admin.from("budget_allocations").insert(rows).select(),
       insertedCategories.map((c) => ({
         family_id: family.id,
-        category_id: c.id,
+        category_id: (c as { id: string }).id,
         year,
         month,
         allocated: 0,
         activity: 0,
         available: 0,
         moved: 0,
-      }))
+      })),
+      ["moved"]
     );
   }
 

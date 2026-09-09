@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { isMissingRelationError } from "@/lib/schema";
+import { insertRowWithSchemaRepair } from "@/lib/schema-write";
 import { scheduledSchema } from "@/lib/validators";
 
 export async function GET() {
@@ -55,22 +56,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { data, error } = await ctx.supabase
-    .from("scheduled_transactions")
-    .insert({
+  const created = await insertRowWithSchemaRepair(
+    (row) => ctx.supabase.from("scheduled_transactions").insert(row).select().single(),
+    {
       ...parsed.data,
       family_id: ctx.family.id,
       memo: parsed.data.memo ?? "",
       transfer_account_id: parsed.data.transfer_account_id ?? null,
       category_id: parsed.data.category_id ?? null,
       end_date: parsed.data.end_date ?? null,
-    })
-    .select()
-    .single();
+    },
+    ["transfer_account_id"]
+  );
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!created.data) {
+    return NextResponse.json({ error: created.error }, { status: 500 });
   }
 
-  return NextResponse.json(data);
+  return NextResponse.json(created.data);
 }

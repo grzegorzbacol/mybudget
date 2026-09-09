@@ -104,10 +104,28 @@ export async function GET(request: Request) {
         amount: money(Math.abs(row.available)),
       }));
 
-    const { data: goalRows } = await ctx.supabase
+    let goalQuery = await ctx.supabase
       .from("goals")
       .select("id, category_id, target_amount, target_date, type, priority")
       .eq("family_id", ctx.family.id);
+    if (goalQuery.error) {
+      const { isSchemaLagError } = await import("@/lib/schema");
+      if (isSchemaLagError(goalQuery.error.message)) {
+        const { applyEnsureSchema } = await import("@/lib/ensure-schema");
+        await applyEnsureSchema();
+        goalQuery = await ctx.supabase
+          .from("goals")
+          .select("id, category_id, target_amount, target_date, type, priority")
+          .eq("family_id", ctx.family.id);
+        if (goalQuery.error && isSchemaLagError(goalQuery.error.message)) {
+          goalQuery = await ctx.supabase
+            .from("goals")
+            .select("id, category_id, target_amount, target_date, type")
+            .eq("family_id", ctx.family.id);
+        }
+      }
+    }
+    const goalRows = goalQuery.data;
     const typicalSpend = Math.abs(budget.totalActivity);
     const threatenedGoals = savingsThreatenedByCashflow({
       goals: ((goalRows ?? []) as Goal[]).map((goal) => {
