@@ -116,30 +116,57 @@ export async function loadBudgetSnapshot(
     ]);
 
   let scheduledRes = scheduledFirst;
-  if (scheduledRes.error && isMissingRelationError(scheduledRes.error.message)) {
+  let categoriesResFinal = categoriesRes;
+  let allocationsResFinal = allocationsRes;
+  let accountsResFinal = accountsRes;
+  let transactionsResFinal = transactionsRes;
+
+  const needsRepair =
+    (transactionsRes.error && isSchemaLagError(transactionsRes.error.message)) ||
+    (scheduledFirst.error && isMissingRelationError(scheduledFirst.error.message)) ||
+    (categoriesRes.error && isSchemaLagError(categoriesRes.error.message)) ||
+    (allocationsRes.error && isSchemaLagError(allocationsRes.error.message)) ||
+    (accountsRes.error && isSchemaLagError(accountsRes.error.message));
+
+  if (needsRepair) {
     const { applyEnsureSchema } = await import("@/lib/ensure-schema");
     const ensured = await applyEnsureSchema();
     if (ensured.ok || (ensured.applied ?? 0) > 0) {
-      scheduledRes = await supabase
-        .from("scheduled_transactions")
-        .select("*")
-        .eq("family_id", familyId);
+      const retried = await Promise.all([
+        supabase
+          .from("budget_categories")
+          .select("*")
+          .eq("family_id", familyId)
+          .order("sort_order"),
+        supabase.from("budget_allocations").select("*").eq("family_id", familyId),
+        supabase.from("accounts").select("*").eq("family_id", familyId),
+        supabase
+          .from("transactions")
+          .select("id, account_id, category_id, amount, date, transfer_account_id, transfer_id, cleared")
+          .eq("family_id", familyId),
+        supabase.from("scheduled_transactions").select("*").eq("family_id", familyId),
+      ]);
+      categoriesResFinal = retried[0];
+      allocationsResFinal = retried[1];
+      accountsResFinal = retried[2];
+      transactionsResFinal = retried[3];
+      scheduledRes = retried[4];
     }
   }
 
-  let transactions = (transactionsRes.data ?? []) as LedgerTransaction[];
-  let transactionsError = transactionsRes.error?.message;
+  let transactions = (transactionsResFinal.data ?? []) as LedgerTransaction[];
+  let transactionsError = transactionsResFinal.error?.message;
   let schemaLag: string | undefined;
   let transferMarkersMissing = false;
-  if (transactionsRes.error) {
-    if (isSchemaLagError(transactionsRes.error.message)) {
+  if (transactionsResFinal.error) {
+    if (isSchemaLagError(transactionsResFinal.error.message)) {
       transferMarkersMissing = true;
       transactions = ledgerRowsForEnvelopeMath(undefined, true);
-      schemaLag = schemaLagMessage(transactionsRes.error.message);
+      schemaLag = schemaLagMessage(transactionsResFinal.error.message);
       transactionsError = undefined;
     } else {
       transactions = [];
-      transactionsError = transactionsRes.error.message;
+      transactionsError = transactionsResFinal.error.message;
     }
   }
 
@@ -154,18 +181,18 @@ export async function loadBudgetSnapshot(
   }
 
   return {
-    categories: (categoriesRes.data ?? []) as BudgetCategory[],
-    allocations: (allocationsRes.data ?? []) as BudgetAllocation[],
-    accounts: (accountsRes.data ?? []) as Account[],
+    categories: (categoriesResFinal.data ?? []) as BudgetCategory[],
+    allocations: (allocationsResFinal.data ?? []) as BudgetAllocation[],
+    accounts: (accountsResFinal.data ?? []) as Account[],
     transactions,
     scheduled: (scheduledRes.data ?? []) as ScheduledTransaction[],
     schemaLag,
     transferMarkersMissing,
     scheduledError,
     error:
-      categoriesRes.error?.message ||
-      allocationsRes.error?.message ||
-      accountsRes.error?.message ||
+      categoriesResFinal.error?.message ||
+      allocationsResFinal.error?.message ||
+      accountsResFinal.error?.message ||
       transactionsError,
   };
 }

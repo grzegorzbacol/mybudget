@@ -27,6 +27,25 @@ export function missingScheduledTableMessage(raw?: string | null): string {
   );
 }
 
+/** Columns the live app writes; boot SQL and 009 must IF NOT EXISTS each one. */
+export const REQUIRED_SCHEMA_COLUMNS = [
+  "accounts.on_budget",
+  "budget_categories.kind",
+  "budget_allocations.moved",
+  "transactions.transfer_account_id",
+  "transactions.transfer_id",
+  "transactions.scheduled_id",
+  "transactions.paid_by",
+  "goals.priority",
+] as const;
+
+/** Tables created after 001 that PostgREST must see. */
+export const REQUIRED_SCHEMA_TABLES = [
+  "scheduled_transactions",
+  "expense_splits",
+  "settlements",
+] as const;
+
 /** Additive statements applied by docker-entrypoint (ensure-schema.sql) and POST /api/setup/migrate. */
 export const ENSURE_SCHEMA_STATEMENTS = [
   `CREATE EXTENSION IF NOT EXISTS "uuid-ossp"`,
@@ -43,8 +62,19 @@ BEGIN
     ));
 EXCEPTION
   WHEN duplicate_object THEN NULL;
+  WHEN check_violation THEN NULL;
 END $$`,
   `ALTER TABLE budget_categories ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'expense'`,
+  `ALTER TABLE budget_categories DROP CONSTRAINT IF EXISTS budget_categories_kind_check`,
+  `DO $$
+BEGIN
+  ALTER TABLE budget_categories
+    ADD CONSTRAINT budget_categories_kind_check
+    CHECK (kind IN ('expense', 'income'));
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN check_violation THEN NULL;
+END $$`,
   `ALTER TABLE budget_allocations ADD COLUMN IF NOT EXISTS moved numeric NOT NULL DEFAULT 0`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_id uuid`,
@@ -52,6 +82,17 @@ END $$`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS paid_by uuid`,
   `CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON transactions(transfer_id)`,
   `CREATE INDEX IF NOT EXISTS idx_transactions_cleared ON transactions(account_id, cleared)`,
+  `ALTER TABLE goals ADD COLUMN IF NOT EXISTS priority integer NOT NULL DEFAULT 3`,
+  `ALTER TABLE goals DROP CONSTRAINT IF EXISTS goals_type_check`,
+  `DO $$
+BEGIN
+  ALTER TABLE goals
+    ADD CONSTRAINT goals_type_check
+    CHECK (type IN ('target_balance', 'monthly_contribution', 'pay_off', 'emergency_fund'));
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+  WHEN check_violation THEN NULL;
+END $$`,
   `CREATE TABLE IF NOT EXISTS scheduled_transactions (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   family_id uuid NOT NULL REFERENCES families(id) ON DELETE CASCADE,
@@ -82,7 +123,35 @@ END $$`,
   `ALTER TABLE scheduled_transactions ADD COLUMN IF NOT EXISTS enabled boolean NOT NULL DEFAULT true`,
   `ALTER TABLE scheduled_transactions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()`,
   `CREATE INDEX IF NOT EXISTS idx_scheduled_family_date ON scheduled_transactions(family_id, next_date)`,
+  `CREATE TABLE IF NOT EXISTS expense_splits (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  family_id uuid NOT NULL,
+  transaction_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  amount numeric NOT NULL,
+  UNIQUE (transaction_id, user_id)
+)`,
+  `ALTER TABLE expense_splits ADD COLUMN IF NOT EXISTS family_id uuid`,
+  `ALTER TABLE expense_splits ADD COLUMN IF NOT EXISTS transaction_id uuid`,
+  `ALTER TABLE expense_splits ADD COLUMN IF NOT EXISTS user_id uuid`,
+  `ALTER TABLE expense_splits ADD COLUMN IF NOT EXISTS amount numeric`,
+  `CREATE TABLE IF NOT EXISTS settlements (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  family_id uuid NOT NULL,
+  from_user_id uuid NOT NULL,
+  to_user_id uuid NOT NULL,
+  amount numeric NOT NULL,
+  date date NOT NULL DEFAULT CURRENT_DATE,
+  memo text DEFAULT '',
+  created_at timestamptz NOT NULL DEFAULT now()
+)`,
+  `ALTER TABLE settlements ADD COLUMN IF NOT EXISTS family_id uuid`,
+  `ALTER TABLE settlements ADD COLUMN IF NOT EXISTS from_user_id uuid`,
+  `ALTER TABLE settlements ADD COLUMN IF NOT EXISTS to_user_id uuid`,
+  `ALTER TABLE settlements ADD COLUMN IF NOT EXISTS amount numeric`,
   `ALTER TABLE scheduled_transactions ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE expense_splits ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE settlements ENABLE ROW LEVEL SECURITY`,
   `DROP POLICY IF EXISTS "Family scoped select" ON scheduled_transactions`,
   `DROP POLICY IF EXISTS "Family scoped insert" ON scheduled_transactions`,
   `DROP POLICY IF EXISTS "Family scoped update" ON scheduled_transactions`,
@@ -104,7 +173,41 @@ EXCEPTION
 END $$`,
   `DO $$
 BEGIN
+  CREATE POLICY "Family scoped select" ON expense_splits
+    FOR SELECT USING (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped insert" ON expense_splits
+    FOR INSERT WITH CHECK (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped update" ON expense_splits
+    FOR UPDATE USING (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped delete" ON expense_splits
+    FOR DELETE USING (family_id IN (SELECT get_user_family_ids()));
+EXCEPTION
+  WHEN undefined_function THEN NULL;
+  WHEN duplicate_object THEN NULL;
+  WHEN others THEN NULL;
+END $$`,
+  `DO $$
+BEGIN
+  CREATE POLICY "Family scoped select" ON settlements
+    FOR SELECT USING (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped insert" ON settlements
+    FOR INSERT WITH CHECK (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped update" ON settlements
+    FOR UPDATE USING (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped delete" ON settlements
+    FOR DELETE USING (family_id IN (SELECT get_user_family_ids()));
+EXCEPTION
+  WHEN undefined_function THEN NULL;
+  WHEN duplicate_object THEN NULL;
+  WHEN others THEN NULL;
+END $$`,
+  `DO $$
+BEGIN
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.scheduled_transactions
+    TO anon, authenticated, service_role;
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.expense_splits
+    TO anon, authenticated, service_role;
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.settlements
     TO anon, authenticated, service_role;
 EXCEPTION
   WHEN undefined_object THEN NULL;

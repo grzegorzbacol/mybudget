@@ -34,8 +34,8 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
       fi
     done
 
-    # Always repair transfer columns + scheduled_transactions — 002 may be marked
-    # applied or aborted on ALTER PUBLICATION without leaving the live schema in place.
+    # Always repair paid_by/kind/transfer/scheduled — 002/003 may be marked
+    # applied or aborted (auth.users FK / ALTER PUBLICATION) without the live schema.
     if [ -f /app/scripts/ensure-schema.sql ]; then
       echo "Ensuring schema repairs (scripts/ensure-schema.sql)..."
       if psql "$dburl" -v ON_ERROR_STOP=0 -f /app/scripts/ensure-schema.sql; then
@@ -45,10 +45,20 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
       fi
     fi
 
-    missing=$(psql "$dburl" -tAc "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='transactions' AND column_name='transfer_account_id'" 2>/dev/null | tr -d ' ')
-    if [ "$missing" != "1" ]; then
-      echo "WARNING: transactions.transfer_account_id is still missing. DATABASE_URL may point at the wrong database."
-    fi
+    for spec in \
+      "transactions.transfer_account_id" \
+      "transactions.paid_by" \
+      "budget_categories.kind" \
+      "accounts.on_budget" \
+      "goals.priority"
+    do
+      table=${spec%%.*}
+      col=${spec##*.}
+      present=$(psql "$dburl" -tAc "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='$table' AND column_name='$col'" 2>/dev/null | tr -d ' ')
+      if [ "$present" != "1" ]; then
+        echo "WARNING: $spec is still missing. DATABASE_URL may point at the wrong database."
+      fi
+    done
 
     scheduled=$(psql "$dburl" -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='scheduled_transactions'" 2>/dev/null | tr -d ' ')
     if [ "$scheduled" != "1" ]; then

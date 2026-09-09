@@ -151,15 +151,19 @@ export default function SavingsPage() {
         catId = created.id;
       }
       if (!catId) throw new Error("Wybierz lub utwórz kopertę");
-      const { error } = await supabase.from("goals").insert({
-        family_id: familyData!.family.id,
-        category_id: catId,
-        target_amount: parseFloat(targetAmount.replace(",", ".")),
-        target_date: targetDate || null,
-        type: goalType,
-        priority: Number(priority) || 3,
+      const res = await fetch("/api/goals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category_id: catId,
+          target_amount: parseFloat(targetAmount.replace(",", ".")),
+          target_date: targetDate || null,
+          type: goalType,
+          priority: Number(priority) || 3,
+        }),
       });
-      if (error) throw error;
+      const createdGoal = await res.json();
+      if (!res.ok) throw new Error(createdGoal.error || "Nie udało się utworzyć celu");
     },
     onSuccess: () => {
       toast.success("Cel oszczędnościowy utworzony");
