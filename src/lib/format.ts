@@ -3,12 +3,17 @@ export function formatCurrency(
   currency = "PLN",
   locale = "pl-PL"
 ): string {
-  return new Intl.NumberFormat(locale, {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(amount);
+  try {
+    const n = Number(amount);
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number.isFinite(n) ? n : 0);
+  } catch {
+    return "—";
+  }
 }
 
 export function formatNumber(amount: number, locale = "pl-PL"): string {

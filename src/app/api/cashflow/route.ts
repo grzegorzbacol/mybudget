@@ -27,11 +27,26 @@ export async function GET(request: Request) {
   const to = addDays(today, days);
   const { year, month } = getCurrentYearMonth();
 
-  await ensureMonthAllocations(ctx.supabase, ctx.family.id, year, month);
-  const snapshot = await loadBudgetSnapshot(ctx.supabase, ctx.family.id);
-  if (snapshot.error) {
-    return NextResponse.json({ error: snapshot.error }, { status: 500 });
-  }
+  try {
+    await ensureMonthAllocations(ctx.supabase, ctx.family.id, year, month);
+    const snapshot = await loadBudgetSnapshot(ctx.supabase, ctx.family.id);
+    if (snapshot.error) {
+      return NextResponse.json(
+        { error: snapshot.error, schemaLag: /transfer_account_id|schema/i.test(snapshot.error) },
+        { status: 500 }
+      );
+    }
+    if (snapshot.scheduledError) {
+      return NextResponse.json(
+        {
+          error:
+            "Nie udało się pobrać zaplanowanych płatności — przepływy nie są liczone z pustym harmonogramem.",
+          scheduledError: snapshot.scheduledError,
+          schemaLag: Boolean(snapshot.schemaLag),
+        },
+        { status: 500 }
+      );
+    }
 
   const { start, end } = monthRange(year, month);
   const monthEnd = addDays(end, -1);
@@ -130,6 +145,7 @@ export async function GET(request: Request) {
     budget,
     cashflow,
     scheduled: snapshot.scheduled,
+    warning: snapshot.schemaLag,
     wealth: {
       ...totals,
       history: netWorthHistory(snapshot.accounts, snapshot.transactions, today),
@@ -153,4 +169,8 @@ export async function GET(request: Request) {
       threatenedGoals,
     },
   });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Nie udało się pobrać przepływów";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }

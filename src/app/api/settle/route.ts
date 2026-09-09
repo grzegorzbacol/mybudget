@@ -15,8 +15,7 @@ export async function GET() {
       .from("transactions")
       .select("id, amount, paid_by, added_by")
       .eq("family_id", ctx.family.id)
-      .lt("amount", 0)
-      .is("transfer_id", null),
+      .lt("amount", 0),
     ctx.supabase.from("expense_splits").select("*").eq("family_id", ctx.family.id),
     ctx.supabase.from("settlements").select("*").eq("family_id", ctx.family.id).order("date", { ascending: false }),
     ctx.supabase.from("profiles").select("id, display_name"),

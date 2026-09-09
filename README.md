@@ -58,9 +58,10 @@ npm install
    - `supabase/migrations/003_household_splits.sql`
    - `supabase/migrations/004_wealth_accounts.sql`
    - `supabase/migrations/005_goal_priority.sql`
+   - `supabase/migrations/006_transfer_columns.sql` (naprawa `transactions.transfer_account_id` na istniejących bazach)
 3. Włącz Realtime dla `transactions`, `budget_allocations` i `scheduled_transactions` (002 robi to automatycznie, jeśli publikacja istnieje).
 
-Istniejąca baza: odpal `002`–`005` (są idempotentne) albo zredeployuj Docker/Coolify.
+Istniejąca baza: odpal `002`–`006` (są idempotentne) albo zredeployuj Docker/Coolify z `DATABASE_URL` do bazy PostgREST. Kontener zawsze dopina kolumny transferu przez `scripts/ensure-schema.sql`.
 
 Coolify: po pushu na `main` workflow **Deploy to Coolify** się uruchamia, ale sekret GitHub `COOLIFY_TOKEN` jest pusty — deploy jest pomijany. Live: panel Coolify → MyBudget → **Deploy** (branch `main`). Szczegóły: `docs/COOLIFY.md`.
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, planFillEnvelopeGaps, uncategorizedExpenses } from "./budget";
+import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, uncategorizedExpenses } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -265,5 +265,95 @@ describe("YNAB envelope math", () => {
     ];
     expect(uncategorizedExpenses(txs, 2026, 9)).toHaveLength(1);
     expect(buildBudgetMonthData(2026, 9, [category("groceries", "Zakupy")], [], [account("checking", 100)], txs).uncategorizedCount).toBe(1);
+  });
+
+  it("keeps envelopes when a transaction date is missing or garbage", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 100)],
+      [account("checking", 400)],
+      [
+        { account_id: "checking", category_id: "groceries", amount: -10, date: null as unknown as string },
+        { account_id: "checking", category_id: "groceries", amount: -5, date: "" },
+        { account_id: "checking", category_id: "groceries", amount: -7, date: "not-a-date" },
+        tx({ amount: -20, date: "2026-09-12", category_id: "groceries" }),
+      ]
+    );
+    expect(data.groups).toHaveLength(1);
+    expect(data.groups[0].categories).toHaveLength(1);
+    expect(data.groups[0].categories[0].assigned).toBe(100);
+    expect(data.groups[0].categories[0].activity).toBe(-20);
+    expect(data.groups[0].categories[0].available).toBe(80);
+  });
+
+  it("still lists envelopes when leftover history cannot be parsed", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy"), category("rent", "Czynsz", "Zobowiązania", 1)],
+      [{ ...alloc("groceries", Number.NaN, Number.NaN, 50) }],
+      [account("checking", 200)],
+      []
+    );
+    expect(data.groups.map((g) => g.groupName).sort()).toEqual(["Zobowiązania", "Życie"]);
+    expect(envelopeRowsFromBudget(data).map((row) => row.category.id).sort()).toEqual(["groceries", "rent"]);
+  });
+
+  it("envelopeRowsFromBudget and gap plan survive missing groups", () => {
+    expect(envelopeRowsFromBudget(undefined)).toEqual([]);
+    expect(envelopeRowsFromBudget({ groups: undefined as never })).toEqual([]);
+    expect(
+      envelopeRowsFromBudget({
+        groups: [{ groupName: "X", assigned: 0, activity: 0, available: 0, categories: [undefined as never] }],
+      })
+    ).toEqual([]);
+    expect(planFillEnvelopeGaps([undefined as never], 100)).toEqual([]);
+  });
+
+  it("ignores implausible year-1 leftover instead of walking millennia", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 1, 1, 500)],
+      [account("checking", 500)],
+      []
+    );
+    expect(data.groups[0].categories[0].available).toBe(0);
+    expect(data.readyToAssign).toBe(500);
+  });
+
+  it("carries leftover from allocations more than ten years back", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2016, 1, 500)],
+      [account("checking", 500)],
+      []
+    );
+    expect(data.groups[0].categories[0].leftover).toBe(500);
+    expect(data.groups[0].categories[0].available).toBe(500);
+    expect(data.readyToAssign).toBe(0);
+  });
+
+  it("does not treat markerless rows as income when transfer columns are missing", () => {
+    const transferLike = [
+      tx({ amount: 400, date: "2026-09-02" }),
+      tx({ amount: -400, date: "2026-09-02", account_id: "cash" }),
+    ];
+    expect(ledgerRowsForEnvelopeMath(transferLike, true)).toEqual([]);
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 0)],
+      [account("checking", 0), account("cash", 0)],
+      ledgerRowsForEnvelopeMath(transferLike, true)
+    );
+    expect(data.incomeThisMonth).toBe(0);
+    expect(data.uncategorizedCount).toBe(0);
   });
 });

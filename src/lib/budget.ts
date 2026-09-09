@@ -1,4 +1,4 @@
-import { money, monthIndex, yearMonthFromDate } from "./money";
+import { isPlausibleBudgetYearMonth, isValidYearMonth, money, monthIndex, parseMonthKey, parseYearMonthFromDate } from "./money";
 import type {
   Account,
   BudgetAllocation,
@@ -48,8 +48,8 @@ export function uncategorizedExpenses(
     if (isTransferTx(tx) || Number(tx.amount) >= 0 || tx.category_id) return false;
     if (!isOnBudgetAccount(tx, accounts)) return false;
     if (year != null && month != null) {
-      const ym = yearMonthFromDate(tx.date);
-      if (ym.year !== year || ym.month !== month) return false;
+      const ym = parseYearMonthFromDate(tx.date);
+      if (!ym || ym.year !== year || ym.month !== month) return false;
     }
     return true;
   });
@@ -69,7 +69,9 @@ export function activityByCategoryMonth(
   for (const tx of transactions) {
     if (!tx.category_id || isTransferTx(tx)) continue;
     if (!isOnBudgetAccount(tx, accounts)) continue;
-    const { year, month } = yearMonthFromDate(tx.date);
+    const ym = parseYearMonthFromDate(tx.date);
+    if (!ym || !isPlausibleBudgetYearMonth(ym.year, ym.month)) continue;
+    const { year, month } = ym;
     const key = monthKey(year, month);
     let byMonth = map.get(tx.category_id);
     if (!byMonth) {
@@ -91,8 +93,8 @@ export function incomeInMonth(
   return money(
     transactions.reduce((sum, tx) => {
       if (!isIncomeToReadyToAssign(tx, accounts)) return sum;
-      const ym = yearMonthFromDate(tx.date);
-      if (monthKey(ym.year, ym.month) !== key) return sum;
+      const ym = parseYearMonthFromDate(tx.date);
+      if (!ym || monthKey(ym.year, ym.month) !== key) return sum;
       return sum + Number(tx.amount);
     }, 0)
   );
@@ -104,8 +106,11 @@ export function onBudgetBalance(accounts: Account[]): number {
 
 function allocationLookup(allocations: BudgetAllocation[]) {
   const map = new Map<string, BudgetAllocation>();
-  for (const allocation of allocations) {
-    map.set(`${allocation.category_id}:${allocation.year}-${allocation.month}`, allocation);
+  for (const allocation of allocations ?? []) {
+    const y = Number(allocation.year);
+    const m = Number(allocation.month);
+    if (!isPlausibleBudgetYearMonth(y, m) || !allocation.category_id) continue;
+    map.set(`${allocation.category_id}:${y}-${m}`, allocation);
   }
   return map;
 }
@@ -137,6 +142,54 @@ export function computeReadyToAssign(onBudget: number, expenseAvailable: number)
   return money(onBudget - expenseAvailable);
 }
 
+function zeroCategoryRow(
+  category: BudgetCategory,
+  year: number,
+  month: number,
+  upcoming = 0
+): BudgetCategoryRow {
+  const allocation: BudgetAllocation = {
+    id: "",
+    family_id: category.family_id,
+    category_id: category.id,
+    year,
+    month,
+    allocated: 0,
+    activity: 0,
+    available: 0,
+    rollover: true,
+    moved: 0,
+  };
+  return {
+    category,
+    allocation,
+    leftover: 0,
+    assigned: 0,
+    moved: 0,
+    activity: 0,
+    available: 0,
+    upcoming,
+  };
+}
+
+/** When transfer columns are missing, do not treat unmarked rows as income/spend. */
+export function ledgerRowsForEnvelopeMath(
+  transactions: LedgerTransaction[] | null | undefined,
+  transferMarkersMissing: boolean
+): LedgerTransaction[] {
+  if (transferMarkersMissing) return [];
+  return Array.isArray(transactions) ? transactions : [];
+}
+
+export function envelopeRowsFromBudget(
+  data: Pick<BudgetMonthData, "groups"> | null | undefined
+): BudgetCategoryRow[] {
+  const groups = Array.isArray(data?.groups) ? data.groups : [];
+  return groups.flatMap((group) => (Array.isArray(group?.categories) ? group.categories : [])).filter(
+    (row): row is BudgetCategoryRow => Boolean(row?.category?.id)
+  );
+}
+
 export function buildBudgetMonthData(
   year: number,
   month: number,
@@ -146,23 +199,30 @@ export function buildBudgetMonthData(
   transactions: LedgerTransaction[] = [],
   upcomingByCategory: Map<string, number> = new Map()
 ): BudgetMonthData {
-  const activityMap = activityByCategoryMonth(transactions, accounts);
-  const allocMap = allocationLookup(allocations);
-  const upcomingMap = upcomingByCategory;
-  const targetIndex = monthIndex(year, month);
+  const activityMap = activityByCategoryMonth(transactions ?? [], accounts ?? []);
+  const allocMap = allocationLookup(allocations ?? []);
+  const upcomingMap = upcomingByCategory ?? new Map();
+  const safeYear = Number.isInteger(year) ? year : new Date().getFullYear();
+  const safeMonth = isValidYearMonth(safeYear, month) ? month : 1;
+  const targetIndex = monthIndex(safeYear, safeMonth);
 
   let earliest = targetIndex;
-  for (const allocation of allocations) {
-    earliest = Math.min(earliest, monthIndex(allocation.year, allocation.month));
+  for (const allocation of allocations ?? []) {
+    const y = Number(allocation?.year);
+    const m = Number(allocation?.month);
+    if (!isPlausibleBudgetYearMonth(y, m)) continue;
+    earliest = Math.min(earliest, monthIndex(y, m));
   }
   for (const byMonth of Array.from(activityMap.values())) {
     for (const key of Array.from(byMonth.keys())) {
-      const [y, m] = key.split("-").map(Number);
-      earliest = Math.min(earliest, monthIndex(y, m));
+      const parsed = parseMonthKey(key);
+      if (!parsed || !isPlausibleBudgetYearMonth(parsed.year, parsed.month)) continue;
+      earliest = Math.min(earliest, monthIndex(parsed.year, parsed.month));
     }
   }
+  if (!Number.isFinite(earliest)) earliest = targetIndex;
 
-  const expenseCategories = categories.filter(isExpenseCategory);
+  const expenseCategories = (categories ?? []).filter(isExpenseCategory);
   const rowsById = new Map<string, BudgetCategoryRow>();
 
   for (const category of expenseCategories) {
@@ -170,7 +230,7 @@ export function buildBudgetMonthData(
     const catActivity = activityMap.get(category.id);
     for (let idx = earliest; idx <= targetIndex; idx++) {
       const y = Math.floor(idx / 12);
-      const m = (idx % 12) + 1;
+      const m = ((((idx % 12) + 12) % 12) + 1);
       const allocation = allocMap.get(`${category.id}:${y}-${m}`);
       const computed = computeCategoryMonth({
         leftover,
@@ -184,8 +244,8 @@ export function buildBudgetMonthData(
           id: "",
           family_id: category.family_id,
           category_id: category.id,
-          year,
-          month,
+          year: safeYear,
+          month: safeMonth,
           allocated: computed.assigned,
           activity: computed.activity,
           available: computed.available,
@@ -210,27 +270,31 @@ export function buildBudgetMonthData(
         });
       }
     }
+    if (!rowsById.has(category.id)) {
+      rowsById.set(category.id, zeroCategoryRow(category, safeYear, safeMonth, upcomingMap.get(category.id) ?? 0));
+    }
   }
 
   const groups: BudgetGroup[] = [];
   const groupMap = new Map<string, BudgetGroup>();
-  const sorted = [...expenseCategories].sort((a, b) => a.sort_order - b.sort_order);
+  const sorted = [...expenseCategories].sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0));
 
   for (const category of sorted) {
     const row = rowsById.get(category.id);
     if (!row) continue;
-    if (!groupMap.has(category.group_name)) {
+    const groupName = category.group_name || "Inne";
+    if (!groupMap.has(groupName)) {
       const group: BudgetGroup = {
-        groupName: category.group_name,
+        groupName,
         assigned: 0,
         activity: 0,
         available: 0,
         categories: [],
       };
-      groupMap.set(category.group_name, group);
+      groupMap.set(groupName, group);
       groups.push(group);
     }
-    const group = groupMap.get(category.group_name)!;
+    const group = groupMap.get(groupName)!;
     group.categories.push(row);
     group.assigned = money(group.assigned + row.assigned);
     group.activity = money(group.activity + row.activity);
@@ -249,16 +313,16 @@ export function buildBudgetMonthData(
   const balance = onBudgetBalance(accounts);
 
   return {
-    year,
-    month,
+    year: safeYear,
+    month: safeMonth,
     readyToAssign: computeReadyToAssign(balance, totalAvailable),
-    incomeThisMonth: incomeInMonth(transactions, year, month, accounts),
+    incomeThisMonth: incomeInMonth(transactions, safeYear, safeMonth, accounts),
     totalAllocated,
     totalMoved,
     totalActivity,
     totalAvailable,
     onBudgetBalance: balance,
-    uncategorizedCount: uncategorizedExpenses(transactions, year, month, accounts).length,
+    uncategorizedCount: uncategorizedExpenses(transactions, safeYear, safeMonth, accounts).length,
     groups,
   };
 }
@@ -274,8 +338,9 @@ export function planFillEnvelopeGaps(
 ): Array<{ category_id: string; allocated: number; add: number }> {
   let remaining = money(Math.max(0, readyToAssign));
   const updates: Array<{ category_id: string; allocated: number; add: number }> = [];
-  for (const row of rows) {
+  for (const row of rows ?? []) {
     if (remaining <= 0) break;
+    if (!row?.category?.id) continue;
     const need = envelopeGap(row.available, row.upcoming);
     if (need <= 0) continue;
     const add = money(Math.min(need, remaining));

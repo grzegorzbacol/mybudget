@@ -1,4 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
+import { isMissingRelationError, isSchemaLagError, schemaLagMessage } from "@/lib/schema";
+import { ledgerRowsForEnvelopeMath } from "@/lib/budget";
 import type {
   Account,
   BudgetAllocation,
@@ -61,18 +63,30 @@ export async function ensureMonthAllocations(
   const missing = categories.filter((c) => !existingIds.has(c.id));
 
   if (missing.length > 0) {
-    await supabase.from("budget_allocations").insert(
-      missing.map((c) => ({
-        family_id: familyId,
-        category_id: c.id,
-        year,
-        month,
-        allocated: 0,
-        activity: 0,
-        available: 0,
-        moved: 0,
-      }))
-    );
+    const rows = missing.map((c) => ({
+      family_id: familyId,
+      category_id: c.id,
+      year,
+      month,
+      allocated: 0,
+      activity: 0,
+      available: 0,
+      moved: 0,
+    }));
+    const { error } = await supabase.from("budget_allocations").insert(rows);
+    if (error) {
+      await supabase.from("budget_allocations").insert(
+        rows.map((row) => ({
+          family_id: row.family_id,
+          category_id: row.category_id,
+          year: row.year,
+          month: row.month,
+          allocated: row.allocated,
+          activity: row.activity,
+          available: row.available,
+        }))
+      );
+    }
   }
 }
 
@@ -96,18 +110,44 @@ export async function loadBudgetSnapshot(
       supabase.from("scheduled_transactions").select("*").eq("family_id", familyId),
     ]);
 
+  let transactions = (transactionsRes.data ?? []) as LedgerTransaction[];
+  let transactionsError = transactionsRes.error?.message;
+  let schemaLag: string | undefined;
+  let transferMarkersMissing = false;
+  if (transactionsRes.error) {
+    if (isSchemaLagError(transactionsRes.error.message)) {
+      transferMarkersMissing = true;
+      transactions = ledgerRowsForEnvelopeMath(undefined, true);
+      schemaLag = schemaLagMessage(transactionsRes.error.message);
+      transactionsError = undefined;
+    } else {
+      transactions = [];
+      transactionsError = transactionsRes.error.message;
+    }
+  }
+
+  const scheduledError = scheduledRes.error?.message;
+  const scheduledMissing = Boolean(scheduledError && isMissingRelationError(scheduledError));
+  if (scheduledMissing) {
+    schemaLag = schemaLag
+      ? `${schemaLag} Brak scheduled_transactions.`
+      : `Brak tabeli scheduled_transactions — uruchom migracje na bazie PostgREST (${scheduledError}).`;
+  }
+
   return {
     categories: (categoriesRes.data ?? []) as BudgetCategory[],
     allocations: (allocationsRes.data ?? []) as BudgetAllocation[],
     accounts: (accountsRes.data ?? []) as Account[],
-    transactions: (transactionsRes.data ?? []) as LedgerTransaction[],
+    transactions,
     scheduled: (scheduledRes.data ?? []) as ScheduledTransaction[],
+    schemaLag,
+    transferMarkersMissing,
+    scheduledError,
     error:
       categoriesRes.error?.message ||
       allocationsRes.error?.message ||
       accountsRes.error?.message ||
-      transactionsRes.error?.message ||
-      scheduledRes.error?.message,
+      transactionsError,
   };
 }
 

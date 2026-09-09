@@ -9,6 +9,7 @@ import { TransactionForm } from "@/components/transactions/TransactionForm";
 import { StatusStrip } from "@/components/overview/StatusStrip";
 import { SavingsStrip } from "@/components/overview/SavingsStrip";
 import { HouseholdStrip } from "@/components/overview/HouseholdStrip";
+import { SectionErrorBoundary } from "@/components/SectionErrorBoundary";
 import { getCurrentYearMonth } from "@/lib/format";
 
 export default function BudgetPage() {
@@ -37,18 +38,26 @@ export default function BudgetPage() {
         </div>
       </div>
 
-      <StatusStrip />
-      <SavingsStrip />
-      <HouseholdStrip />
+      <SectionErrorBoundary>
+        <StatusStrip />
+      </SectionErrorBoundary>
+      <SectionErrorBoundary>
+        <SavingsStrip />
+      </SectionErrorBoundary>
+      <SectionErrorBoundary>
+        <HouseholdStrip />
+      </SectionErrorBoundary>
 
-      <BudgetTable
-        year={year}
-        month={month}
-        onMonthChange={(y, m) => {
-          setYear(y);
-          setMonth(m);
-        }}
-      />
+      <SectionErrorBoundary fallbackTitle="Nie udało się pokazać kopert">
+        <BudgetTable
+          year={year}
+          month={month}
+          onMonthChange={(y, m) => {
+            setYear(y);
+            setMonth(m);
+          }}
+        />
+      </SectionErrorBoundary>
 
       <ReceiptScanner open={scannerOpen} onOpenChange={setScannerOpen} />
       <TransactionForm open={formOpen} onOpenChange={setFormOpen} />

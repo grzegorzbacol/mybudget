@@ -10,6 +10,7 @@ import { useBudget } from "@/hooks/use-budget";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency, getCurrentYearMonth } from "@/lib/format";
 import { contributionThisMonth, goalPercent, isBehindSchedule, suggestedForGoal } from "@/lib/savings";
+import { envelopeRowsFromBudget } from "@/lib/budget";
 import type { Goal } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +34,7 @@ export function SavingsStrip() {
 
   if (!goals?.length || !budget) return null;
 
-  const rows = budget.groups.flatMap((g) => g.categories);
+  const rows = envelopeRowsFromBudget(budget);
   const saved = goals.reduce((sum, goal) => {
     const row = rows.find((r) => r.category.id === goal.category_id);
     return sum + Math.max(0, row?.available ?? 0);
