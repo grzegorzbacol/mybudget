@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useFamily } from "@/hooks/use-family";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "./ui/button";
-import { Settings, PiggyBank, Users } from "lucide-react";
+import { Settings, Users, BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -53,8 +53,8 @@ export function AppHeader() {
         </div>
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" asChild>
-            <Link href="/savings" aria-label="Oszczędności">
-              <PiggyBank className="h-5 w-5" />
+            <Link href="/reports" aria-label="Raporty">
+              <BarChart3 className="h-5 w-5" />
             </Link>
           </Button>
           <Button variant="ghost" size="icon" asChild>

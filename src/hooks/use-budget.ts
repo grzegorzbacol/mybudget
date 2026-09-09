@@ -80,6 +80,32 @@ export function useAllocateBudget() {
   });
 }
 
+export function useAllocateMany() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (inputs: AllocateInput[]) => {
+      for (const input of inputs) {
+        const res = await fetch("/api/budget/allocate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Błąd alokacji");
+        }
+      }
+    },
+    onSuccess: () => {
+      toast.success("Zasilono koperty z Do rozdzielenia");
+      queryClient.invalidateQueries({ queryKey: ["budget"] });
+      queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd alokacji"),
+  });
+}
+
 export function useMoveMoney() {
   const queryClient = useQueryClient();
 

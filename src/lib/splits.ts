@@ -28,6 +28,27 @@ export function equalSplits(userIds: string[], total: number): SplitShare[] {
   return shares;
 }
 
+export function splitTotal(shares: SplitShare[]): number {
+  return money(shares.reduce((sum, share) => sum + Number(share.amount), 0));
+}
+
+export function splitsMatchTotal(shares: SplitShare[], total: number, epsilon = 0.015): boolean {
+  return Math.abs(splitTotal(shares) - money(Math.abs(total))) <= epsilon;
+}
+
+export function customSplits(
+  entries: Array<{ user_id: string; amount: number | string }>,
+  total?: number
+): SplitShare[] {
+  const shares = entries.map((entry) => ({
+    user_id: entry.user_id,
+    amount: money(Math.max(0, typeof entry.amount === "string" ? parseFloat(entry.amount.replace(",", ".")) || 0 : entry.amount)),
+  }));
+  if (total == null) return shares.filter((share) => share.amount > 0);
+  if (!splitsMatchTotal(shares, total)) return shares.filter((share) => share.amount > 0);
+  return shares.filter((share) => share.amount > 0);
+}
+
 /** Positive net = others owe this person. Negative = this person owes the household. */
 export function computeMemberNets(
   userIds: string[],

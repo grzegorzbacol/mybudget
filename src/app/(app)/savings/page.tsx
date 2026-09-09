@@ -41,6 +41,7 @@ export default function SavingsPage() {
   const [contributeFor, setContributeFor] = useState<Goal | null>(null);
   const [contributeAmount, setContributeAmount] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  const [newEnvelope, setNewEnvelope] = useState("");
   const [targetAmount, setTargetAmount] = useState("");
   const [targetDate, setTargetDate] = useState("");
 
@@ -68,9 +69,25 @@ export default function SavingsPage() {
 
   const createGoal = useMutation({
     mutationFn: async () => {
+      let catId = categoryId;
+      if (newEnvelope.trim()) {
+        const res = await fetch("/api/categories", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            group_name: "Oszczędności",
+            name: newEnvelope.trim(),
+            icon: "🎯",
+          }),
+        });
+        const created = await res.json();
+        if (!res.ok) throw new Error(created.error || "Nie udało się dodać koperty");
+        catId = created.id;
+      }
+      if (!catId) throw new Error("Wybierz lub utwórz kopertę");
       const { error } = await supabase.from("goals").insert({
         family_id: familyData!.family.id,
-        category_id: categoryId,
+        category_id: catId,
         target_amount: parseFloat(targetAmount),
         target_date: targetDate || null,
         type: "target_balance",
@@ -80,9 +97,15 @@ export default function SavingsPage() {
     onSuccess: () => {
       toast.success("Cel oszczędnościowy utworzony");
       queryClient.invalidateQueries({ queryKey: ["goals"] });
+      queryClient.invalidateQueries({ queryKey: ["budget"] });
+      queryClient.invalidateQueries({ queryKey: ["categories"] });
       setOpen(false);
+      setNewEnvelope("");
+      setCategoryId("");
+      setTargetAmount("");
+      setTargetDate("");
     },
-    onError: () => toast.error("Błąd tworzenia celu"),
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd tworzenia celu"),
   });
 
   const totalSaved = useMemo(
@@ -185,7 +208,7 @@ export default function SavingsPage() {
         {goals?.length === 0 && (
           <Card>
             <CardContent className="py-8 text-center text-muted-foreground">
-              Brak celów. Utwórz kopertę oszczędnościową (np. fundusz awaryjny) i nadaj jej cel.
+              Brak celów. Utwórz kopertę oszczędnościową (np. fundusz awaryjny) i nadaj jej cel — pieniądze weźmiesz z Do rozdzielenia.
             </CardContent>
           </Card>
         )}
@@ -216,8 +239,25 @@ export default function SavingsPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label>Koperta</Label>
-              <Select value={categoryId} onValueChange={setCategoryId}>
+              <Label>Nowa koperta (albo wybierz istniejącą)</Label>
+              <Input
+                value={newEnvelope}
+                onChange={(e) => {
+                  setNewEnvelope(e.target.value);
+                  if (e.target.value) setCategoryId("");
+                }}
+                placeholder="np. Fundusz wakacyjny"
+              />
+            </div>
+            <div>
+              <Label>Istniejąca koperta</Label>
+              <Select
+                value={categoryId}
+                onValueChange={(value) => {
+                  setCategoryId(value);
+                  setNewEnvelope("");
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Wybierz kategorię" />
                 </SelectTrigger>
@@ -238,7 +278,7 @@ export default function SavingsPage() {
               <Label>Data docelowa (opcjonalnie)</Label>
               <Input type="date" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} />
             </div>
-            <Button className="w-full" onClick={() => createGoal.mutate()} disabled={!categoryId || !targetAmount}>
+            <Button className="w-full" onClick={() => createGoal.mutate()} disabled={(!categoryId && !newEnvelope.trim()) || !targetAmount}>
               Utwórz cel
             </Button>
           </div>

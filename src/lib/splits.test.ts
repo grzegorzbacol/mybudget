@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeMemberNets, equalSplits, pairwiseDebts } from "./splits";
+import { computeMemberNets, customSplits, equalSplits, pairwiseDebts, splitsMatchTotal } from "./splits";
 
 describe("household splits", () => {
   it("splits a bill equally and keeps grosze on the first person", () => {
@@ -48,5 +48,21 @@ describe("household splits", () => {
     );
     expect(nets.get("grzegorz")).toBe(0);
     expect(nets.get("ala")).toBe(0);
+  });
+
+  it("accepts custom split amounts that add up to the bill", () => {
+    const shares = customSplits(
+      [
+        { user_id: "ala", amount: "70,00" },
+        { user_id: "grzegorz", amount: "30" },
+      ],
+      100
+    );
+    expect(shares).toEqual([
+      { user_id: "ala", amount: 70 },
+      { user_id: "grzegorz", amount: 30 },
+    ]);
+    expect(splitsMatchTotal(shares, 100)).toBe(true);
+    expect(splitsMatchTotal([{ user_id: "ala", amount: 40 }], 100)).toBe(false);
   });
 });

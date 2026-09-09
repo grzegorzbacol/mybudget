@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,8 +23,8 @@ import { useFamily, useFamilyMembers } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { isExpenseCategory } from "@/lib/budget";
-import { equalSplits } from "@/lib/splits";
+import { isExpenseCategory, isOnBudget } from "@/lib/budget";
+import { customSplits, equalSplits, splitsMatchTotal } from "@/lib/splits";
 
 interface TransactionFormProps {
   open: boolean;
@@ -60,7 +60,9 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
   const [toAccountId, setToAccountId] = useState("");
   const [categoryId, setCategoryId] = useState(prefill?.categoryId ?? "");
   const [cleared, setCleared] = useState(false);
-  const [splitEven, setSplitEven] = useState(false);
+  const [splitMode, setSplitMode] = useState<"none" | "equal" | "custom">("none");
+  const [customAmounts, setCustomAmounts] = useState<Record<string, string>>({});
+  const [paidBy, setPaidBy] = useState("");
   const [receiptUrl, setReceiptUrl] = useState(prefill?.receiptUrl ?? "");
   const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -77,7 +79,8 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
     setCleared(false);
     setMemo("");
     setToAccountId("");
-    setSplitEven(false);
+    setSplitMode("none");
+    setCustomAmounts({});
   }, [open, prefill]);
 
   const { data: accounts } = useQuery({
@@ -106,6 +109,29 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
   });
 
   const expenseCategories = (categories ?? []).filter(isExpenseCategory);
+  const memberIds = useMemo(() => (members ?? []).map((m) => m.user_id), [members]);
+  const currentUserId = familyData?.membership.user_id;
+
+  useEffect(() => {
+    if (!open) return;
+    if (!accountId && accounts?.length) {
+      const checking = accounts.find((a) => a.type === "checking" && isOnBudget(a));
+      setAccountId(checking?.id ?? accounts.find(isOnBudget)?.id ?? accounts[0].id);
+    }
+  }, [open, accounts, accountId]);
+
+  useEffect(() => {
+    if (!open) return;
+    if (!paidBy && currentUserId) setPaidBy(currentUserId);
+  }, [open, paidBy, currentUserId]);
+
+  useEffect(() => {
+    if (splitMode !== "equal" || memberIds.length === 0) return;
+    const abs = Math.abs(parseFloat(amount) || 0);
+    const shares = equalSplits(memberIds, abs);
+    setCustomAmounts(Object.fromEntries(shares.map((s) => [s.user_id, String(s.amount)])));
+  }, [splitMode, amount, memberIds]);
+
   const fromAccount = accounts?.find((a) => a.id === accountId);
   const toAccount = accounts?.find((a) => a.id === toAccountId);
   const trackingTransfer =
@@ -136,12 +162,26 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!familyData?.family.id || !accountId) return;
+    if (!familyData?.family.id) return;
+    if (!accountId) {
+      toast.error("Wybierz konto");
+      return;
+    }
     const absAmount = Math.abs(parseFloat(amount));
-    if (!absAmount) return;
+    if (!absAmount) {
+      toast.error("Podaj kwotę");
+      return;
+    }
+    if (type === "expense" && !categoryId) {
+      toast.error("Wybierz kopertę");
+      return;
+    }
 
     if (type === "transfer") {
-      if (!toAccountId) return;
+      if (!toAccountId) {
+        toast.error("Wybierz konto docelowe");
+        return;
+      }
       await createTransfer.mutateAsync({
         from_account_id: accountId,
         to_account_id: toAccountId,
@@ -153,7 +193,20 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
       });
     } else {
       const numAmount = type === "expense" ? -absAmount : absAmount;
-      const memberIds = (members ?? []).map((m) => m.user_id);
+      let splits = undefined;
+      if (type === "expense" && splitMode !== "none" && memberIds.length > 1) {
+        splits =
+          splitMode === "equal"
+            ? equalSplits(memberIds, absAmount)
+            : customSplits(
+                memberIds.map((id) => ({ user_id: id, amount: customAmounts[id] ?? "0" })),
+                absAmount
+              );
+        if (!splitsMatchTotal(splits, absAmount)) {
+          toast.error("Suma udziałów musi być równa kwocie wydatku");
+          return;
+        }
+      }
       await createTransaction.mutateAsync({
         account_id: accountId,
         category_id: type === "income" ? null : categoryId || null,
@@ -164,10 +217,8 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
         source: "manual",
         cleared,
         receipt_url: receiptUrl || null,
-        splits:
-          type === "expense" && splitEven && memberIds.length > 1
-            ? equalSplits(memberIds, absAmount)
-            : undefined,
+        paid_by: paidBy || currentUserId || null,
+        splits,
       });
     }
 
@@ -263,6 +314,16 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
             </div>
           </div>
 
+          {(!accounts || accounts.length === 0) && (
+            <p className="text-sm text-amber-600">
+              Nie masz jeszcze konta. Dodaj je w{" "}
+              <a className="underline" href="/accounts">
+                Kontach
+              </a>{" "}
+              albo w kreatorze startu.
+            </p>
+          )}
+
           <div>
             <Label>{type === "transfer" ? "Z konta" : "Konto"}</Label>
             <Select value={accountId} onValueChange={setAccountId}>
@@ -320,20 +381,61 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
           </label>
 
           {type === "expense" && (members?.length ?? 0) > 1 && (
-            <label className="flex items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={splitEven}
-                onChange={(e) => setSplitEven(e.target.checked)}
-              />
-              <span>
-                Podziel równo między domowników ({members?.length})
-                <span className="block text-xs text-muted-foreground">
-                  Koperta i konto i tak schodzą w całości. Podział służy do rozliczeń „kto komu”.
-                </span>
-              </span>
-            </label>
+            <div className="space-y-2 rounded-lg border p-3">
+              <div>
+                <Label>Kto zapłacił</Label>
+                <Select value={paidBy} onValueChange={setPaidBy}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Wybierz" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {members?.map((m) => (
+                      <SelectItem key={m.user_id} value={m.user_id}>
+                        {m.profile?.display_name ?? "Domownik"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Podział między domowników</Label>
+                <Select
+                  value={splitMode}
+                  onValueChange={(v) => setSplitMode(v as "none" | "equal" | "custom")}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Bez podziału (tylko budżet)</SelectItem>
+                    <SelectItem value="equal">Równo</SelectItem>
+                    <SelectItem value="custom">Własne kwoty</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Koperta i konto schodzą w całości. Podział służy do rozliczeń „kto komu”.
+                </p>
+              </div>
+              {splitMode !== "none" && (
+                <div className="space-y-2">
+                  {members?.map((m) => (
+                    <div key={m.user_id} className="flex items-center gap-2">
+                      <Label className="w-28 truncate">{m.profile?.display_name ?? "Domownik"}</Label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={customAmounts[m.user_id] ?? ""}
+                        onChange={(e) =>
+                          setCustomAmounts((prev) => ({ ...prev, [m.user_id]: e.target.value }))
+                        }
+                        disabled={splitMode === "equal"}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
 
           {type !== "transfer" && (

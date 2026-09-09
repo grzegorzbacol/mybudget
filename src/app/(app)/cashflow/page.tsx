@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,17 +23,26 @@ import {
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { isExpenseCategory } from "@/lib/budget";
-import type { BudgetMonthData, CashflowData, ScheduledTransaction } from "@/lib/types";
+import type { BudgetMonthData, CashflowData, CashflowSupervision, ScheduledTransaction } from "@/lib/types";
 import type { ScheduledInput } from "@/lib/validators";
 import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { StatusStrip } from "@/components/overview/StatusStrip";
+import {
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 interface CashflowResponse {
   budget: BudgetMonthData;
   cashflow: CashflowData;
   scheduled: ScheduledTransaction[];
+  supervision?: CashflowSupervision;
 }
 
 const FREQ_LABEL: Record<ScheduledTransaction["frequency"], string> = {
@@ -76,6 +85,11 @@ export default function CashflowPage() {
       return rows ?? [];
     },
   });
+
+  useEffect(() => {
+    if (accountId || !accounts?.length) return;
+    setAccountId(accounts[0].id);
+  }, [accounts, accountId]);
 
   const { data: categories } = useQuery({
     queryKey: ["categories", familyData?.family.id],
@@ -173,6 +187,14 @@ export default function CashflowPage() {
 
       {isLoading && <p className="text-center text-muted-foreground">Ładowanie...</p>}
 
+      {!isLoading && !cashflow && (
+        <Card>
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            Nie udało się wczytać przepływów. Odśwież stronę albo wróć po zalogowaniu.
+          </CardContent>
+        </Card>
+      )}
+
       {cashflow && budget && (
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -206,6 +228,33 @@ export default function CashflowPage() {
             </Card>
           </div>
 
+          {data.supervision?.runway && data.supervision.runway.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Prognoza salda w budżecie</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="mb-3 text-sm text-muted-foreground">
+                  Start: saldo kont w budżecie. Każdy zaplanowany wpływ/wydatek przesuwa linię — spadek poniżej zera
+                  to moment „kiedy ciasno”.
+                </p>
+                <ResponsiveContainer width="100%" height={220}>
+                  <LineChart data={data.supervision.runway}>
+                    <XAxis dataKey="date" tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 10 }} />
+                    <Tooltip
+                      formatter={(v) => formatCurrency(Number(v))}
+                      labelFormatter={(label, payload) => {
+                        const payee = payload?.[0]?.payload?.payee;
+                        return payee ? `${label} · ${payee}` : String(label);
+                      }}
+                    />
+                    <Line type="monotone" dataKey="balance" stroke="#6366f1" strokeWidth={2} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </CardContent>
+            </Card>
+          )}
           {cashflow.byCategory.length > 0 && (
             <Card>
               <CardHeader>

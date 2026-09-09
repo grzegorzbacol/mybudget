@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign } from "./budget";
+import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, planFillEnvelopeGaps } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -211,5 +211,32 @@ describe("YNAB envelope math", () => {
   it("Ready to Assign equals on-budget cash minus envelope available", () => {
     expect(computeReadyToAssign(2800, 300)).toBe(2500);
     expect(computeReadyToAssign(850, -50)).toBe(900);
+  });
+
+  it("fills overspent and unfunded envelopes from Ready to Assign", () => {
+    expect(envelopeGap(-50, 0)).toBe(50);
+    expect(envelopeGap(20, 100)).toBe(80);
+    const plan = planFillEnvelopeGaps(
+      [
+        { category: { id: "rent" }, assigned: 0, available: 0, upcoming: 2800 },
+        { category: { id: "food" }, assigned: 100, available: -40, upcoming: 0 },
+        { category: { id: "fun" }, assigned: 50, available: 50, upcoming: 0 },
+      ],
+      2000
+    );
+    expect(plan).toEqual([
+      { category_id: "rent", allocated: 2000, add: 2000 },
+    ]);
+    const full = planFillEnvelopeGaps(
+      [
+        { category: { id: "rent" }, assigned: 0, available: 0, upcoming: 800 },
+        { category: { id: "food" }, assigned: 100, available: -40, upcoming: 0 },
+      ],
+      900
+    );
+    expect(full).toEqual([
+      { category_id: "rent", allocated: 800, add: 800 },
+      { category_id: "food", allocated: 140, add: 40 },
+    ]);
   });
 });

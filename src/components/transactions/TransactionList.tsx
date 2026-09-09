@@ -165,7 +165,20 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
           </div>
         ))}
         {transactions?.length === 0 && (
-          <p className="py-8 text-center text-muted-foreground">Brak transakcji</p>
+          <div className="rounded-lg border border-dashed px-4 py-8 text-center">
+            <p className="font-medium">Brak transakcji w tym okresie</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Dodaj wydatek, przychód albo transfer. Możesz też wczytać CSV z mBank/PKO/ING albo dane przykładowe.
+            </p>
+            <div className="mt-3 flex flex-wrap justify-center gap-2">
+              <Button asChild variant="outline" size="sm">
+                <a href="/setup">Kreator startu</a>
+              </Button>
+              <Button asChild variant="outline" size="sm">
+                <a href="/cashflow">Zaplanuj stałe opłaty</a>
+              </Button>
+            </div>
+          </div>
         )}
       </div>
 

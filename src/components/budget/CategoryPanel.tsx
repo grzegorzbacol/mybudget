@@ -156,6 +156,19 @@ export function CategoryPanel({
                     Pokryj {formatCurrency(Math.abs(row.available))}
                   </Button>
                 )}
+                {row.upcoming > 0 && row.available < row.upcoming && readyToAssign > 0 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      saveAssigned(
+                        row.assigned + Math.min(readyToAssign, Math.max(0, row.upcoming - row.available))
+                      )
+                    }
+                  >
+                    Zasil plan ({formatCurrency(Math.min(readyToAssign, Math.max(0, row.upcoming - row.available)))})
+                  </Button>
+                )}
               </div>
             </div>
 

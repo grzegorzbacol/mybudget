@@ -7,12 +7,13 @@ import { Button } from "@/components/ui/button";
 import { ReportsCharts } from "@/components/reports/ReportsCharts";
 import { exportReportToPdf } from "@/lib/pdf-export";
 import { getCurrentYearMonth } from "@/lib/format";
+import { MonthSwitcher } from "@/components/MonthSwitcher";
 import type { MonthlyReport } from "@/lib/types";
 
 export default function ReportsPage() {
   const { year: initYear, month: initMonth } = getCurrentYearMonth();
-  const [year] = useState(initYear);
-  const [month] = useState(initMonth);
+  const [year, setYear] = useState(initYear);
+  const [month, setMonth] = useState(initMonth);
 
   const { data: report, isLoading } = useQuery<MonthlyReport>({
     queryKey: ["reports", year, month],
@@ -38,7 +39,20 @@ export default function ReportsPage() {
       {isLoading && (
         <p className="text-center text-muted-foreground">Ładowanie raportów...</p>
       )}
+      <MonthSwitcher
+        year={year}
+        month={month}
+        onChange={(y, m) => {
+          setYear(y);
+          setMonth(m);
+        }}
+      />
       {report && <ReportsCharts report={report} />}
+      {!isLoading && report && report.byCategory.length === 0 && (
+        <p className="text-center text-sm text-muted-foreground">
+          Brak wydatków i przydziałów w tym miesiącu.
+        </p>
+      )}
     </div>
   );
 }

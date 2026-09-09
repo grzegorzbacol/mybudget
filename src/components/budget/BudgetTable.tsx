@@ -1,14 +1,25 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useBudget } from "@/hooks/use-budget";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useAllocateMany, useBudget } from "@/hooks/use-budget";
 import { formatCurrency, getMonthLabel } from "@/lib/format";
+import { planFillEnvelopeGaps } from "@/lib/budget";
 import { cn } from "@/lib/utils";
 import { CategoryPanel } from "./CategoryPanel";
 import { AssignedInput, Money } from "./AssignedInput";
 import type { BudgetCategoryRow } from "@/lib/types";
+import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface BudgetTableProps {
   year: number;
@@ -19,6 +30,11 @@ interface BudgetTableProps {
 export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
   const { data, isLoading } = useBudget(year, month);
   const [selected, setSelected] = useState<BudgetCategoryRow | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [groupName, setGroupName] = useState("Życie codzienne");
+  const [catName, setCatName] = useState("");
+  const allocateMany = useAllocateMany();
+  const queryClient = useQueryClient();
 
   const goMonth = (delta: number) => {
     let m = month + delta;
@@ -40,9 +56,11 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
   if (!data) return null;
 
   const rtaPositive = data.readyToAssign >= 0;
+  const allRows = data.groups.flatMap((g) => g.categories);
+  const gapPlan = planFillEnvelopeGaps(allRows, data.readyToAssign);
+  const gapTotal = gapPlan.reduce((sum, row) => sum + row.add, 0);
   const selectedRow = selected
-    ? data.groups.flatMap((g) => g.categories).find((row) => row.category.id === selected.category.id) ??
-      selected
+    ? allRows.find((row) => row.category.id === selected.category.id) ?? selected
     : null;
 
   return (
@@ -90,6 +108,26 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
           <p className="mt-3 text-sm text-muted-foreground">
             Nadaj każdej złotówce zadanie — przydziel przychód do kopert.
           </p>
+        )}
+        {gapPlan.length > 0 && data.readyToAssign > 0 && (
+          <Button
+            className="mt-3"
+            size="sm"
+            variant="outline"
+            disabled={allocateMany.isPending}
+            onClick={() =>
+              allocateMany.mutate(
+                gapPlan.map((row) => ({
+                  category_id: row.category_id,
+                  year,
+                  month,
+                  allocated: row.allocated,
+                }))
+              )
+            }
+          >
+            Zasil braki ({formatCurrency(gapTotal)})
+          </Button>
         )}
         {data.onBudgetBalance === 0 && data.incomeThisMonth === 0 && (
           <div className="mt-3 rounded-md border bg-background p-3 text-sm">
@@ -202,17 +240,72 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
         ))}
       </div>
 
+      {data.groups.length === 0 && (
+        <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+          Brak kopert. Dodaj pierwszą kategorię, żeby zacząć przydzielać pieniądze.
+        </div>
+      )}
+
+      <Button variant="outline" className="w-full" onClick={() => setAddOpen(true)}>
+        <Plus className="mr-2 h-4 w-4" />
+        Dodaj kopertę
+      </Button>
+
       {selectedRow && (
         <CategoryPanel
           row={selectedRow}
           year={year}
           month={month}
           readyToAssign={data.readyToAssign}
-          categories={data.groups.flatMap((g) => g.categories)}
+          categories={allRows}
           open={!!selected}
           onOpenChange={(open) => !open && setSelected(null)}
         />
       )}
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nowa koperta</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Grupa</Label>
+              <Input value={groupName} onChange={(e) => setGroupName(e.target.value)} />
+            </div>
+            <div>
+              <Label>Nazwa</Label>
+              <Input
+                value={catName}
+                onChange={(e) => setCatName(e.target.value)}
+                placeholder="np. Prezent dla mamy"
+              />
+            </div>
+            <Button
+              className="w-full"
+              disabled={!catName || !groupName}
+              onClick={async () => {
+                const res = await fetch("/api/categories", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ group_name: groupName, name: catName }),
+                });
+                if (!res.ok) {
+                  toast.error("Nie udało się dodać koperty");
+                  return;
+                }
+                toast.success("Dodano kopertę");
+                setCatName("");
+                setAddOpen(false);
+                queryClient.invalidateQueries({ queryKey: ["budget"] });
+                queryClient.invalidateQueries({ queryKey: ["categories"] });
+              }}
+            >
+              Dodaj
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -36,12 +36,31 @@ export default function SetupPage() {
 
   const saveOpening = useMutation({
     mutationFn: async () => {
-      if (!checking || !familyData) return;
+      if (!familyData) return;
       const amount = parseFloat(opening.replace(",", ".")) || 0;
-      if (amount === 0) return;
+      if (amount === 0) {
+        throw new Error("Wpisz saldo, które masz dziś na koncie");
+      }
+      let account = checking;
+      if (!account) {
+        const { data: created, error } = await supabase
+          .from("accounts")
+          .insert({
+            family_id: familyData.family.id,
+            name: "Konto główne",
+            type: "checking",
+            balance: 0,
+            currency: familyData.family.currency ?? "PLN",
+            on_budget: true,
+          })
+          .select()
+          .single();
+        if (error || !created) throw error ?? new Error("Nie udało się utworzyć konta");
+        account = created;
+      }
       const { error } = await supabase.from("transactions").insert({
         family_id: familyData.family.id,
-        account_id: checking.id,
+        account_id: account.id,
         amount,
         payee: "Saldo początkowe",
         memo: "Opening balance",
@@ -56,7 +75,7 @@ export default function SetupPage() {
       queryClient.invalidateQueries();
       router.push("/budget");
     },
-    onError: () => toast.error("Nie udało się zapisać salda"),
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Nie udało się zapisać salda"),
   });
 
   const loadDemo = async () => {
@@ -102,7 +121,7 @@ export default function SetupPage() {
               placeholder="np. 4320.50"
             />
           </div>
-          <Button className="w-full" onClick={() => saveOpening.mutate()} disabled={!checking || saveOpening.isPending}>
+          <Button className="w-full" onClick={() => saveOpening.mutate()} disabled={saveOpening.isPending}>
             Zapisz i przejdź do budżetu
           </Button>
         </CardContent>

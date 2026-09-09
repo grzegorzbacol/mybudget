@@ -60,18 +60,17 @@ Dane przykładowe (tylko pusty budżet): Ustawienia → **Wczytaj dane przykład
 
 ## Funkcje
 
-- **Budżet miesięczny** — koperty, Do rozdzielenia, przydział, przenoszenie środków, zaległości
-- **Transakcje** — wydatek, przychód (→ Do rozdzielenia), transfer między kontami, flaga uzgodnienia (C/U)
-- **Przepływy** — zaplanowane rachunki i wypłaty, status zasilenia kopert
+- **Budżet miesięczny** — koperty, Do rozdzielenia, przydział, **Zasil braki**, przenoszenie środków, zaległości
+- **Transakcje** — wydatek, przychód (→ Do rozdzielenia), transfer między kontami, flaga uzgodnienia (C/U), podział równo lub własnymi kwotami
+- **Przepływy** — zaplanowane rachunki i wypłaty, status zasilenia kopert, prognoza salda („kiedy ciasno”)
 - **Konta** — saldo robocze vs uzgodnione, konta w budżecie vs śledzone, korekta/uzgodnienie
-- **Budżet rodzinny** — wielu użytkowników, role (owner/admin/member)
-- **Import CSV** — PKO / ING / mBank
-- **Skanowanie paragonów** — kamera PWA + OCR + AI
-- **Oszczędności** — cele, postęp, wpłata z Do rozdzielenia
-- **Wspólny budżet** — zaproszenia, podział wydatków, rozliczenia kto komu
+- **Budżet rodzinny** — wielu użytkowników, role (owner/admin/member), zaproszenia
 - **Import CSV/OFX** — PKO / ING / mBank (żywe PSD2 z mBank — później, przez agregator)
-- **Raporty** — wykresy, PDF
-- **Majątek** — aktywa, zobowiązania, wartość netto i trend
+- **Skanowanie paragonów** — kamera PWA + OCR + AI
+- **Oszczędności** — cele, postęp, wpłata z Do rozdzielenia, nowa koperta przy tworzeniu celu
+- **Rozliczenia** — kto komu oddaje po podziale wydatków
+- **Raporty** — wykresy, PDF, przełączanie miesiąca
+- **Majątek** — aktywa, zobowiązania, wartość netto, trend i ręczna aktualizacja wartości
 - **PWA** — instalacja na telefonie
 
 ## Testy

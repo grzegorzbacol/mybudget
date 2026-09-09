@@ -236,6 +236,33 @@ export function buildBudgetMonthData(
   };
 }
 
+export function envelopeGap(available: number, upcoming = 0): number {
+  return money(Math.max(0, Math.max(0, upcoming) - available));
+}
+
+/** Assign from Ready to Assign until overspent/unfunded envelopes are covered. */
+export function planFillEnvelopeGaps(
+  rows: Array<{ category: { id: string }; assigned: number; available: number; upcoming: number }>,
+  readyToAssign: number
+): Array<{ category_id: string; allocated: number; add: number }> {
+  let remaining = money(Math.max(0, readyToAssign));
+  const updates: Array<{ category_id: string; allocated: number; add: number }> = [];
+  for (const row of rows) {
+    if (remaining <= 0) break;
+    const need = envelopeGap(row.available, row.upcoming);
+    if (need <= 0) continue;
+    const add = money(Math.min(need, remaining));
+    if (add <= 0) continue;
+    updates.push({
+      category_id: row.category.id,
+      allocated: money(row.assigned + add),
+      add,
+    });
+    remaining = money(remaining - add);
+  }
+  return updates;
+}
+
 export function suggestMonthlyContribution(
   targetAmount: number,
   currentAvailable: number,
