@@ -91,6 +91,17 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             Nadaj każdej złotówce zadanie — przydziel przychód do kopert.
           </p>
         )}
+        {data.onBudgetBalance === 0 && data.incomeThisMonth === 0 && (
+          <div className="mt-3 rounded-md border bg-background p-3 text-sm">
+            <p className="font-medium">Pierwsza sesja</p>
+            <ol className="mt-1 list-decimal space-y-1 pl-4 text-muted-foreground">
+              <li>W Kontach wpisz saldo początkowe (albo dodaj przychód).</li>
+              <li>Wróć tutaj — kwota spadnie do „Do rozdzielenia”.</li>
+              <li>Przydziel pieniądze do kopert, aż Do rozdzielenia = 0 zł.</li>
+              <li>W Przepływach zaplanuj wypłatę i stałe opłaty.</li>
+            </ol>
+          </div>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-lg border">

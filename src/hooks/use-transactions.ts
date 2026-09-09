@@ -81,6 +81,7 @@ export function useCreateTransaction() {
       queryClient.invalidateQueries({ queryKey: ["budget"] });
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+      queryClient.invalidateQueries({ queryKey: ["settle"] });
     },
     onError: (err) => {
       toast.error(err instanceof Error ? err.message : "Nie udało się dodać transakcji");

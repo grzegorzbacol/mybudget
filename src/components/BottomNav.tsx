@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Wallet, ArrowLeftRight, BarChart3, Landmark, Waves } from "lucide-react";
+import { Wallet, ArrowLeftRight, Landmark, Waves, PiggyBank } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -10,7 +10,7 @@ const navItems = [
   { href: "/transactions", label: "Transakcje", icon: ArrowLeftRight },
   { href: "/cashflow", label: "Przepływy", icon: Waves },
   { href: "/accounts", label: "Konta", icon: Landmark },
-  { href: "/reports", label: "Raporty", icon: BarChart3 },
+  { href: "/savings", label: "Oszczędności", icon: PiggyBank },
 ];
 
 export function BottomNav() {

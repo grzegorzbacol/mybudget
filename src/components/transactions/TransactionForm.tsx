@@ -19,11 +19,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useCreateTransaction, useCreateTransfer } from "@/hooks/use-transactions";
-import { useFamily } from "@/hooks/use-family";
+import { useFamily, useFamilyMembers } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { isExpenseCategory } from "@/lib/budget";
+import { equalSplits } from "@/lib/splits";
 
 interface TransactionFormProps {
   open: boolean;
@@ -42,6 +43,7 @@ type EntryType = "expense" | "income" | "transfer";
 
 export function TransactionForm({ open, onOpenChange, prefill }: TransactionFormProps) {
   const { data: familyData } = useFamily();
+  const { data: members } = useFamilyMembers();
   const createTransaction = useCreateTransaction();
   const createTransfer = useCreateTransfer();
   const supabase = createClient();
@@ -58,6 +60,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
   const [toAccountId, setToAccountId] = useState("");
   const [categoryId, setCategoryId] = useState(prefill?.categoryId ?? "");
   const [cleared, setCleared] = useState(false);
+  const [splitEven, setSplitEven] = useState(false);
   const [receiptUrl, setReceiptUrl] = useState(prefill?.receiptUrl ?? "");
   const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -74,6 +77,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
     setCleared(false);
     setMemo("");
     setToAccountId("");
+    setSplitEven(false);
   }, [open, prefill]);
 
   const { data: accounts } = useQuery({
@@ -149,6 +153,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
       });
     } else {
       const numAmount = type === "expense" ? -absAmount : absAmount;
+      const memberIds = (members ?? []).map((m) => m.user_id);
       await createTransaction.mutateAsync({
         account_id: accountId,
         category_id: type === "income" ? null : categoryId || null,
@@ -159,6 +164,10 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
         source: "manual",
         cleared,
         receipt_url: receiptUrl || null,
+        splits:
+          type === "expense" && splitEven && memberIds.length > 1
+            ? equalSplits(memberIds, absAmount)
+            : undefined,
       });
     }
 
@@ -309,6 +318,23 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
             <input type="checkbox" checked={cleared} onChange={(e) => setCleared(e.target.checked)} />
             Uzgodniona (cleared)
           </label>
+
+          {type === "expense" && (members?.length ?? 0) > 1 && (
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={splitEven}
+                onChange={(e) => setSplitEven(e.target.checked)}
+              />
+              <span>
+                Podziel równo między domowników ({members?.length})
+                <span className="block text-xs text-muted-foreground">
+                  Koperta i konto i tak schodzą w całości. Podział służy do rozliczeń „kto komu”.
+                </span>
+              </span>
+            </label>
+          )}
 
           {type !== "transfer" && (
             <div>

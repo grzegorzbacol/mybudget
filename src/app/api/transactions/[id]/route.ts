@@ -20,6 +20,7 @@ export async function PATCH(
 
   const patch = { ...parsed.data };
   delete patch.id;
+  delete patch.splits;
   if (patch.amount != null && patch.amount > 0) {
     patch.category_id = null;
   }

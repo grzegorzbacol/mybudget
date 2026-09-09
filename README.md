@@ -63,7 +63,10 @@ Zarejestruj konto, utwórz gospodarstwo, dodaj saldo początkowe na koncie, zapi
 - **Budżet rodzinny** — wielu użytkowników, role (owner/admin/member)
 - **Import CSV** — PKO / ING / mBank
 - **Skanowanie paragonów** — kamera PWA + OCR + AI
-- **Raporty i cele** — wykresy, PDF, cele oszczędnościowe
+- **Oszczędności** — cele, postęp, wpłata z Do rozdzielenia
+- **Wspólny budżet** — zaproszenia, podział wydatków, rozliczenia kto komu
+- **Import CSV/OFX** — PKO / ING / mBank (żywe PSD2 z mBank — później, przez agregator)
+- **Raporty** — wykresy, PDF
 - **PWA** — instalacja na telefonie
 
 ## Testy

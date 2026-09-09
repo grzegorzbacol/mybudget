@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
-import { parseBankCsv } from "@/lib/csv-import";
+import { parseBankFile } from "@/lib/ofx-import";
 import { z } from "zod";
 
 const importSchema = z.object({
@@ -20,7 +20,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const rows = parseBankCsv(parsed.data.content);
+  const rows = parseBankFile(parsed.data.content);
   if (rows.length === 0) {
     return NextResponse.json({ error: "Nie znaleziono transakcji w pliku" }, { status: 400 });
   }
@@ -35,6 +35,7 @@ export async function POST(request: Request) {
     date: row.date,
     source: "import" as const,
     cleared: true,
+    paid_by: ctx.user.id,
   }));
 
   const { data, error } = await ctx.supabase

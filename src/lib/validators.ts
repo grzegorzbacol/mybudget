@@ -13,6 +13,15 @@ export const transactionSchema = z.object({
   transfer_account_id: z.string().uuid().nullable().optional(),
   transfer_id: z.string().uuid().nullable().optional(),
   scheduled_id: z.string().uuid().nullable().optional(),
+  paid_by: z.string().uuid().nullable().optional(),
+  splits: z
+    .array(
+      z.object({
+        user_id: z.string().uuid(),
+        amount: z.number().nonnegative(),
+      })
+    )
+    .optional(),
 });
 
 export const transactionPatchSchema = transactionSchema.partial().extend({

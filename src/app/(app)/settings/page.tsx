@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import type { BudgetCategory } from "@/lib/types";
+import Link from "next/link";
 
 export default function SettingsPage() {
   const { data: familyData } = useFamily();
@@ -172,6 +173,39 @@ export default function SettingsPage() {
           >
             <Plus className="mr-2 h-4 w-4" />
             Dodaj kategorię
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Wspólny budżet</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            Jeden budżet dla gospodarstwa: wspólne koperty, Do rozdzielenia i konta. Zaproś partnera kodem powyżej.
+            Wydatki możesz dzielić między osoby — rozliczenia są w osobnym widoku.
+          </p>
+          <Button variant="outline" asChild>
+            <Link href="/settle">Otwórz rozliczenia</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Import banku (mBank i inne)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            Żywe połączenie z mBank (PSD2 / AIS, np. GoCardless, Enable Banking, Kontomatik) nie jest w tej wersji —
+            wymaga zgody banku i agregatora. Teraz: eksport CSV z mBank/PKO/ING albo plik OFX, potem Import na ekranie Transakcje.
+          </p>
+          <Button variant="outline" asChild>
+            <Link href="/transactions">Przejdź do importu</Link>
+          </Button>
+          <Button variant="ghost" asChild>
+            <Link href="/reports">Raporty</Link>
           </Button>
         </CardContent>
       </Card>

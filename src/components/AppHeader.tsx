@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useFamily } from "@/hooks/use-family";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "./ui/button";
-import { Settings, Target } from "lucide-react";
+import { Settings, PiggyBank, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -13,7 +13,7 @@ const navItems = [
   { href: "/transactions", label: "Transakcje" },
   { href: "/cashflow", label: "Przepływy" },
   { href: "/accounts", label: "Konta" },
-  { href: "/reports", label: "Raporty" },
+  { href: "/savings", label: "Oszczędności" },
 ];
 
 export function AppHeader() {
@@ -52,8 +52,13 @@ export function AppHeader() {
         </div>
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" asChild>
-            <Link href="/goals" aria-label="Cele">
-              <Target className="h-5 w-5" />
+            <Link href="/savings" aria-label="Oszczędności">
+              <PiggyBank className="h-5 w-5" />
+            </Link>
+          </Button>
+          <Button variant="ghost" size="icon" asChild>
+            <Link href="/settle" aria-label="Rozliczenia">
+              <Users className="h-5 w-5" />
             </Link>
           </Button>
           <Button variant="ghost" size="icon" asChild>
