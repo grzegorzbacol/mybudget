@@ -96,10 +96,14 @@ $$;
 
 DO $$
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_publication_tables
-    WHERE pubname = 'supabase_realtime' AND tablename = 'scheduled_transactions'
-  ) THEN
+  IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime')
+     AND NOT EXISTS (
+       SELECT 1 FROM pg_publication_tables
+       WHERE pubname = 'supabase_realtime' AND tablename = 'scheduled_transactions'
+     ) THEN
     ALTER PUBLICATION supabase_realtime ADD TABLE scheduled_transactions;
   END IF;
+EXCEPTION
+  WHEN undefined_object THEN NULL;
+  WHEN others THEN NULL;
 END $$;

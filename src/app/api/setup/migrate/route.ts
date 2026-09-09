@@ -2,6 +2,8 @@ import { readdir, readFile } from "fs/promises";
 import { join } from "path";
 import { NextResponse } from "next/server";
 import { Client } from "pg";
+import { applyEnsureSchema } from "@/lib/ensure-schema";
+import { resolveDatabaseUrl } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +18,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const databaseUrl = process.env.DATABASE_URL;
+  const databaseUrl = resolveDatabaseUrl();
   if (!databaseUrl) {
     return NextResponse.json({ error: "DATABASE_URL not configured" }, { status: 503 });
   }
@@ -52,10 +54,13 @@ export async function POST(request: Request) {
       ran.push(file);
     }
 
+    const ensured = await applyEnsureSchema();
+
     return NextResponse.json({
       ok: true,
       message: ran.length ? `Applied: ${ran.join(", ")}` : "Schema up to date",
       applied: ran,
+      ensureSchema: ensured,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Migration failed";

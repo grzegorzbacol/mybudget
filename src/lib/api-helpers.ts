@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { isSchemaLagError, schemaLagMessage } from "@/lib/schema";
 import type {
   Account,
   BudgetAllocation,
@@ -61,18 +62,30 @@ export async function ensureMonthAllocations(
   const missing = categories.filter((c) => !existingIds.has(c.id));
 
   if (missing.length > 0) {
-    await supabase.from("budget_allocations").insert(
-      missing.map((c) => ({
-        family_id: familyId,
-        category_id: c.id,
-        year,
-        month,
-        allocated: 0,
-        activity: 0,
-        available: 0,
-        moved: 0,
-      }))
-    );
+    const rows = missing.map((c) => ({
+      family_id: familyId,
+      category_id: c.id,
+      year,
+      month,
+      allocated: 0,
+      activity: 0,
+      available: 0,
+      moved: 0,
+    }));
+    const { error } = await supabase.from("budget_allocations").insert(rows);
+    if (error) {
+      await supabase.from("budget_allocations").insert(
+        rows.map((row) => ({
+          family_id: row.family_id,
+          category_id: row.category_id,
+          year: row.year,
+          month: row.month,
+          allocated: row.allocated,
+          activity: row.activity,
+          available: row.available,
+        }))
+      );
+    }
   }
 }
 
@@ -98,13 +111,22 @@ export async function loadBudgetSnapshot(
 
   let transactions = (transactionsRes.data ?? []) as LedgerTransaction[];
   let transactionsError = transactionsRes.error?.message;
+  let schemaLag: string | undefined;
   if (transactionsRes.error) {
     const fallback = await supabase
       .from("transactions")
       .select("id, account_id, category_id, amount, date, cleared")
       .eq("family_id", familyId);
     transactions = (fallback.data ?? []) as LedgerTransaction[];
-    transactionsError = fallback.error?.message;
+    if (!fallback.error && isSchemaLagError(transactionsRes.error.message)) {
+      schemaLag = schemaLagMessage(transactionsRes.error.message);
+      transactionsError = undefined;
+    } else {
+      transactionsError = fallback.error?.message || transactionsRes.error.message;
+      if (isSchemaLagError(transactionsError)) {
+        transactionsError = schemaLagMessage(transactionsError);
+      }
+    }
   }
 
   return {
@@ -113,6 +135,7 @@ export async function loadBudgetSnapshot(
     accounts: (accountsRes.data ?? []) as Account[],
     transactions,
     scheduled: (scheduledRes.data ?? []) as ScheduledTransaction[],
+    schemaLag,
     error:
       categoriesRes.error?.message ||
       allocationsRes.error?.message ||

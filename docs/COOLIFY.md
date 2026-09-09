@@ -3,7 +3,7 @@
 ## Wymagania
 
 - Repozytorium Git (GitHub / GitLab / Gitea)
-- Projekt Supabase z uruchomionymi migracjami `supabase/migrations/001_initial_schema.sql` oraz `002_ynab_model.sql`
+- Projekt Supabase z uruchomionymi migracjami `supabase/migrations/*.sql` (w tym `002_ynab_model.sql` i `006_transfer_columns.sql`)
 - Klucze API: Supabase, OpenAI (opcjonalnie Google Vision)
 
 ## Kroki w Coolify
@@ -46,7 +46,13 @@ Jeśli Supabase działa jako usługa w tym samym środowisku Coolify:
 | `NEXT_PUBLIC_SUPABASE_URL` | `http://supabasekong-<ID>.51.38.132.184.sslip.io` (bez `:8000`) |
 | `DATABASE_URL` | `postgresql://postgres:<HASLO>@supabase-db-<ID>:5432/postgres` |
 
-Przy starcie kontenera migracje z `supabase/migrations/` uruchamiają się automatycznie (wymaga `DATABASE_URL`), w tym `002_ynab_model.sql` na istniejących bazach.
+Przy starcie kontenera (`scripts/docker-entrypoint.sh`) migracje z `supabase/migrations/` uruchamiają się automatycznie **oraz** `scripts/ensure-schema.sql` (zawsze, idempotentnie). Wymaga `DATABASE_URL` (albo `POSTGRES_URL` / `SUPABASE_DB_URL`) wskazującego **tę samą** bazę, z której korzysta PostgREST.
+
+**Potwierdzony incydent (2026-09-09):** po merge PR #2/#3 live zwracał
+`GET /api/budget/2026/9 → 500 {"error":"column transactions.transfer_account_id does not exist"}`.
+`002_ynab_model.sql` dodaje tę kolumnę, ale boot kończył plik na `ALTER PUBLICATION supabase_realtime` (często brak publikacji) i **przerywał** kolejkę — albo `DATABASE_URL` nie był ustawiony, więc 002 w ogóle nie trafiło do bazy PostgREST. Naprawa: `006_transfer_columns.sql` + ensure-schema przy każdym starcie + fallback API bez kolumn transferu.
+
+Po merge kodu: **Coolify → Redeploy**. Sprawdź log startu: `Ensuring transfer columns` i brak warninga `transfer_account_id is still missing`. Jeśli warning zostaje, `DATABASE_URL` wskazuje inną bazę niż Supabase.
 
 W usłudze Supabase ustaw też:
 - `GOTRUE_SITE_URL` → URL aplikacji MyBudget
@@ -106,6 +112,7 @@ Po dodaniu HTTPS do panelu Coolify możesz włączyć **Auto Deploy** w ustawien
 
 ## Troubleshooting
 
+- **Budżet pusty / 500 `transfer_account_id does not exist`:** Redeploy; w logach startu musi przejść `006_transfer_columns.sql` albo `ensure-schema.sql`. `DATABASE_URL` = baza PostgREST. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/006_transfer_columns.sql`
 - **Biały ekran / brak auth:** sprawdź `NEXT_PUBLIC_*` przy buildzie
 - **OCR nie działa:** `OPENAI_API_KEY` w runtime
 - **Magic link nie działa:** redirect URL w Supabase

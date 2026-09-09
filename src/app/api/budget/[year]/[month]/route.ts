@@ -26,7 +26,10 @@ export async function GET(
 
     const snapshot = await loadBudgetSnapshot(ctx.supabase, ctx.family.id);
     if (snapshot.error) {
-      return NextResponse.json({ error: snapshot.error }, { status: 500 });
+      return NextResponse.json(
+        { error: snapshot.error, schemaLag: /transfer_account_id|schema/i.test(snapshot.error) },
+        { status: 500 }
+      );
     }
 
     const { start, end } = monthRange(year, month);
@@ -43,7 +46,9 @@ export async function GET(
       upcoming
     );
 
-    return NextResponse.json(data);
+    return NextResponse.json(
+      snapshot.schemaLag ? { ...data, warning: snapshot.schemaLag } : data
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nie udało się obliczyć budżetu";
     return NextResponse.json({ error: message }, { status: 500 });
