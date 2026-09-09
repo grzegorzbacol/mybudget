@@ -8,6 +8,7 @@ import { ReceiptScanner } from "@/components/ReceiptScanner";
 import { TransactionForm } from "@/components/transactions/TransactionForm";
 import { StatusStrip } from "@/components/overview/StatusStrip";
 import { SavingsStrip } from "@/components/overview/SavingsStrip";
+import { HouseholdStrip } from "@/components/overview/HouseholdStrip";
 import { getCurrentYearMonth } from "@/lib/format";
 
 export default function BudgetPage() {
@@ -38,6 +39,7 @@ export default function BudgetPage() {
 
       <StatusStrip />
       <SavingsStrip />
+      <HouseholdStrip />
 
       <BudgetTable
         year={year}

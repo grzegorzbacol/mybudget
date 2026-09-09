@@ -28,7 +28,7 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   if (existing) {
-    return NextResponse.json({ error: "Już należysz do rodziny" }, { status: 400 });
+    return NextResponse.json({ error: "Już należysz do tego budżetu" }, { status: 400 });
   }
 
   const { data: family } = await admin

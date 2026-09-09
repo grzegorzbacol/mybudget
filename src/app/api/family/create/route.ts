@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   if (existing) {
-    return NextResponse.json({ error: "Już należysz do rodziny" }, { status: 400 });
+    return NextResponse.json({ error: "Już należysz do budżetu" }, { status: 400 });
   }
 
   const body = await request.json();

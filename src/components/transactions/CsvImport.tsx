@@ -37,7 +37,7 @@ export function CsvImport() {
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !accountId) {
-      toast.error("Wybierz konto i plik CSV");
+      toast.error("Wybierz konto i plik CSV lub OFX");
       return;
     }
 

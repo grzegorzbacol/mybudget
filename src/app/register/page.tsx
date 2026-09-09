@@ -1,21 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import { safeInternalPath } from "@/lib/paths";
 
-export default function RegisterPage() {
+function RegisterForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = safeInternalPath(searchParams.get("next"), "/onboarding");
   const supabase = createClient();
 
   const handleRegister = async (e: React.FormEvent) => {
@@ -27,7 +30,7 @@ export default function RegisterPage() {
       password,
       options: {
         data: { display_name: displayName },
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
       },
     });
 
@@ -38,7 +41,7 @@ export default function RegisterPage() {
     }
 
     toast.success("Konto utworzone! Sprawdź email lub zaloguj się.");
-    router.push("/onboarding");
+    router.push(nextPath);
   };
 
   return (
@@ -86,12 +89,23 @@ export default function RegisterPage() {
           </form>
           <p className="mt-4 text-center text-sm text-muted-foreground">
             Masz już konto?{" "}
-            <Link href="/login" className="text-primary hover:underline">
+            <Link
+              href={nextPath === "/onboarding" ? "/login" : `/login?next=${encodeURIComponent(nextPath)}`}
+              className="text-primary hover:underline"
+            >
               Zaloguj się
             </Link>
           </p>
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense>
+      <RegisterForm />
+    </Suspense>
   );
 }

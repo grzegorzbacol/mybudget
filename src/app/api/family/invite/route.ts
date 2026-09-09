@@ -28,6 +28,8 @@ export async function POST() {
 
   return NextResponse.json({
     invite_code: data.invite_code,
-    invite_url: `${process.env.NEXT_PUBLIC_APP_URL}/onboarding?code=${data.invite_code}`,
+    invite_url: process.env.NEXT_PUBLIC_APP_URL
+      ? `${process.env.NEXT_PUBLIC_APP_URL.replace(/\/$/, "")}/onboarding?code=${data.invite_code}`
+      : `/onboarding?code=${data.invite_code}`,
   });
 }

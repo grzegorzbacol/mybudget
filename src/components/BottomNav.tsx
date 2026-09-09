@@ -15,6 +15,7 @@ import {
   Settings,
   Scale,
   Sparkles,
+  Upload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -29,7 +30,8 @@ const navItems = [
 const moreItems = [
   { href: "/accounts", label: "Konta", icon: Landmark },
   { href: "/wealth", label: "Majątek", icon: Scale },
-  { href: "/settle", label: "Rozliczenia", icon: Users },
+  { href: "/household", label: "Wspólny budżet", icon: Users },
+  { href: "/import", label: "Import banku", icon: Upload },
   { href: "/reports", label: "Raporty", icon: BarChart3 },
   { href: "/setup", label: "Kreator startu", icon: Sparkles },
   { href: "/settings", label: "Ustawienia", icon: Settings },

@@ -64,11 +64,12 @@ Dane przykładowe (tylko pusty budżet): Ustawienia → **Wczytaj dane przykład
 - **Transakcje** — wydatek, przychód (→ Do rozdzielenia), transfer między kontami, flaga uzgodnienia (C/U), podział równo lub własnymi kwotami
 - **Przepływy** — zaplanowane rachunki i wypłaty, status zasilenia kopert, prognoza salda („kiedy ciasno”)
 - **Konta** — saldo robocze vs uzgodnione, konta w budżecie vs śledzone, korekta/uzgodnienie
-- **Budżet rodzinny** — wielu użytkowników, role (owner/admin/member), zaproszenia
-- **Import CSV/OFX** — PKO / ING / mBank (żywe PSD2 z mBank — później, przez agregator)
+- **Budżet rodzinny / wspólny** — wielu użytkowników, role (właściciel / członek), zaproszenie kodem lub linkiem (`/household`)
+- **Podział wydatków** — kto zapłacił, równo albo własne kwoty/%; koperta schodzi w całości; rozliczenia „kto komu”
+- **Import CSV/OFX** — mBank / PKO / ING (`/import`); żywe PSD2 (GoCardless, Enable Banking, Kontomatik) — później, bez scrapowania
 - **Skanowanie paragonów** — kamera PWA + OCR + AI
 - **Oszczędności** — cele, postęp, wpłata z Do rozdzielenia, nowa koperta przy tworzeniu celu
-- **Rozliczenia** — kto komu oddaje po podziale wydatków
+- **Rozliczenia** — kto komu oddaje po podziale wydatków (`/household`)
 - **Raporty** — wykresy, PDF, przełączanie miesiąca
 - **Majątek** — aktywa, zobowiązania, wartość netto, trend i ręczna aktualizacja wartości
 - **PWA** — instalacja na telefonie

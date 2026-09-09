@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils";
 import { isExpenseCategory, isTransferTx } from "@/lib/budget";
 import type { Transaction } from "@/lib/types";
 import { useDeleteTransaction, useUpdateTransaction } from "@/hooks/use-transactions";
-import { useFamily } from "@/hooks/use-family";
+import { useFamily, useFamilyMembers } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 
@@ -33,6 +33,7 @@ export function TransactionDetail({ transaction, onOpenChange }: TransactionDeta
   const updateTx = useUpdateTransaction();
   const deleteTx = useDeleteTransaction();
   const { data: familyData } = useFamily();
+  const { data: members } = useFamilyMembers();
   const supabase = createClient();
 
   const { data: categories } = useQuery({
@@ -44,6 +45,18 @@ export function TransactionDetail({ transaction, onOpenChange }: TransactionDeta
         .select("*")
         .eq("family_id", familyData!.family.id)
         .order("sort_order");
+      return data ?? [];
+    },
+  });
+
+  const { data: splits } = useQuery({
+    queryKey: ["expense-splits", transaction?.id],
+    enabled: !!transaction?.id,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("expense_splits")
+        .select("user_id, amount")
+        .eq("transaction_id", transaction!.id);
       return data ?? [];
     },
   });
@@ -128,6 +141,29 @@ export function TransactionDetail({ transaction, onOpenChange }: TransactionDeta
                 <span className="font-medium">{transaction.profile.display_name}</span>
               </div>
             )}
+            {isExpense && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Zapłacił</span>
+                <span className="font-medium">
+                  {members?.find((m) => m.user_id === (transaction.paid_by ?? transaction.added_by))?.profile
+                    ?.display_name ?? "Domownik"}
+                </span>
+              </div>
+            )}
+            {isExpense && (splits?.length ?? 0) > 0 && (
+              <div className="space-y-1">
+                <span className="text-muted-foreground">Podział (kto komu)</span>
+                {splits!.map((share) => (
+                  <div key={share.user_id} className="flex justify-between text-xs">
+                    <span>
+                      {members?.find((m) => m.user_id === share.user_id)?.profile?.display_name ?? "Domownik"}
+                    </span>
+                    <span>{formatCurrency(Number(share.amount))}</span>
+                  </div>
+                ))}
+                <p className="text-xs text-muted-foreground">Koperta i konto schodzą w całości.</p>
+              </div>
+            )}
             <div className="flex justify-between">
               <span className="text-muted-foreground">Źródło</span>
               <span className="font-medium">
@@ -136,7 +172,7 @@ export function TransactionDetail({ transaction, onOpenChange }: TransactionDeta
                   : transaction.source === "ocr"
                     ? "Skan paragonu"
                     : transaction.source === "import"
-                      ? "Import CSV"
+                      ? "Import CSV/OFX"
                       : "Ręczne"}
               </span>
             </div>

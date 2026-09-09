@@ -58,7 +58,7 @@ export function AppHeader() {
             </Link>
           </Button>
           <Button variant="ghost" size="icon" asChild>
-            <Link href="/settle" aria-label="Rozliczenia">
+            <Link href="/household" aria-label="Wspólny budżet">
               <Users className="h-5 w-5" />
             </Link>
           </Button>

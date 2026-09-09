@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isSupabaseConfigured, supabaseAnonKey, supabaseUrl } from "@/lib/supabase/config";
+import { safeInternalPath } from "@/lib/paths";
 
 const publicRoutes = ["/login", "/register", "/auth/callback", "/api/setup"];
 
@@ -13,6 +14,8 @@ export async function middleware(request: NextRequest) {
     if (!isPublic && pathname !== "/") {
       const url = request.nextUrl.clone();
       url.pathname = "/login";
+      url.search = "";
+      url.searchParams.set("next", safeInternalPath(`${pathname}${request.nextUrl.search}`));
       return NextResponse.redirect(url);
     }
     return supabaseResponse;
@@ -44,6 +47,8 @@ export async function middleware(request: NextRequest) {
   if (!user && !isPublic && pathname !== "/") {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
+    url.search = "";
+    url.searchParams.set("next", safeInternalPath(`${pathname}${request.nextUrl.search}`));
     return NextResponse.redirect(url);
   }
 

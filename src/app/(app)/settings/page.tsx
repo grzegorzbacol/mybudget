@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Copy, LogOut, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,12 @@ export default function SettingsPage() {
   const [groupName, setGroupName] = useState("Życie codzienne");
   const [catName, setCatName] = useState("");
 
+  useEffect(() => {
+    if (familyData?.family.invite_code) {
+      setInviteCode(familyData.family.invite_code);
+    }
+  }, [familyData?.family.invite_code]);
+
   const { data: categories } = useQuery({
     queryKey: ["categories", familyData?.family.id],
     enabled: !!familyData?.family.id,
@@ -47,6 +53,7 @@ export default function SettingsPage() {
     },
     onSuccess: (data) => {
       setInviteCode(data.invite_code);
+      queryClient.invalidateQueries({ queryKey: ["family"] });
       toast.success("Nowy kod zaproszenia wygenerowany");
     },
     onError: (err) => toast.error(err.message),
@@ -132,7 +139,7 @@ export default function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Członkowie rodziny</CardTitle>
+          <CardTitle className="text-base">Członkowie</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {members?.map((m) => (
@@ -144,10 +151,15 @@ export default function SettingsPage() {
               </Avatar>
               <div className="flex-1">
                 <p className="font-medium">{m.profile?.display_name ?? "Użytkownik"}</p>
-                <p className="text-xs text-muted-foreground capitalize">{m.role}</p>
+                <p className="text-xs text-muted-foreground">
+                  {m.role === "owner" ? "Właściciel" : m.role === "admin" ? "Admin" : "Członek"}
+                </p>
               </div>
             </div>
           ))}
+          <Button variant="outline" asChild>
+            <Link href="/household">Wspólny budżet i rozliczenia</Link>
+          </Button>
         </CardContent>
       </Card>
 
@@ -214,7 +226,7 @@ export default function SettingsPage() {
             Wydatki możesz dzielić między osoby — rozliczenia są w osobnym widoku.
           </p>
           <Button variant="outline" asChild>
-            <Link href="/settle">Otwórz rozliczenia</Link>
+            <Link href="/household">Otwórz wspólny budżet</Link>
           </Button>
         </CardContent>
       </Card>
@@ -229,7 +241,7 @@ export default function SettingsPage() {
             wymaga zgody banku i agregatora. Teraz: eksport CSV z mBank/PKO/ING albo plik OFX, potem Import na ekranie Transakcje.
           </p>
           <Button variant="outline" asChild>
-            <Link href="/transactions">Przejdź do importu</Link>
+            <Link href="/import">Import CSV/OFX (mBank)</Link>
           </Button>
           <Button variant="ghost" asChild>
             <Link href="/reports">Raporty</Link>
