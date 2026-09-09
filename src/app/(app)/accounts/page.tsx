@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -33,6 +33,7 @@ import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/format";
 import { isOnBudget } from "@/lib/budget";
 import { ACCOUNT_TYPE_META, computeNetWorth, displayBalance, isLiabilityType } from "@/lib/wealth";
+import { isQaLeftoverAccountName } from "@/lib/account-delete-policy";
 import type { Account, Transaction } from "@/lib/types";
 import { toast } from "sonner";
 import { TransactionList } from "@/components/transactions/TransactionList";
@@ -44,6 +45,7 @@ export default function AccountsPage() {
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
   const [reconcileOpen, setReconcileOpen] = useState<Account | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState<Account | null>(null);
   const [selected, setSelected] = useState<Account | null>(null);
   const [newBalance, setNewBalance] = useState("");
   const [name, setName] = useState("");
@@ -146,6 +148,46 @@ export default function AccountsPage() {
     onError: () => toast.error("Błąd korekty salda"),
   });
 
+  const deleteAccount = useMutation({
+    mutationFn: async (account: Account) => {
+      const related = (transactions ?? []).filter((tx) => tx.account_id === account.id).length;
+      const force = related > 0 || isQaLeftoverAccountName(account.name);
+      const res = await fetch(
+        force ? `/api/accounts/${account.id}?force=1` : `/api/accounts/${account.id}`,
+        { method: "DELETE" }
+      );
+      const json = await res.json();
+      if (res.status === 409) {
+        const retry = await fetch(`/api/accounts/${account.id}?force=1`, { method: "DELETE" });
+        const retryJson = await retry.json();
+        if (!retry.ok) {
+          throw new Error(typeof retryJson.error === "string" ? retryJson.error : "Błąd usuwania konta");
+        }
+        return retryJson;
+      }
+      if (!res.ok) {
+        throw new Error(typeof json.error === "string" ? json.error : "Błąd usuwania konta");
+      }
+      return json;
+    },
+    onSuccess: (_data, account) => {
+      toast.success("Konto usunięte");
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["account-history"] });
+      queryClient.invalidateQueries({ queryKey: ["budget"] });
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+      if (selected?.id === account.id) setSelected(null);
+      setDeleteOpen(null);
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd usuwania konta"),
+  });
+
+  const deleteRelatedCount = deleteOpen
+    ? (transactions ?? []).filter((tx) => tx.account_id === deleteOpen.id).length
+    : 0;
+  const deleteIsQa = deleteOpen ? isQaLeftoverAccountName(deleteOpen.name) : false;
+
   const onBudgetAccounts = accounts?.filter(isOnBudget) ?? [];
   const trackingAccounts = accounts?.filter((a) => !isOnBudget(a)) ?? [];
   const wealth = computeNetWorth(accounts ?? []);
@@ -210,6 +252,14 @@ export default function AccountsPage() {
                 }}
               >
                 Uzgodnij
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={`Usuń konto ${account.name}`}
+                onClick={() => setDeleteOpen(account)}
+              >
+                <Trash2 className="h-4 w-4" />
               </Button>
             </div>
           </div>
@@ -398,6 +448,36 @@ export default function AccountsPage() {
             >
               Zapisz uzgodnienie
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!deleteOpen} onOpenChange={() => setDeleteOpen(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Usunąć konto – {deleteOpen?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {deleteIsQa ? "To wygląda na leftover konto testowe QA. " : ""}
+              {deleteRelatedCount > 0
+                ? `W rejestrze jest ${deleteRelatedCount} ${deleteRelatedCount === 1 ? "transakcja" : "transakcji"} tego konta. Usunięcie skasuje te transakcje, pary transferów i zaplanowane płatności.`
+                : "Jeśli konto ma transakcje albo zaplanowane płatności, zostaną skasowane razem z nim (w tym pary transferów)."}{" "}
+              Tej operacji nie da się cofnąć.
+            </p>
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setDeleteOpen(null)}>
+                Anuluj
+              </Button>
+              <Button
+                variant="destructive"
+                className="flex-1"
+                disabled={!deleteOpen || deleteAccount.isPending}
+                onClick={() => deleteOpen && deleteAccount.mutate(deleteOpen)}
+              >
+                {deleteAccount.isPending ? "Usuwanie…" : "Usuń konto"}
+              </Button>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

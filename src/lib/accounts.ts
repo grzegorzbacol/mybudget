@@ -1,5 +1,21 @@
 import type { Account } from "@/lib/types";
-import { isSchemaLagError } from "@/lib/schema";
+import { isMissingRelationError, isSchemaLagError } from "@/lib/schema";
+import {
+  decideAccountDelete,
+  type AccountDeleteDecision,
+  type AccountRelatedCounts,
+} from "@/lib/account-delete-policy";
+
+export {
+  accountDeleteBlockedMessage,
+  accountHasRelatedData,
+  decideAccountDelete,
+  emptyRelatedCounts,
+  isAccountId,
+  isQaLeftoverAccountName,
+  relatedCountTotal,
+} from "@/lib/account-delete-policy";
+export type { AccountDeleteDecision, AccountRelatedCounts } from "@/lib/account-delete-policy";
 
 /** PostgREST client with `from("accounts")` — server, admin, or browser. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -106,4 +122,216 @@ export async function loadAccountForLedger(
   }
 
   return { account: null, error: withBudget.error.message };
+}
+
+type RelatedTx = { id: string; transfer_id?: string | null };
+
+async function loadRelatedTransactions(
+  supabase: AccountClient,
+  familyId: string,
+  accountId: string
+): Promise<{ rows: RelatedTx[]; error?: string }> {
+  let primary = await supabase
+    .from("transactions")
+    .select("id, transfer_id")
+    .eq("family_id", familyId)
+    .eq("account_id", accountId);
+
+  if (primary.error && isSchemaLagError(primary.error.message)) {
+    primary = await supabase
+      .from("transactions")
+      .select("id")
+      .eq("family_id", familyId)
+      .eq("account_id", accountId);
+  }
+
+  if (primary.error) {
+    return { rows: [], error: primary.error.message };
+  }
+
+  const byId = new Map<string, RelatedTx>();
+  for (const row of (primary.data ?? []) as RelatedTx[]) {
+    byId.set(row.id, row);
+  }
+
+  const transferTarget = await supabase
+    .from("transactions")
+    .select("id, transfer_id")
+    .eq("family_id", familyId)
+    .eq("transfer_account_id", accountId);
+
+  if (transferTarget.error) {
+    if (!isSchemaLagError(transferTarget.error.message)) {
+      return { rows: Array.from(byId.values()), error: transferTarget.error.message };
+    }
+  } else {
+    for (const row of (transferTarget.data ?? []) as RelatedTx[]) {
+      byId.set(row.id, row);
+    }
+  }
+
+  return { rows: Array.from(byId.values()) };
+}
+
+async function countScheduledForAccount(
+  supabase: AccountClient,
+  familyId: string,
+  accountId: string
+): Promise<{ count: number; error?: string }> {
+  const onAccount = await supabase
+    .from("scheduled_transactions")
+    .select("id")
+    .eq("family_id", familyId)
+    .eq("account_id", accountId);
+
+  if (onAccount.error) {
+    if (isMissingRelationError(onAccount.error.message)) {
+      return { count: 0 };
+    }
+    return { count: 0, error: onAccount.error.message };
+  }
+
+  const ids = new Set(((onAccount.data ?? []) as Array<{ id: string }>).map((r) => r.id));
+
+  const asTransfer = await supabase
+    .from("scheduled_transactions")
+    .select("id")
+    .eq("family_id", familyId)
+    .eq("transfer_account_id", accountId);
+
+  if (asTransfer.error) {
+    if (isSchemaLagError(asTransfer.error.message) || isMissingRelationError(asTransfer.error.message)) {
+      return { count: ids.size };
+    }
+    return { count: ids.size, error: asTransfer.error.message };
+  }
+
+  for (const row of (asTransfer.data ?? []) as Array<{ id: string }>) {
+    ids.add(row.id);
+  }
+  return { count: ids.size };
+}
+
+async function deleteRelatedAccountData(
+  supabase: AccountClient,
+  familyId: string,
+  accountId: string,
+  rows: RelatedTx[]
+): Promise<{ error?: string }> {
+  const transferIds = Array.from(
+    new Set(rows.map((row) => row.transfer_id).filter((id): id is string => Boolean(id)))
+  );
+
+  if (transferIds.length > 0) {
+    const paired = await supabase
+      .from("transactions")
+      .delete()
+      .eq("family_id", familyId)
+      .in("transfer_id", transferIds);
+    if (paired.error) {
+      return { error: paired.error.message };
+    }
+  }
+
+  const leftover = await supabase
+    .from("transactions")
+    .delete()
+    .eq("family_id", familyId)
+    .eq("account_id", accountId);
+  if (leftover.error) {
+    return { error: leftover.error.message };
+  }
+
+  const scheduledOnAccount = await supabase
+    .from("scheduled_transactions")
+    .delete()
+    .eq("family_id", familyId)
+    .eq("account_id", accountId);
+  if (scheduledOnAccount.error && !isMissingRelationError(scheduledOnAccount.error.message)) {
+    return { error: scheduledOnAccount.error.message };
+  }
+
+  const clearTransferTarget = await supabase
+    .from("scheduled_transactions")
+    .update({ transfer_account_id: null })
+    .eq("family_id", familyId)
+    .eq("transfer_account_id", accountId);
+  if (
+    clearTransferTarget.error &&
+    !isMissingRelationError(clearTransferTarget.error.message) &&
+    !isSchemaLagError(clearTransferTarget.error.message)
+  ) {
+    return { error: clearTransferTarget.error.message };
+  }
+
+  return {};
+}
+
+export async function deleteAccountRow(
+  supabase: AccountClient,
+  input: { familyId: string; accountId: string; force?: boolean }
+): Promise<
+  AccountDeleteDecision & {
+    account?: { id: string; name: string };
+    error?: string;
+  }
+> {
+  const loaded = await supabase
+    .from("accounts")
+    .select("id, name")
+    .eq("id", input.accountId)
+    .eq("family_id", input.familyId)
+    .maybeSingle();
+
+  if (loaded.error) {
+    return { ok: false, status: 500, reason: "failed", error: loaded.error.message };
+  }
+
+  const account = (loaded.data as { id: string; name: string } | null) ?? null;
+  const related = await loadRelatedTransactions(supabase, input.familyId, input.accountId);
+  if (related.error) {
+    return { ok: false, status: 500, reason: "failed", error: related.error };
+  }
+
+  const scheduled = await countScheduledForAccount(supabase, input.familyId, input.accountId);
+  if (scheduled.error) {
+    return { ok: false, status: 500, reason: "failed", error: scheduled.error };
+  }
+
+  const counts: AccountRelatedCounts = {
+    transactions: related.rows.length,
+    scheduled: scheduled.count,
+    transferPairs: new Set(
+      related.rows.map((row) => row.transfer_id).filter((id): id is string => Boolean(id))
+    ).size,
+  };
+
+  const decision = decideAccountDelete({ account, counts, force: input.force });
+  if (!decision.ok || !account) {
+    return { ...decision, account: account ?? undefined };
+  }
+
+  if (decision.mode === "cascade") {
+    const removed = await deleteRelatedAccountData(
+      supabase,
+      input.familyId,
+      input.accountId,
+      related.rows
+    );
+    if (removed.error) {
+      return { ok: false, status: 500, reason: "failed", error: removed.error, account };
+    }
+  }
+
+  const deleted = await supabase
+    .from("accounts")
+    .delete()
+    .eq("id", input.accountId)
+    .eq("family_id", input.familyId);
+
+  if (deleted.error) {
+    return { ok: false, status: 500, reason: "failed", error: deleted.error.message, account };
+  }
+
+  return { ...decision, account };
 }
