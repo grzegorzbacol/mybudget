@@ -115,9 +115,25 @@ BEGIN
     );
   END IF;
 
-  IF v_has_splits AND v_tx_count > 0 THEN
-    DELETE FROM expense_splits
-    WHERE family_id = p_family_id AND transaction_id = ANY (v_tx_ids);
+  -- Only splits for rows this function will delete. A tx on another account
+  -- with transfer_account_id = this account but no transfer_id stays (FK SET NULL).
+  IF v_has_splits THEN
+    IF v_has_transfer AND cardinality(v_transfer_ids) > 0 THEN
+      DELETE FROM expense_splits
+      WHERE family_id = p_family_id
+        AND transaction_id IN (
+          SELECT id FROM transactions
+          WHERE family_id = p_family_id
+            AND (account_id = p_account_id OR transfer_id = ANY (v_transfer_ids))
+        );
+    ELSE
+      DELETE FROM expense_splits
+      WHERE family_id = p_family_id
+        AND transaction_id IN (
+          SELECT id FROM transactions
+          WHERE family_id = p_family_id AND account_id = p_account_id
+        );
+    END IF;
   END IF;
 
   IF v_pair_count > 0 THEN

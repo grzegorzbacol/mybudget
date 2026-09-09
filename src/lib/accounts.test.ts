@@ -425,6 +425,32 @@ describe("deleteAccountRow", () => {
     expect(supabase.store.accounts).toHaveLength(1);
   });
 
+  it("keeps splits on a transfer-target tx that is not deleted (no transfer_id)", async () => {
+    const supabase = createMemoryClient({
+      accounts: [{ id: accountId, family_id: familyId, name: "QA-CTO-Account-20260909-postdeploy" }],
+      transactions: [
+        { id: "owned", family_id: familyId, account_id: accountId, transfer_id: null },
+        {
+          id: "pointer",
+          family_id: familyId,
+          account_id: "other",
+          transfer_account_id: accountId,
+          transfer_id: null,
+        },
+      ],
+      expense_splits: [
+        { id: "gone", family_id: familyId, transaction_id: "owned" },
+        { id: "keep", family_id: familyId, transaction_id: "pointer" },
+      ],
+      scheduled_transactions: [],
+    });
+
+    const result = await deleteAccountRow(supabase, { familyId, accountId });
+    expect(result.ok).toBe(true);
+    expect(supabase.store.transactions.map((row) => row.id)).toEqual(["pointer"]);
+    expect(supabase.store.expense_splits.map((row) => row.id)).toEqual(["keep"]);
+  });
+
   it("deletes expense_splits for the removed ledger rows (Coolify tables have no FK)", async () => {
     const supabase = createMemoryClient({
       accounts: [{ id: accountId, family_id: familyId, name: "QA-CTO-Account-20260909-postdeploy" }],

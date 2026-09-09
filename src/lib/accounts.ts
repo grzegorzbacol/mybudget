@@ -207,7 +207,7 @@ export async function loadAccountForLedger(
   return { account: null, error: withBudget.error.message };
 }
 
-type RelatedTx = { id: string; transfer_id?: string | null };
+type RelatedTx = { id: string; account_id?: string; transfer_id?: string | null };
 
 async function loadRelatedTransactions(
   supabase: AccountClient,
@@ -216,14 +216,14 @@ async function loadRelatedTransactions(
 ): Promise<{ rows: RelatedTx[]; error?: string }> {
   let primary = await supabase
     .from("transactions")
-    .select("id, transfer_id")
+    .select("id, account_id, transfer_id")
     .eq("family_id", familyId)
     .eq("account_id", accountId);
 
   if (primary.error && isSchemaLagError(primary.error.message)) {
     primary = await supabase
       .from("transactions")
-      .select("id")
+      .select("id, account_id")
       .eq("family_id", familyId)
       .eq("account_id", accountId);
   }
@@ -234,12 +234,12 @@ async function loadRelatedTransactions(
 
   const byId = new Map<string, RelatedTx>();
   for (const row of (primary.data ?? []) as RelatedTx[]) {
-    byId.set(row.id, row);
+    byId.set(row.id, { ...row, account_id: row.account_id ?? accountId });
   }
 
   const transferTarget = await supabase
     .from("transactions")
-    .select("id, transfer_id")
+    .select("id, account_id, transfer_id")
     .eq("family_id", familyId)
     .eq("transfer_account_id", accountId);
 
@@ -298,11 +298,16 @@ async function countScheduledForAccount(
 async function expandDeletedTransactionIds(
   supabase: AccountClient,
   familyId: string,
+  accountId: string,
   rows: RelatedTx[]
 ): Promise<{ ids: string[]; error?: string }> {
-  const ids = new Set(rows.map((row) => row.id));
   const transferIds = Array.from(
     new Set(rows.map((row) => row.transfer_id).filter((id): id is string => Boolean(id)))
+  );
+  const ids = new Set(
+    rows
+      .filter((row) => row.account_id === accountId || Boolean(row.transfer_id))
+      .map((row) => row.id)
   );
   if (transferIds.length === 0) {
     return { ids: Array.from(ids) };
@@ -350,7 +355,7 @@ async function deleteRelatedAccountData(
   accountId: string,
   rows: RelatedTx[]
 ): Promise<{ error?: string }> {
-  const expanded = await expandDeletedTransactionIds(supabase, familyId, rows);
+  const expanded = await expandDeletedTransactionIds(supabase, familyId, accountId, rows);
   if (expanded.error) {
     return { error: expanded.error };
   }
