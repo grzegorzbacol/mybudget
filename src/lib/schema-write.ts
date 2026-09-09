@@ -45,13 +45,15 @@ function stripColumnsFromRows(
   rows: Record<string, unknown>[],
   columns: readonly string[]
 ): { next: Record<string, unknown>[]; stripped: string[] } {
-  const stripped = new Set<string>();
+  const stripped: string[] = [];
   const next = rows.map((row) => {
     const result = stripColumns(row, columns);
-    result.stripped.forEach((col) => stripped.add(col));
+    for (const col of result.stripped) {
+      if (!stripped.includes(col)) stripped.push(col);
+    }
     return result.next;
   });
-  return { next, stripped: [...stripped] };
+  return { next, stripped };
 }
 
 async function repairSchemaIfLagging(message: string): Promise<boolean> {

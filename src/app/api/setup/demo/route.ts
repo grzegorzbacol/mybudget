@@ -110,7 +110,7 @@ export async function POST() {
   ];
 
   const txResult = await insertRowsWithSchemaRepair(
-    (rows) => ctx.supabase.from("transactions").insert(rows).select(),
+    async (rows) => ctx.supabase.from("transactions").insert(rows).select(),
     txs.map((tx) => ({
       family_id: ctx.family.id,
       account_id: checking!.id,
@@ -177,7 +177,7 @@ export async function POST() {
 
   if (emergency) {
     await insertRowWithSchemaRepair(
-      (row) => ctx.supabase.from("goals").insert(row).select().single(),
+      async (row) => ctx.supabase.from("goals").insert(row).select().single(),
       {
         family_id: ctx.family.id,
         category_id: emergency.id,

@@ -44,7 +44,7 @@ export async function POST(request: Request) {
   const abs = Math.abs(amount);
 
   const created = await insertRowsWithSchemaRepair(
-    (rows) => ctx.supabase.from("transactions").insert(rows).select(),
+    async (rows) => ctx.supabase.from("transactions").insert(rows).select(),
     [
       {
         family_id: ctx.family.id,

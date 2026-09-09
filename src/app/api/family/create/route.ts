@@ -61,7 +61,7 @@ export async function POST(request: Request) {
   }));
 
   const inserted = await insertRowsWithSchemaRepair(
-    (rows) => admin.from("budget_categories").insert(rows).select(),
+    async (rows) => admin.from("budget_categories").insert(rows).select(),
     categories as Record<string, unknown>[],
     ["kind"]
   );
@@ -82,7 +82,7 @@ export async function POST(request: Request) {
   const { year, month } = getCurrentYearMonth();
   if (insertedCategories?.length) {
     await insertRowsWithSchemaRepair(
-      (rows) => admin.from("budget_allocations").insert(rows).select(),
+      async (rows) => admin.from("budget_allocations").insert(rows).select(),
       insertedCategories.map((c) => ({
         family_id: family.id,
         category_id: (c as { id: string }).id,

@@ -33,7 +33,7 @@ export async function POST(request: Request) {
   }
 
   const created = await insertRowWithSchemaRepair(
-    (row) => ctx.supabase.from("transactions").insert(row).select().single(),
+    async (row) => ctx.supabase.from("transactions").insert(row).select().single(),
     {
       ...payload,
       family_id: ctx.family.id,
@@ -61,7 +61,7 @@ export async function POST(request: Request) {
         amount: share.amount,
       }));
     const splitResult = await insertRowsWithSchemaRepair(
-      (rows) => ctx.supabase.from("expense_splits").insert(rows).select(),
+      async (rows) => ctx.supabase.from("expense_splits").insert(rows).select(),
       splitRows
     );
     if (splitResult.error) {
@@ -70,6 +70,6 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json(
-    created.warning ? { ...created.data, warning: created.warning } : created.data
+    created.warning ? { ...(created.data as object), warning: created.warning } : created.data
   );
 }

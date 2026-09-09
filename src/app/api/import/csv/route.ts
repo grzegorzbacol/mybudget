@@ -56,7 +56,7 @@ export async function POST(request: Request) {
   }));
 
   const created = await insertRowsWithSchemaRepair(
-    (rows) => ctx.supabase.from("transactions").insert(rows).select(),
+    async (rows) => ctx.supabase.from("transactions").insert(rows).select(),
     transactions,
     ["paid_by"]
   );

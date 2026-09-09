@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   const created = await insertRowWithSchemaRepair(
-    (row) => ctx.supabase.from("budget_categories").insert(row).select().single(),
+    async (row) => ctx.supabase.from("budget_categories").insert(row).select().single(),
     {
       family_id: ctx.family.id,
       group_name: parsed.data.group_name,
@@ -42,6 +42,6 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json(
-    created.warning ? { ...created.data, warning: created.warning } : created.data
+    created.warning ? { ...(created.data as object), warning: created.warning } : created.data
   );
 }

@@ -57,7 +57,7 @@ export async function POST(request: Request) {
   }
 
   const created = await insertRowWithSchemaRepair(
-    (row) => ctx.supabase.from("scheduled_transactions").insert(row).select().single(),
+    async (row) => ctx.supabase.from("scheduled_transactions").insert(row).select().single(),
     {
       ...parsed.data,
       family_id: ctx.family.id,

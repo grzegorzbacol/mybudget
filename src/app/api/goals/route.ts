@@ -25,7 +25,7 @@ export async function POST(request: Request) {
   };
 
   let created = await insertRowWithSchemaRepair(
-    (next) => ctx.supabase.from("goals").insert(next).select().single(),
+    async (next) => ctx.supabase.from("goals").insert(next).select().single(),
     row,
     ["priority"]
   );
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
     const { applyEnsureSchema } = await import("@/lib/ensure-schema");
     await applyEnsureSchema();
     created = await insertRowWithSchemaRepair(
-      (next) => ctx.supabase.from("goals").insert(next).select().single(),
+      async (next) => ctx.supabase.from("goals").insert(next).select().single(),
       { ...row, type: "target_balance" },
       ["priority"]
     );
@@ -50,7 +50,7 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json(
-    created.warning ? { ...created.data, warning: created.warning } : created.data,
+    created.warning ? { ...(created.data as object), warning: created.warning } : created.data,
     { status: 201 }
   );
 }
