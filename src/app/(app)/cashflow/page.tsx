@@ -29,6 +29,7 @@ import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { StatusStrip } from "@/components/overview/StatusStrip";
+import { SavingsStrip } from "@/components/overview/SavingsStrip";
 import {
   Bar,
   CartesianGrid,
@@ -188,6 +189,7 @@ export default function CashflowPage() {
       </p>
 
       <StatusStrip />
+      <SavingsStrip />
 
       {isLoading && <p className="text-center text-muted-foreground">Ładowanie...</p>}
 

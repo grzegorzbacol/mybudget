@@ -23,12 +23,12 @@ const navItems = [
   { href: "/budget", label: "Budżet", icon: Wallet },
   { href: "/transactions", label: "Transakcje", icon: ArrowLeftRight },
   { href: "/cashflow", label: "Przepływy", icon: Waves },
-  { href: "/wealth", label: "Majątek", icon: Scale },
+  { href: "/savings", label: "Oszczędności", icon: PiggyBank },
 ];
 
 const moreItems = [
   { href: "/accounts", label: "Konta", icon: Landmark },
-  { href: "/savings", label: "Oszczędności", icon: PiggyBank },
+  { href: "/wealth", label: "Majątek", icon: Scale },
   { href: "/settle", label: "Rozliczenia", icon: Users },
   { href: "/reports", label: "Raporty", icon: BarChart3 },
   { href: "/setup", label: "Kreator startu", icon: Sparkles },

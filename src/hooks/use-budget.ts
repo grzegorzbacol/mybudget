@@ -126,6 +126,8 @@ export function useMoveMoney() {
       toast.success("Przeniesiono środki");
       queryClient.invalidateQueries({ queryKey: ["budget", input.year, input.month] });
       queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+      queryClient.invalidateQueries({ queryKey: ["goals"] });
+      queryClient.invalidateQueries({ queryKey: ["goal-allocations"] });
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd przenoszenia"),
   });
