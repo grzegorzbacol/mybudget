@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { accountInsertRow, isAccountTypeCheckError, loadAccountForLedger } from "./accounts";
+import {
+  accountInsertRow,
+  decideAccountDelete,
+  deleteAccountRow,
+  emptyRelatedCounts,
+  isAccountId,
+  isAccountTypeCheckError,
+  isQaLeftoverAccountName,
+  loadAccountForLedger,
+} from "./accounts";
 
 describe("account create payload", () => {
   it("includes on_budget when provided so Coolify schema lag is visible and retryable", () => {
@@ -146,5 +155,271 @@ describe("loadAccountForLedger", () => {
 
     const result = await loadAccountForLedger(supabase, "fam", "acc1");
     expect(result.account).toEqual({ id: "acc1", on_budget: true });
+  });
+});
+
+describe("account delete policy", () => {
+  it("accepts uuid account ids and rejects junk", () => {
+    expect(isAccountId("2c1d3e4f-5a6b-4789-8abc-def012345678")).toBe(true);
+    expect(isAccountId("not-an-id")).toBe(false);
+    expect(isAccountId("")).toBe(false);
+  });
+
+  it("treats QA leftover names as test data (live postdeploy leftovers)", () => {
+    expect(isQaLeftoverAccountName("QA-CTO-Account-20260909-postdeploy")).toBe(true);
+    expect(isQaLeftoverAccountName("qa_smoke_account")).toBe(true);
+    expect(isQaLeftoverAccountName("Konto główne")).toBe(false);
+    expect(isQaLeftoverAccountName("Gotówka")).toBe(false);
+  });
+
+  it("deletes immediately when there are no related rows", () => {
+    const decision = decideAccountDelete({
+      account: { id: "a1", name: "Gotówka" },
+      counts: emptyRelatedCounts(),
+    });
+    expect(decision).toMatchObject({ ok: true, mode: "empty", qaLeftover: false });
+  });
+
+  it("blocks a regular account that still has transactions", () => {
+    const decision = decideAccountDelete({
+      account: { id: "a1", name: "Konto główne" },
+      counts: { transactions: 2, scheduled: 0, transferPairs: 1 },
+    });
+    expect(decision.ok).toBe(false);
+    if (decision.ok) return;
+    expect(decision.status).toBe(409);
+    expect(decision.reason).toBe("has_related");
+    expect(decision.error).toMatch(/2 transakcji/);
+    expect(decision.error).toMatch(/force=true/);
+  });
+
+  it("cascades when the caller confirms force, or when the account is leftover QA data", () => {
+    const withForce = decideAccountDelete({
+      account: { id: "a1", name: "Konto główne" },
+      counts: { transactions: 1, scheduled: 1, transferPairs: 0 },
+      force: true,
+    });
+    expect(withForce).toMatchObject({ ok: true, mode: "cascade", qaLeftover: false });
+
+    const qa = decideAccountDelete({
+      account: { id: "a2", name: "QA-CTO-Account-20260909-postdeploy" },
+      counts: { transactions: 3, scheduled: 0, transferPairs: 0 },
+    });
+    expect(qa).toMatchObject({ ok: true, mode: "cascade", qaLeftover: true });
+  });
+
+  it("returns 404 when the household does not own the account", () => {
+    const decision = decideAccountDelete({
+      account: null,
+      counts: emptyRelatedCounts(),
+    });
+    expect(decision).toEqual({
+      ok: false,
+      status: 404,
+      reason: "not_found",
+      error: "Nie znaleziono konta",
+    });
+  });
+});
+
+type MemoryRow = Record<string, unknown>;
+
+function createMemoryClient(
+  tables: Record<string, MemoryRow[]>,
+  options?: { transferColumnMissing?: boolean; scheduledMissing?: boolean }
+) {
+  const store: Record<string, MemoryRow[]> = Object.fromEntries(
+    Object.entries(tables).map(([name, rows]) => [name, rows.map((row) => ({ ...row }))])
+  );
+
+  function matches(
+    row: MemoryRow,
+    filters: Array<{ type: string; col?: string; val?: unknown; vals?: unknown[] }>
+  ) {
+    return filters.every((filter) => {
+      if (filter.type === "eq") return row[filter.col!] === filter.val;
+      if (filter.type === "in") return (filter.vals as unknown[]).includes(row[filter.col!]);
+      return true;
+    });
+  }
+
+  return {
+    store,
+    from(table: string) {
+      const filters: Array<{ type: string; col?: string; val?: unknown; vals?: unknown[] }> = [];
+      let action: "select" | "delete" | "update" = "select";
+      let updatePayload: MemoryRow = {};
+      let selectColumns = "";
+
+      const run = async () => {
+        if (options?.scheduledMissing && table === "scheduled_transactions") {
+          return { data: null, error: { message: 'relation "scheduled_transactions" does not exist' } };
+        }
+        if (
+          options?.transferColumnMissing &&
+          (filters.some((filter) => filter.col === "transfer_account_id" || filter.col === "transfer_id") ||
+            /transfer_id|transfer_account_id/.test(selectColumns))
+        ) {
+          return {
+            data: null,
+            error: {
+              message: "Could not find the 'transfer_account_id' column of 'transactions' in the schema cache",
+            },
+          };
+        }
+        const rows = store[table] ?? [];
+        const matched = rows.filter((row) => matches(row, filters));
+        if (action === "delete") {
+          store[table] = rows.filter((row) => !matches(row, filters));
+          return { data: matched, error: null };
+        }
+        if (action === "update") {
+          for (const row of matched) Object.assign(row, updatePayload);
+          return { data: matched, error: null };
+        }
+        return { data: matched, error: null };
+      };
+
+      const api = {
+        select: (columns?: string) => {
+          selectColumns = columns ?? "";
+          return api;
+        },
+        eq: (col: string, val: unknown) => {
+          filters.push({ type: "eq", col, val });
+          return api;
+        },
+        in: (col: string, vals: unknown[]) => {
+          filters.push({ type: "in", col, vals });
+          return api;
+        },
+        delete: () => {
+          action = "delete";
+          return api;
+        },
+        update: (row: MemoryRow) => {
+          action = "update";
+          updatePayload = row;
+          return api;
+        },
+        maybeSingle: async () => {
+          const result = await run();
+          return { data: result.data?.[0] ?? null, error: result.error };
+        },
+        then: (resolve: (value: unknown) => void, reject?: (reason: unknown) => void) =>
+          run().then(resolve, reject),
+      };
+      return api;
+    },
+  };
+}
+
+describe("deleteAccountRow", () => {
+  const familyId = "fam-1";
+  const accountId = "acc-1";
+
+  it("removes an empty household account", async () => {
+    const supabase = createMemoryClient({
+      accounts: [{ id: accountId, family_id: familyId, name: "Gotówka" }],
+      transactions: [],
+      scheduled_transactions: [],
+    });
+
+    const result = await deleteAccountRow(supabase, { familyId, accountId });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mode).toBe("empty");
+    expect(supabase.store.accounts).toHaveLength(0);
+  });
+
+  it("refuses a live account that still has ledger rows unless force is set", async () => {
+    const supabase = createMemoryClient({
+      accounts: [{ id: accountId, family_id: familyId, name: "Konto główne" }],
+      transactions: [
+        { id: "tx1", family_id: familyId, account_id: accountId, transfer_id: null },
+      ],
+      scheduled_transactions: [],
+    });
+
+    const blocked = await deleteAccountRow(supabase, { familyId, accountId });
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok) return;
+    expect(blocked.status).toBe(409);
+    expect(supabase.store.accounts).toHaveLength(1);
+    expect(supabase.store.transactions).toHaveLength(1);
+
+    const forced = await deleteAccountRow(supabase, { familyId, accountId, force: true });
+    expect(forced.ok).toBe(true);
+    expect(supabase.store.accounts).toHaveLength(0);
+    expect(supabase.store.transactions).toHaveLength(0);
+  });
+
+  it("cascades leftover QA data including the transfer pair on the other account", async () => {
+    const supabase = createMemoryClient({
+      accounts: [
+        { id: accountId, family_id: familyId, name: "QA-CTO-Account-20260909-postdeploy" },
+        { id: "acc-2", family_id: familyId, name: "Konto główne" },
+      ],
+      transactions: [
+        {
+          id: "tx-out",
+          family_id: familyId,
+          account_id: accountId,
+          transfer_id: "pair-1",
+          transfer_account_id: "acc-2",
+        },
+        {
+          id: "tx-in",
+          family_id: familyId,
+          account_id: "acc-2",
+          transfer_id: "pair-1",
+          transfer_account_id: accountId,
+        },
+        { id: "keep", family_id: familyId, account_id: "acc-2", transfer_id: null },
+      ],
+      scheduled_transactions: [
+        { id: "sch-1", family_id: familyId, account_id: accountId, transfer_account_id: null },
+        { id: "sch-2", family_id: familyId, account_id: "acc-2", transfer_account_id: accountId },
+      ],
+    });
+
+    const result = await deleteAccountRow(supabase, { familyId, accountId });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.mode).toBe("cascade");
+    expect(result.qaLeftover).toBe(true);
+    expect(supabase.store.accounts.map((row) => row.id)).toEqual(["acc-2"]);
+    expect(supabase.store.transactions.map((row) => row.id)).toEqual(["keep"]);
+    expect(supabase.store.scheduled_transactions).toEqual([
+      { id: "sch-2", family_id: familyId, account_id: "acc-2", transfer_account_id: null },
+    ]);
+  });
+
+  it("still deletes when transfer columns or scheduled_transactions are missing (schema lag)", async () => {
+    const supabase = createMemoryClient(
+      {
+        accounts: [{ id: accountId, family_id: familyId, name: "QA-legacy" }],
+        transactions: [{ id: "tx1", family_id: familyId, account_id: accountId }],
+        scheduled_transactions: [],
+      },
+      { transferColumnMissing: true, scheduledMissing: true }
+    );
+
+    const result = await deleteAccountRow(supabase, { familyId, accountId });
+    expect(result.ok).toBe(true);
+    expect(supabase.store.accounts).toHaveLength(0);
+    expect(supabase.store.transactions).toHaveLength(0);
+  });
+
+  it("does not delete an account from another household", async () => {
+    const supabase = createMemoryClient({
+      accounts: [{ id: accountId, family_id: "other", name: "Cudze" }],
+      transactions: [],
+      scheduled_transactions: [],
+    });
+
+    const result = await deleteAccountRow(supabase, { familyId, accountId });
+    expect(result).toMatchObject({ ok: false, status: 404, reason: "not_found" });
+    expect(supabase.store.accounts).toHaveLength(1);
   });
 });

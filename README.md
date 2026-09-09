@@ -93,7 +93,20 @@ Dane przykładowe (tylko pusty budżet): Ustawienia → **Wczytaj dane przykład
 - **Budżet miesięczny** — koperty, Do rozdzielenia, przydział, **Zasil braki**, przenoszenie środków, zaległości
 - **Transakcje** — wydatek, przychód (→ Do rozdzielenia), transfer między kontami, flaga uzgodnienia (C/U), podział równo lub własnymi kwotami
 - **Przepływy (cashflow)** — wpływy vs wydatki tydzień/miesiąc (plan vs fakt), kalendarz rachunków, czy plan jest zasilony, prognoza „kiedy ciasno”, tempo wydatków, horyzont 30/60/90 dni
-- **Konta** — saldo robocze vs uzgodnione, konta w budżecie vs śledzone, korekta/uzgodnienie
+- **Konta** — saldo robocze vs uzgodnione, konta w budżecie vs śledzone, korekta/uzgodnienie, **usuwanie** (kosz + potwierdzenie)
+
+### Usuwanie konta (`DELETE /api/accounts/[id]`)
+
+Tylko zalogowany członek gospodarstwa (to samo auth + `family_id` co reszta API). Brak nowej migracji — deploy-safe na istniejącym schemacie.
+
+| Stan | Zachowanie |
+| --- | --- |
+| Konto bez transakcji i bez zaplanowanych płatności | Usuwane od razu (`mode: "empty"`). |
+| Konto z transakcjami / harmonogramem | `409` + `code: "HAS_TRANSACTIONS"` i liczby (`counts.transactions`, `counts.scheduled`, `counts.transferPairs`). Komunikat po polsku. |
+| `force=true` (body JSON albo `?force=1`) po potwierdzeniu w UI | Kasuje transakcje tego konta, **pary transferów** na drugim koncie, reguły `scheduled_transactions` (albo zeruje `transfer_account_id`), potem konto (`mode: "cascade"`). |
+| Nazwa `QA-…` / `QA_…` (np. leftover `QA-CTO-Account-20260909-postdeploy`) | Traktowane jako dane testowe — kaskada **bez** `force`. |
+
+Konta z listy **Konta** to konta gospodarstwa (RLS). Kosz jest przy każdym z nich; UI zawsze pyta o potwierdzenie i przy konflikcie 409 ponawia z `force`.
 - **Majątek** — cały majątek: aktywa, zobowiązania, wartość netto i trend; mieszkanie/auto/inwestycje ręcznie; kredyty i hipoteki
 - **Budżet rodzinny / wspólny** — wielu użytkowników, role (właściciel / członek), zaproszenie kodem lub linkiem (`/household`); cele oszczędnościowe są wspólne
 - **Podział wydatków** — kto zapłacił, równo albo własne kwoty/%; koperta schodzi w całości; rozliczenia „kto komu”
