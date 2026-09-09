@@ -12,7 +12,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useTransactions, useBulkUpdateCategory } from "@/hooks/use-transactions";
+import { useTransactions, useBulkUpdateCategory, useUpdateTransaction } from "@/hooks/use-transactions";
+import { isTransferTx } from "@/lib/budget";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
@@ -39,6 +40,7 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
   const [bulkCategory, setBulkCategory] = useState("");
   const [detail, setDetail] = useState<Transaction | null>(null);
   const bulkUpdate = useBulkUpdateCategory();
+  const updateTx = useUpdateTransaction();
   const { data: familyData } = useFamily();
   const supabase = createClient();
 
@@ -113,6 +115,22 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
                 {t.profile?.display_name?.slice(0, 2).toUpperCase() ?? "??"}
               </AvatarFallback>
             </Avatar>
+            <button
+              type="button"
+              title={t.cleared ? "Uzgodniona — kliknij, aby cofnąć" : "Nieuzgodniona — kliknij, aby uzgodnić"}
+              onClick={(e) => {
+                e.stopPropagation();
+                updateTx.mutate({ id: t.id, cleared: !t.cleared });
+              }}
+              className={cn(
+                "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold",
+                t.cleared
+                  ? "border-green-600 bg-green-600 text-white"
+                  : "border-muted-foreground/40 text-muted-foreground"
+              )}
+            >
+              {t.cleared ? "C" : "U"}
+            </button>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
                 <p className="truncate font-medium">{t.payee}</p>
@@ -122,14 +140,24 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
               </div>
               <p className="text-xs text-muted-foreground">
                 {t.date}
-                {t.category && ` · ${t.category.icon} ${t.category.name}`}
+                {isTransferTx(t)
+                  ? " · Transfer"
+                  : t.amount > 0
+                    ? " · Do rozdzielenia"
+                    : t.category
+                      ? ` · ${t.category.icon} ${t.category.name}`
+                      : " · Bez kategorii"}
                 {t.account && ` · ${t.account.type === "cash" ? "💵 " : "🏦 "}${t.account.name}`}
               </p>
             </div>
             <span
               className={cn(
                 "shrink-0 font-semibold",
-                t.amount < 0 ? "text-red-500" : "text-green-600"
+                isTransferTx(t)
+                  ? "text-muted-foreground"
+                  : t.amount < 0
+                    ? "text-red-500"
+                    : "text-green-600"
               )}
             >
               {formatCurrency(t.amount)}

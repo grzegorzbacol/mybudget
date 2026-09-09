@@ -1,5 +1,12 @@
 import { createClient } from "@/lib/supabase/server";
-import type { Family } from "@/lib/types";
+import type {
+  Account,
+  BudgetAllocation,
+  BudgetCategory,
+  Family,
+  LedgerTransaction,
+  ScheduledTransaction,
+} from "@/lib/types";
 
 export async function getAuthContext() {
   const supabase = await createClient();
@@ -63,7 +70,79 @@ export async function ensureMonthAllocations(
         allocated: 0,
         activity: 0,
         available: 0,
+        moved: 0,
       }))
     );
   }
+}
+
+export async function loadBudgetSnapshot(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  familyId: string
+) {
+  const [categoriesRes, allocationsRes, accountsRes, transactionsRes, scheduledRes] =
+    await Promise.all([
+      supabase
+        .from("budget_categories")
+        .select("*")
+        .eq("family_id", familyId)
+        .order("sort_order"),
+      supabase.from("budget_allocations").select("*").eq("family_id", familyId),
+      supabase.from("accounts").select("*").eq("family_id", familyId),
+      supabase
+        .from("transactions")
+        .select("id, account_id, category_id, amount, date, transfer_account_id, transfer_id, cleared")
+        .eq("family_id", familyId),
+      supabase.from("scheduled_transactions").select("*").eq("family_id", familyId),
+    ]);
+
+  return {
+    categories: (categoriesRes.data ?? []) as BudgetCategory[],
+    allocations: (allocationsRes.data ?? []) as BudgetAllocation[],
+    accounts: (accountsRes.data ?? []) as Account[],
+    transactions: (transactionsRes.data ?? []) as LedgerTransaction[],
+    scheduled: (scheduledRes.data ?? []) as ScheduledTransaction[],
+    error:
+      categoriesRes.error?.message ||
+      allocationsRes.error?.message ||
+      accountsRes.error?.message ||
+      transactionsRes.error?.message ||
+      scheduledRes.error?.message,
+  };
+}
+
+export async function getOrCreateAllocation(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  familyId: string,
+  categoryId: string,
+  year: number,
+  month: number
+) {
+  const { data: existing } = await supabase
+    .from("budget_allocations")
+    .select("*")
+    .eq("category_id", categoryId)
+    .eq("year", year)
+    .eq("month", month)
+    .maybeSingle();
+
+  if (existing) return existing as BudgetAllocation;
+
+  const { data, error } = await supabase
+    .from("budget_allocations")
+    .insert({
+      family_id: familyId,
+      category_id: categoryId,
+      year,
+      month,
+      allocated: 0,
+      activity: 0,
+      available: 0,
+      moved: 0,
+    })
+    .select()
+    .single();
+
+  if (error) throw new Error(error.message);
+  return data as BudgetAllocation;
 }

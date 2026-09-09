@@ -19,4 +19,11 @@ test.describe("Authentication", () => {
     await page.goto("/budget");
     await expect(page).toHaveURL(/\/login/);
   });
+
+  test("cashflow and accounts also require login", async ({ page }) => {
+    await page.goto("/cashflow");
+    await expect(page).toHaveURL(/\/login/);
+    await page.goto("/accounts");
+    await expect(page).toHaveURL(/\/login/);
+  });
 });

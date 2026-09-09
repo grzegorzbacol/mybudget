@@ -11,8 +11,9 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { href: "/budget", label: "Budżet" },
   { href: "/transactions", label: "Transakcje" },
-  { href: "/reports", label: "Raporty" },
+  { href: "/cashflow", label: "Przepływy" },
   { href: "/accounts", label: "Konta" },
+  { href: "/reports", label: "Raporty" },
 ];
 
 export function AppHeader() {

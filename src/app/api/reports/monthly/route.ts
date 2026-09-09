@@ -57,7 +57,7 @@ export async function GET(request: Request) {
   const byCategory = categories.map((cat) => {
     const alloc = allocations.find((a) => a.category_id === cat.id);
     const spent = transactions
-      .filter((t) => t.category_id === cat.id)
+      .filter((t) => t.category_id === cat.id && !t.transfer_id)
       .reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0);
     return {
       categoryId: cat.id,

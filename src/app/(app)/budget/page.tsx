@@ -15,8 +15,11 @@ export default function BudgetPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Budżet</h1>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">Budżet</h1>
+          <p className="text-sm text-muted-foreground">Koperty · nadaj każdej złotówce zadanie</p>
+        </div>
         <Button onClick={() => setScannerOpen(true)}>
           <Camera className="mr-2 h-4 w-4" />
           Skanuj paragon

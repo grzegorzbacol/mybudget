@@ -1,6 +1,14 @@
-# MyBudget – Aplikacja budżetowa (YNAB-style)
+# MyBudget – budżet domowy w stylu YNAB
 
-Aplikacja webowa do zarządzania budżetem domowym z budżetem rodzinnym, skanowaniem paragonów OCR i PWA.
+Aplikacja do **budżetowania kopertowego** (Give Every Dollar a Job): konta, kategorie, miesięczny budżet, „Do rozdzielenia”, transakcje i przepływy. Dane trzymasz we własnym Supabase (self-hosted albo cloud) — bez bankowych połączeń i bez dodatkowego logowania w chmurze poza tym, co już jest w projekcie.
+
+## Model (YNAB)
+
+1. **Konta** mają saldo. Konta *w budżecie* zasilają koperty; konta *śledzone* (np. inwestycje) są poza budżetem.
+2. **Przychód** trafia do **Do rozdzielenia** (Ready to Assign), nie do kategorii wydatków.
+3. **Przydzielasz** pieniądze do kopert. **Dostępne** = zaległość z poprzedniego miesiąca + przydzielone + przeniesienia + aktywność.
+4. **Wydatek** zmniejsza saldo konta i dostępne w kopercie. **Transfer** między kontami w budżecie nie rusza kopert.
+5. **Przepływy** pokazują zaplanowane wypłaty i rachunki oraz czy koperta jest na nie zasilona — to nie jest luźny arkusz cashflow.
 
 ## Stack
 
@@ -8,7 +16,7 @@ Aplikacja webowa do zarządzania budżetem domowym z budżetem rodzinnym, skanow
 - **Backend:** Next.js API Routes
 - **Baza:** Supabase (PostgreSQL + Auth + Storage + Realtime)
 - **OCR:** Google Vision API + Tesseract.js (fallback)
-- **AI:** OpenAI GPT-4o-mini (parsowanie paragonów)
+- **AI:** OpenAI GPT-4o-mini (parsowanie paragonów, opcjonalnie)
 
 ## Szybki start
 
@@ -20,9 +28,13 @@ npm install
 
 ### 2. Supabase
 
-1. Utwórz projekt na [supabase.com](https://supabase.com)
-2. Uruchom migrację SQL z pliku `supabase/migrations/001_initial_schema.sql` w SQL Editor
-3. Włącz Realtime dla tabel `transactions` i `budget_allocations`
+1. Utwórz projekt na [supabase.com](https://supabase.com) albo użyj self-hosted Supabase.
+2. W SQL Editor uruchom migracje po kolei:
+   - `supabase/migrations/001_initial_schema.sql`
+   - `supabase/migrations/002_ynab_model.sql`
+3. Włącz Realtime dla `transactions`, `budget_allocations` i `scheduled_transactions` (002 robi to automatycznie, jeśli publikacja istnieje).
+
+Istniejąca baza: wystarczy odpalić `002_ynab_model.sql` (jest idempotentna).
 
 ### 3. Zmienne środowiskowe
 
@@ -30,7 +42,7 @@ npm install
 cp .env.local.example .env.local
 ```
 
-Uzupełnij klucze Supabase, OpenAI i opcjonalnie Google Vision API.
+Uzupełnij klucze Supabase. OpenAI / Google Vision są opcjonalne (skaner paragonów).
 
 ### 4. Uruchomienie
 
@@ -40,21 +52,24 @@ npm run dev
 
 Aplikacja: [http://localhost:3000](http://localhost:3000)
 
+Zarejestruj konto, utwórz gospodarstwo, dodaj saldo początkowe na koncie, zapisz przychód, przydziel do kopert.
+
 ## Funkcje
 
-- **Budżet miesięczny** – metoda kopert (envelope budgeting) jak YNAB
-- **Budżet rodzinny** – wielu użytkowników, role (owner/admin/member)
-- **Transakcje** – ręczne dodawanie, bulk edit, import CSV (PKO/ING/mBank)
-- **Skanowanie paragonów** – kamera PWA + OCR + AI
-- **Konta** – salda, korekta, wykres w czasie
-- **Raporty** – wykresy, eksport PDF
-- **Cele oszczędnościowe** – postęp i sugestie miesięczne
-- **PWA** – instalacja na telefonie, offline sync
-- **Realtime** – synchronizacja między członkami rodziny
+- **Budżet miesięczny** — koperty, Do rozdzielenia, przydział, przenoszenie środków, zaległości
+- **Transakcje** — wydatek, przychód (→ Do rozdzielenia), transfer między kontami, flaga uzgodnienia (C/U)
+- **Przepływy** — zaplanowane rachunki i wypłaty, status zasilenia kopert
+- **Konta** — saldo robocze vs uzgodnione, konta w budżecie vs śledzone, korekta/uzgodnienie
+- **Budżet rodzinny** — wielu użytkowników, role (owner/admin/member)
+- **Import CSV** — PKO / ING / mBank
+- **Skanowanie paragonów** — kamera PWA + OCR + AI
+- **Raporty i cele** — wykresy, PDF, cele oszczędnościowe
+- **PWA** — instalacja na telefonie
 
-## Testy E2E
+## Testy
 
 ```bash
+npm test
 npx playwright install
 npm run test:e2e
 ```
@@ -66,7 +81,7 @@ src/
   app/           # Strony i API routes
   components/    # Komponenty UI
   hooks/         # React Query hooks
-  lib/           # Logika biznesowa, Supabase, OCR
+  lib/           # Silnik budżetu YNAB, cashflow, Supabase, OCR
   providers/     # Context providers
 supabase/
   migrations/    # Schemat bazy + RLS

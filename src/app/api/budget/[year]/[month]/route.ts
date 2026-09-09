@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { buildBudgetMonthData } from "@/lib/budget";
-import { getAuthContext, ensureMonthAllocations } from "@/lib/api-helpers";
+import { upcomingByCategory } from "@/lib/cashflow";
+import { monthRange } from "@/lib/money";
+import { getAuthContext, ensureMonthAllocations, loadBudgetSnapshot } from "@/lib/api-helpers";
 
 export async function GET(
   _request: Request,
@@ -17,31 +19,28 @@ export async function GET(
 
   await ensureMonthAllocations(ctx.supabase, ctx.family.id, year, month);
 
-  const [categoriesRes, allocationsRes, accountsRes] = await Promise.all([
-    ctx.supabase
-      .from("budget_categories")
-      .select("*")
-      .eq("family_id", ctx.family.id)
-      .order("sort_order"),
-    ctx.supabase
-      .from("budget_allocations")
-      .select("*")
-      .eq("family_id", ctx.family.id)
-      .eq("year", year)
-      .eq("month", month),
-    ctx.supabase.from("accounts").select("*").eq("family_id", ctx.family.id),
-  ]);
-
-  if (categoriesRes.error || allocationsRes.error || accountsRes.error) {
-    return NextResponse.json({ error: "Błąd pobierania danych" }, { status: 500 });
+  const snapshot = await loadBudgetSnapshot(ctx.supabase, ctx.family.id);
+  if (snapshot.error) {
+    return NextResponse.json({ error: snapshot.error }, { status: 500 });
   }
+
+  const { start, end } = monthRange(year, month);
+  const toInclusive = new Date(`${end}T00:00:00Z`);
+  toInclusive.setUTCDate(toInclusive.getUTCDate() - 1);
+  const upcoming = upcomingByCategory(
+    snapshot.scheduled,
+    start,
+    toInclusive.toISOString().slice(0, 10)
+  );
 
   const data = buildBudgetMonthData(
     year,
     month,
-    categoriesRes.data ?? [],
-    allocationsRes.data ?? [],
-    accountsRes.data ?? []
+    snapshot.categories,
+    snapshot.allocations,
+    snapshot.accounts,
+    snapshot.transactions,
+    upcoming
   );
 
   return NextResponse.json(data);

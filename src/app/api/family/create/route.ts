@@ -69,6 +69,7 @@ export async function POST(request: Request) {
     type: "checking",
     balance: 0,
     currency: "PLN",
+    on_budget: true,
   });
 
   const { year, month } = getCurrentYearMonth();
@@ -82,6 +83,7 @@ export async function POST(request: Request) {
         allocated: 0,
         activity: 0,
         available: 0,
+        moved: 0,
       }))
     );
   }
