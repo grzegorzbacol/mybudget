@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext, ensureMonthAllocations } from "@/lib/api-helpers";
+import { createAccountRow } from "@/lib/accounts";
 import { getCurrentYearMonth } from "@/lib/format";
 import { ACCOUNT_TYPE_META } from "@/lib/wealth";
 
@@ -31,26 +32,22 @@ export async function POST() {
     .eq("family_id", ctx.family.id);
   let checking = accounts?.find((a) => a.type === "checking") ?? accounts?.[0];
   if (!checking) {
-    const { data: created, error } = await ctx.supabase
-      .from("accounts")
-      .insert({
-        family_id: ctx.family.id,
-        name: "Konto główne",
-        type: "checking",
-        balance: 0,
-        currency: ctx.family.currency ?? "PLN",
-        on_budget: true,
-      })
-      .select()
-      .single();
-    if (error || !created) {
-      return NextResponse.json({ error: error?.message ?? "Brak konta" }, { status: 500 });
+    const created = await createAccountRow(ctx.supabase, {
+      family_id: ctx.family.id,
+      name: "Konto główne",
+      type: "checking",
+      balance: 0,
+      currency: ctx.family.currency ?? "PLN",
+      on_budget: true,
+    });
+    if (!created.account) {
+      return NextResponse.json({ error: created.error ?? "Brak konta" }, { status: 500 });
     }
-    checking = created;
+    checking = created.account;
   }
 
   if (!accounts?.some((a) => a.type === "cash")) {
-    await ctx.supabase.from("accounts").insert({
+    await createAccountRow(ctx.supabase, {
       family_id: ctx.family.id,
       name: "Gotówka",
       type: "cash",

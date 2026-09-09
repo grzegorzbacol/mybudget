@@ -45,20 +45,20 @@ export default function SetupPage() {
       }
       let account = checking;
       if (!account) {
-        const { data: created, error } = await supabase
-          .from("accounts")
-          .insert({
-            family_id: familyData.family.id,
+        const res = await fetch("/api/accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
             name: "Konto główne",
             type: "checking",
-            balance: 0,
-            currency: familyData.family.currency ?? "PLN",
             on_budget: true,
-          })
-          .select()
-          .single();
-        if (error || !created) throw error ?? new Error("Nie udało się utworzyć konta");
-        account = created;
+          }),
+        });
+        const json = await res.json();
+        if (!res.ok || !json?.id) {
+          throw new Error(typeof json.error === "string" ? json.error : "Nie udało się utworzyć konta");
+        }
+        account = json;
       }
       if (Number(account.balance) !== 0) {
         throw new Error(

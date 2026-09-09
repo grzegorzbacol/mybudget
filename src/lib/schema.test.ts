@@ -42,6 +42,8 @@ describe("schema lag helpers", () => {
     expect(joined).toContain("scheduled_id");
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
     expect(joined).toContain("transfer_account_id uuid");
+    expect(joined).toContain("accounts_type_check");
+    expect(joined).toContain("on_budget");
     expect(joined).toContain("NOTIFY pgrst");
   });
 
@@ -51,16 +53,21 @@ describe("schema lag helpers", () => {
     expect(resolveDatabaseUrl({})).toBeUndefined();
   });
 
-  it("keeps boot SQL and 007 in sync for scheduled_transactions", () => {
+  it("keeps boot SQL in sync for scheduled_transactions and account columns", () => {
     const ensureSql = readFileSync(join(process.cwd(), "scripts/ensure-schema.sql"), "utf8");
-    const migrationSql = readFileSync(
+    const scheduledSql = readFileSync(
       join(process.cwd(), "supabase/migrations/007_scheduled_transactions.sql"),
       "utf8"
     );
-    for (const sql of [ensureSql, migrationSql]) {
-      expect(sql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
-      expect(sql).toContain("transfer_account_id");
-      expect(sql).toContain("NOTIFY pgrst");
-    }
+    const accountSql = readFileSync(
+      join(process.cwd(), "supabase/migrations/008_account_columns.sql"),
+      "utf8"
+    );
+    expect(ensureSql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
+    expect(ensureSql).toContain("accounts_type_check");
+    expect(ensureSql).toContain("on_budget");
+    expect(scheduledSql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
+    expect(accountSql).toContain("ADD COLUMN IF NOT EXISTS on_budget");
+    expect(accountSql).toContain("accounts_type_check");
   });
 });

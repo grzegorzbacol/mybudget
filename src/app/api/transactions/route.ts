@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
+import { loadAccountForLedger } from "@/lib/accounts";
 import { transactionSchema } from "@/lib/validators";
 
 export async function POST(request: Request) {
@@ -19,15 +20,11 @@ export async function POST(request: Request) {
     payload.category_id = null;
   }
 
-  const { data: account } = await ctx.supabase
-    .from("accounts")
-    .select("id, on_budget")
-    .eq("id", payload.account_id)
-    .eq("family_id", ctx.family.id)
-    .maybeSingle();
+  const loaded = await loadAccountForLedger(ctx.supabase, ctx.family.id, payload.account_id);
+  const account = loaded.account;
 
   if (!account) {
-    return NextResponse.json({ error: "Nie znaleziono konta" }, { status: 400 });
+    return NextResponse.json({ error: loaded.error ?? "Nie znaleziono konta" }, { status: 400 });
   }
 
   if (account.on_budget === false && payload.amount < 0) {
