@@ -40,6 +40,10 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
   if (!data) return null;
 
   const rtaPositive = data.readyToAssign >= 0;
+  const selectedRow = selected
+    ? data.groups.flatMap((g) => g.categories).find((row) => row.category.id === selected.category.id) ??
+      selected
+    : null;
 
   return (
     <div className="space-y-4">
@@ -185,9 +189,9 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
         ))}
       </div>
 
-      {selected && (
+      {selectedRow && (
         <CategoryPanel
-          row={selected}
+          row={selectedRow}
           year={year}
           month={month}
           readyToAssign={data.readyToAssign}
