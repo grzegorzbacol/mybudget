@@ -192,6 +192,23 @@ describe("YNAB envelope math", () => {
     expect(data.readyToAssign).toBe(500);
   });
 
+  it("does not let a tracking-account expense change envelope available", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 500)],
+      [account("checking", 3000, true), account("broker", 7900, false)],
+      [
+        tx({ amount: 3000, date: "2026-09-01" }),
+        tx({ amount: -100, date: "2026-09-12", category_id: "groceries", account_id: "broker" }),
+      ]
+    );
+    expect(data.groups[0].categories[0].activity).toBe(0);
+    expect(data.groups[0].categories[0].available).toBe(500);
+    expect(data.readyToAssign).toBe(2500);
+  });
+
   it("covers overspending as negative available without silently changing Ready to Assign", () => {
     const data = buildBudgetMonthData(
       2026,

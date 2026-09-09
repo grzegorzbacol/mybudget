@@ -13,12 +13,21 @@ export default async function HomePage() {
 
   const { data: membership } = await supabase
     .from("family_members")
-    .select("id")
+    .select("id, family_id")
     .eq("user_id", user.id)
     .maybeSingle();
 
   if (!membership) {
     redirect("/onboarding");
+  }
+
+  const { count } = await supabase
+    .from("transactions")
+    .select("id", { count: "exact", head: true })
+    .eq("family_id", membership.family_id);
+
+  if (!count) {
+    redirect("/setup");
   }
 
   redirect("/budget");

@@ -20,11 +20,18 @@ export function isOnBudget(account: Account): boolean {
   return account.on_budget !== false;
 }
 
-export function isIncomeToReadyToAssign(tx: LedgerTransaction, accounts: Account[] = []): boolean {
-  if (Number(tx.amount) <= 0 || tx.category_id || isTransferTx(tx)) return false;
+export function isOnBudgetAccount(
+  tx: Pick<LedgerTransaction, "account_id">,
+  accounts: Account[] = []
+): boolean {
   if (!accounts.length) return true;
   const account = accounts.find((a) => a.id === tx.account_id);
   return !account || isOnBudget(account);
+}
+
+export function isIncomeToReadyToAssign(tx: LedgerTransaction, accounts: Account[] = []): boolean {
+  if (Number(tx.amount) <= 0 || tx.category_id || isTransferTx(tx)) return false;
+  return isOnBudgetAccount(tx, accounts);
 }
 
 export function isExpenseCategory(category: BudgetCategory): boolean {
@@ -34,10 +41,12 @@ export function isExpenseCategory(category: BudgetCategory): boolean {
 export function uncategorizedExpenses(
   transactions: LedgerTransaction[],
   year?: number,
-  month?: number
+  month?: number,
+  accounts: Account[] = []
 ): LedgerTransaction[] {
   return transactions.filter((tx) => {
     if (isTransferTx(tx) || Number(tx.amount) >= 0 || tx.category_id) return false;
+    if (!isOnBudgetAccount(tx, accounts)) return false;
     if (year != null && month != null) {
       const ym = yearMonthFromDate(tx.date);
       if (ym.year !== year || ym.month !== month) return false;
@@ -53,11 +62,13 @@ function monthKey(year: number, month: number): MonthKey {
 }
 
 export function activityByCategoryMonth(
-  transactions: LedgerTransaction[]
+  transactions: LedgerTransaction[],
+  accounts: Account[] = []
 ): Map<string, Map<MonthKey, number>> {
   const map = new Map<string, Map<MonthKey, number>>();
   for (const tx of transactions) {
     if (!tx.category_id || isTransferTx(tx)) continue;
+    if (!isOnBudgetAccount(tx, accounts)) continue;
     const { year, month } = yearMonthFromDate(tx.date);
     const key = monthKey(year, month);
     let byMonth = map.get(tx.category_id);
@@ -135,7 +146,7 @@ export function buildBudgetMonthData(
   transactions: LedgerTransaction[] = [],
   upcomingByCategory: Map<string, number> = new Map()
 ): BudgetMonthData {
-  const activityMap = activityByCategoryMonth(transactions);
+  const activityMap = activityByCategoryMonth(transactions, accounts);
   const allocMap = allocationLookup(allocations);
   const upcomingMap = upcomingByCategory;
   const targetIndex = monthIndex(year, month);
@@ -247,7 +258,7 @@ export function buildBudgetMonthData(
     totalActivity,
     totalAvailable,
     onBudgetBalance: balance,
-    uncategorizedCount: uncategorizedExpenses(transactions, year, month).length,
+    uncategorizedCount: uncategorizedExpenses(transactions, year, month, accounts).length,
     groups,
   };
 }

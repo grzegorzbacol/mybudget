@@ -1,6 +1,19 @@
 # MyBudget – budżet domowy w stylu YNAB
 
-Aplikacja do **budżetowania kopertowego** (Give Every Dollar a Job): konta, kategorie, miesięczny budżet, „Do rozdzielenia”, transakcje i przepływy. Dane trzymasz we własnym Supabase (self-hosted albo cloud) — bez bankowych połączeń i bez dodatkowego logowania w chmurze poza tym, co już jest w projekcie.
+Aplikacja do **budżetowania kopertowego** (Give Every Dollar a Job): konta, kategorie, miesięczny budżet, „Do rozdzielenia”, transakcje. Dane trzymasz we własnym Supabase — bez bankowego logowania w MVP.
+
+## Phase 0 — codzienny YNAB (to jest produkt)
+
+Definition of Done:
+
+1. **Konto** w budżecie z saldem (kreator startu albo Konta).
+2. **Przydziel miesiąc** — przychód / saldo → Do rozdzielenia → koperty.
+3. **Zapisz wydatek** z kategorią na koncie w budżecie.
+4. **Dostępne** w kopercie spada (zaległość + przydzielone + przeniesienia + aktywność).
+
+UI po polsku. Deploy: Docker stosuje migracje 001–004.
+
+Szkielety (nie blokują P0): Przepływy, Majątek, Oszczędności. Kolejny priorytet po twardym P0: pełne oszczędności (cele, wpłata z Do rozdzielenia, fundusz awaryjny, alerty).
 
 ## Model (YNAB)
 
@@ -54,7 +67,7 @@ npm run dev
 
 Aplikacja: [http://localhost:3000](http://localhost:3000)
 
-Zarejestruj konto → utwórz gospodarstwo → kreator startu (saldo albo dane przykładowe) → przydziel Do rozdzielenia.
+Zarejestruj konto → utwórz gospodarstwo → kreator startu (saldo albo dane przykładowe) → przydziel Do rozdzielenia → dodaj wydatek i sprawdź Dostępne.
 
 Dane przykładowe (tylko pusty budżet): Ustawienia → **Wczytaj dane przykładowe**, albo `POST /api/setup/demo` po zalogowaniu.
 

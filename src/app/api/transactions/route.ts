@@ -19,6 +19,21 @@ export async function POST(request: Request) {
     payload.category_id = null;
   }
 
+  const { data: account } = await ctx.supabase
+    .from("accounts")
+    .select("id, on_budget")
+    .eq("id", payload.account_id)
+    .eq("family_id", ctx.family.id)
+    .maybeSingle();
+
+  if (!account) {
+    return NextResponse.json({ error: "Nie znaleziono konta" }, { status: 400 });
+  }
+
+  if (account.on_budget === false && payload.amount < 0) {
+    payload.category_id = null;
+  }
+
   const { data, error } = await ctx.supabase
     .from("transactions")
     .insert({

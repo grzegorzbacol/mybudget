@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import { formatCurrency } from "@/lib/format";
 
 export default function SetupPage() {
   const router = useRouter();
@@ -33,6 +34,7 @@ export default function SetupPage() {
   });
 
   const checking = accounts?.find((a) => a.type === "checking") ?? accounts?.[0];
+  const alreadyFunded = Number(checking?.balance ?? 0) !== 0;
 
   const saveOpening = useMutation({
     mutationFn: async () => {
@@ -57,6 +59,11 @@ export default function SetupPage() {
           .single();
         if (error || !created) throw error ?? new Error("Nie udało się utworzyć konta");
         account = created;
+      }
+      if (Number(account.balance) !== 0) {
+        throw new Error(
+          "To konto ma już saldo. Przydziel Do rozdzielenia w budżecie albo dodaj przychód w Transakcjach."
+        );
       }
       const { error } = await supabase.from("transactions").insert({
         family_id: familyData.family.id,
@@ -99,7 +106,7 @@ export default function SetupPage() {
       <div>
         <h1 className="text-2xl font-bold">Zacznij budżet</h1>
         <p className="text-sm text-muted-foreground">
-          Trzy kroki: ile masz na koncie, nadaj złotówkom zadanie, planuj stałe opłaty. Bez bankowego logowania.
+          Trzy kroki: saldo na koncie → przydziel Do rozdzielenia → wydatek z koperty (Dostępne spada).
         </p>
       </div>
 
@@ -111,35 +118,50 @@ export default function SetupPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div>
-            <Label>Kwota (PLN)</Label>
-            <Input
-              type="number"
-              step="0.01"
-              value={opening}
-              onChange={(e) => setOpening(e.target.value)}
-              placeholder="np. 4320.50"
-            />
-          </div>
-          <Button className="w-full" onClick={() => saveOpening.mutate()} disabled={saveOpening.isPending}>
-            Zapisz i przejdź do budżetu
-          </Button>
+          {alreadyFunded ? (
+            <>
+              <p className="text-sm">
+                Konto {checking?.name} ma już {formatCurrency(Number(checking?.balance ?? 0))}. Przydziel je w budżecie do kopert.
+              </p>
+              <Button className="w-full" onClick={() => router.push("/budget")}>
+                Otwórz budżet
+              </Button>
+            </>
+          ) : (
+            <>
+              <div>
+                <Label>Kwota (PLN)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={opening}
+                  onChange={(e) => setOpening(e.target.value)}
+                  placeholder="np. 4320.50"
+                />
+              </div>
+              <Button className="w-full" onClick={() => saveOpening.mutate()} disabled={saveOpening.isPending}>
+                Zapisz i przejdź do budżetu
+              </Button>
+            </>
+          )}
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Albo zobacz, jak to działa</CardTitle>
-          <CardDescription>
-            Wstawia przykładowy miesiąc (wypłata, zakupy, czynsz, koperty, cel oszczędnościowy). Tylko na pustym budżecie.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button variant="outline" className="w-full" onClick={loadDemo} disabled={seeding}>
-            Wczytaj dane przykładowe
-          </Button>
-        </CardContent>
-      </Card>
+      {!alreadyFunded && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Albo zobacz, jak to działa</CardTitle>
+            <CardDescription>
+              Wstawia przykładowy miesiąc (wypłata, zakupy, czynsz, koperty, cel oszczędnościowy). Tylko na pustym budżecie.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button variant="outline" className="w-full" onClick={loadDemo} disabled={seeding}>
+              Wczytaj dane przykładowe
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <Button variant="ghost" className="w-full" onClick={() => router.push("/budget")}>
         Pomiń — pusty budżet

@@ -131,11 +131,17 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
 
   useEffect(() => {
     if (!open) return;
-    if (!accountId && accounts?.length) {
-      const checking = accounts.find((a) => a.type === "checking" && isOnBudget(a));
-      setAccountId(checking?.id ?? accounts.find(isOnBudget)?.id ?? accounts[0].id);
+    if (!accounts?.length) return;
+    const onBudget = accounts.filter(isOnBudget);
+    if (type !== "transfer" && accountId && !onBudget.some((a) => a.id === accountId)) {
+      setAccountId(onBudget[0]?.id ?? "");
+      return;
     }
-  }, [open, accounts, accountId]);
+    if (!accountId) {
+      const checking = accounts.find((a) => a.type === "checking" && isOnBudget(a));
+      setAccountId(checking?.id ?? onBudget[0]?.id ?? accounts[0].id);
+    }
+  }, [open, accounts, accountId, type]);
 
   useEffect(() => {
     if (!open) return;
@@ -193,6 +199,10 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
       toast.error("Wybierz kopertę");
       return;
     }
+    if (type === "expense" && fromAccount && !isOnBudget(fromAccount)) {
+      toast.error("Wydatek z koperty księguj na koncie w budżecie. Konto śledzone: transfer z koperty.");
+      return;
+    }
 
     if (type === "transfer") {
       if (!toAccountId) {
@@ -248,9 +258,12 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
     onOpenChange(false);
   };
 
-  const cashAccounts = accounts?.filter((a) => a.type === "cash") ?? [];
-  const bankAccounts = accounts?.filter((a) => a.type !== "cash") ?? [];
+  const listedAccounts =
+    type === "transfer" ? (accounts ?? []) : (accounts ?? []).filter(isOnBudget);
+  const cashAccounts = listedAccounts.filter((a) => a.type === "cash");
+  const bankAccounts = listedAccounts.filter((a) => a.type !== "cash");
   const pending = createTransaction.isPending || createTransfer.isPending || uploading;
+  const selectedOnBudget = fromAccount ? isOnBudget(fromAccount) : true;
 
   const accountOptions = (
     <>
@@ -377,7 +390,18 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
 
           {type === "income" && (
             <p className="text-sm text-muted-foreground">
-              Przychód trafia do <strong>Do rozdzielenia</strong>. Potem przydzielasz go do kopert w budżecie.
+              {selectedOnBudget ? (
+                <>
+                  Przychód trafia do <strong>Do rozdzielenia</strong>. Potem przydzielasz go do kopert w budżecie.
+                </>
+              ) : (
+                <>Przychód na koncie śledzonym nie zmienia Do rozdzielenia — tylko saldo tego konta.</>
+              )}
+            </p>
+          )}
+          {type === "expense" && (
+            <p className="text-xs text-muted-foreground">
+              Koperta schodzi z konta w budżecie. Inwestycje i inne śledzone: użyj transferu z koperty.
             </p>
           )}
 

@@ -144,11 +144,12 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             <p className="font-medium">Pierwsza sesja</p>
             <ol className="mt-1 list-decimal space-y-1 pl-4 text-muted-foreground">
               <li>
-                Otwórz <a className="underline" href="/setup">kreator startu</a> i wpisz saldo, albo wczytaj dane przykładowe.
+                Otwórz <a className="underline" href="/setup">kreator startu</a> i wpisz saldo na koncie (albo wczytaj dane przykładowe).
               </li>
-              <li>Wróć tutaj — kwota spadnie do „Do rozdzielenia”.</li>
-              <li>Przydziel pieniądze do kopert, aż Do rozdzielenia = 0 zł.</li>
-              <li>W Przepływach zaplanuj wypłatę i stałe opłaty.</li>
+              <li>Kwota trafia do <strong>Do rozdzielenia</strong> — przydziel ją do kopert, aż zostanie 0 zł.</li>
+              <li>
+                Dodaj <a className="underline" href="/transactions">wydatek</a> z kategorią. <strong>Dostępne</strong> w kopercie spadnie.
+              </li>
             </ol>
           </div>
         )}
