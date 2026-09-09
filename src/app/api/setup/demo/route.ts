@@ -181,7 +181,8 @@ export async function POST() {
       category_id: emergency.id,
       target_amount: 15000,
       target_date: `${year + 1}-12-31`,
-      type: "target_balance",
+      type: "emergency_fund",
+      priority: 1,
     });
   }
 

@@ -11,13 +11,13 @@ Definition of Done:
 3. **Zapisz wydatek** z kategorią na koncie w budżecie.
 4. **Dostępne** w kopercie spada (zaległość + przydzielone + przeniesienia + aktywność).
 
-UI po polsku. Deploy: Docker stosuje migracje 001–004.
+UI po polsku. Deploy: Docker stosuje migracje 001–005.
 
 ## Roadmap F0–F8
 
 - **F0** Codzienny YNAB: konta, koperty, Do rozdzielenia, transakcje, transfery.
-- **F1** Oszczędności: cele, daty, sugerowana wpłata, Wpłać z RTA, fundusz awaryjny, alerty tempa (`/savings`).
-- **F2** Nadzór cashflow: stałe opłaty, plan vs fakt, 30/60/90 dni, kiedy ciasno (`/cashflow`).
+- **F1** Oszczędności: cele (kwota, data, priorytet, kamienie milowe), sugerowana wpłata, Wpłać z RTA, fundusz awaryjny jako typ, alerty tempa (`/savings`).
+- **F2** Nadzór cashflow: stałe opłaty, plan vs fakt, 30/60/90 dni, kiedy ciasno, cele zagrożone przed wypłatą (`/cashflow`).
 - **F3** Majątek: aktywa/zobowiązania, trend, ręczny check-in wartości (`/wealth`).
 - **F4** Analityka oszczędzania: stopa, wycieki, tempo celów, co-by-było-gdyby, treemap, rytuał (`/review`).
 - **F5** Gospodarstwo: członkowie, podziały wydatków, rozliczenia, wspólne cele (`/household`).
@@ -57,9 +57,10 @@ npm install
    - `supabase/migrations/002_ynab_model.sql`
    - `supabase/migrations/003_household_splits.sql`
    - `supabase/migrations/004_wealth_accounts.sql`
+   - `supabase/migrations/005_goal_priority.sql`
 3. Włącz Realtime dla `transactions`, `budget_allocations` i `scheduled_transactions` (002 robi to automatycznie, jeśli publikacja istnieje).
 
-Istniejąca baza: odpal `002`, `003` i `004` (są idempotentne) albo zredeployuj Docker/Coolify.
+Istniejąca baza: odpal `002`–`005` (są idempotentne) albo zredeployuj Docker/Coolify.
 
 ### 3. Zmienne środowiskowe
 

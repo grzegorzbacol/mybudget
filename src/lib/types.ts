@@ -12,7 +12,7 @@ export type AccountType =
   | "mortgage"
   | "other_liability";
 export type TransactionSource = "manual" | "ocr" | "import";
-export type GoalType = "target_balance" | "monthly_contribution" | "pay_off";
+export type GoalType = "target_balance" | "monthly_contribution" | "pay_off" | "emergency_fund";
 export type CategoryKind = "expense" | "income";
 export type ScheduleFrequency = "once" | "weekly" | "biweekly" | "monthly" | "yearly";
 
@@ -129,6 +129,7 @@ export interface Goal {
   target_amount: number;
   target_date: string | null;
   type: GoalType;
+  priority?: number;
   category?: BudgetCategory;
 }
 
@@ -246,6 +247,10 @@ export interface CashflowSupervision {
   tightOn: string | null;
   tightPayee: string | null;
   runway: Array<{ date: string; payee: string; amount: number; balance: number }>;
+  nextPayday: string | null;
+  lowBalance: boolean;
+  overspentEnvelopes: Array<{ id: string; name: string; amount: number }>;
+  threatenedGoals: Array<{ id: string; name: string; reason: string }>;
 }
 
 export interface CashflowOverview {

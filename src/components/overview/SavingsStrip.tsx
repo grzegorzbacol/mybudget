@@ -9,7 +9,7 @@ import { useFamily } from "@/hooks/use-family";
 import { useBudget } from "@/hooks/use-budget";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency, getCurrentYearMonth } from "@/lib/format";
-import { goalPercent, isBehindSchedule, suggestedForGoal } from "@/lib/savings";
+import { contributionThisMonth, goalPercent, isBehindSchedule, suggestedForGoal } from "@/lib/savings";
 import type { Goal } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -43,7 +43,12 @@ export function SavingsStrip() {
   const behind = goals.filter((goal) => {
     const row = rows.find((r) => r.category.id === goal.category_id);
     const suggested = suggestedForGoal(goal, row?.available ?? 0);
-    return isBehindSchedule(row?.assigned ?? 0, suggested);
+    const contributed = contributionThisMonth({
+      available: row?.available ?? 0,
+      assigned: row?.assigned ?? 0,
+      moved: row?.moved ?? 0,
+    });
+    return isBehindSchedule(contributed, suggested);
   }).length;
 
   return (
@@ -53,7 +58,7 @@ export function SavingsStrip() {
         <div className="min-w-[140px] flex-1">
           <p className="text-sm font-medium">Oszczędności</p>
           <p className="text-xs text-muted-foreground">
-            {formatCurrency(saved)} z {formatCurrency(target)} · {percent.toFixed(0)}%
+            {formatCurrency(saved)} z {formatCurrency(target)} · {percent.toFixed(0)}% · ten miesiąc w kopertach celów
           </p>
           <Progress value={percent} className="mt-2 h-1.5" />
         </div>

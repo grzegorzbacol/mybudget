@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeCashflow, generateScheduleOccurrences, nextScheduleDate, buildCashflowTimeline } from "./cashflow";
+import { computeCashflow, generateScheduleOccurrences, nextScheduleDate, buildCashflowTimeline, nextPayday, outflowUntil, isLowBalance } from "./cashflow";
 import type { Account, BudgetCategory, BudgetCategoryRow, ScheduledTransaction } from "./types";
 
 const rent: ScheduledTransaction = {
@@ -162,5 +162,14 @@ describe("scheduled cashflow", () => {
     expect(timeline[0].actualOut).toBe(2000);
     expect(timeline[0].plannedIn).toBe(8000);
     expect(timeline[0].plannedOut).toBe(2000);
+  });
+
+  it("finds next payday and low-balance before it", () => {
+    expect(nextPayday([{ kind: "income", date: "2026-09-30" }, { kind: "expense", date: "2026-09-05" }], "2026-09-09")).toBe(
+      "2026-09-30"
+    );
+    expect(outflowUntil([{ kind: "expense", date: "2026-09-20", amount: -1500 }], "2026-09-09", "2026-09-30")).toBe(1500);
+    expect(isLowBalance(1000, 1500)).toBe(true);
+    expect(isLowBalance(2000, 1500)).toBe(false);
   });
 });

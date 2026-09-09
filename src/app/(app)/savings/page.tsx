@@ -37,10 +37,14 @@ import {
   contributionHistory,
   contributionThisMonth,
   emergencyFundMonths,
+  goalMilestones,
   goalPercent,
+  goalPriority,
   isBehindSchedule,
+  isEmergencyGoal,
   remainingToGoal,
   savingsRate,
+  sortGoalsForDashboard,
   suggestedForGoal,
 } from "@/lib/savings";
 import { whatIfGoal } from "@/lib/analytics";
@@ -52,6 +56,15 @@ const TYPE_LABEL: Record<GoalType, string> = {
   target_balance: "Cel kwotowy",
   monthly_contribution: "Stała wpłata",
   pay_off: "Spłata",
+  emergency_fund: "Fundusz awaryjny",
+};
+
+const PRIORITY_LABEL: Record<number, string> = {
+  1: "1 · najwyższy",
+  2: "2 · wysoki",
+  3: "3 · zwykły",
+  4: "4 · niski",
+  5: "5 · najniższy",
 };
 
 export default function SavingsPage() {
@@ -72,6 +85,7 @@ export default function SavingsPage() {
   const [targetAmount, setTargetAmount] = useState("");
   const [targetDate, setTargetDate] = useState("");
   const [goalType, setGoalType] = useState<GoalType>("target_balance");
+  const [priority, setPriority] = useState("1");
   const [whatIfExtra, setWhatIfExtra] = useState("200");
 
   const { data: goals } = useQuery({
@@ -129,7 +143,7 @@ export default function SavingsPage() {
           body: JSON.stringify({
             group_name: "Oszczędności",
             name: newEnvelope.trim(),
-            icon: goalType === "pay_off" ? "💳" : "🎯",
+            icon: goalType === "pay_off" ? "💳" : goalType === "emergency_fund" ? "🛟" : "🎯",
           }),
         });
         const created = await res.json();
@@ -143,6 +157,7 @@ export default function SavingsPage() {
         target_amount: parseFloat(targetAmount.replace(",", ".")),
         target_date: targetDate || null,
         type: goalType,
+        priority: Number(priority) || 3,
       });
       if (error) throw error;
     },
@@ -156,6 +171,7 @@ export default function SavingsPage() {
       setCategoryId("");
       setTargetAmount("");
       setTargetDate("");
+      setPriority(goalType === "emergency_fund" ? "1" : "3");
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd tworzenia celu"),
   });
@@ -191,22 +207,22 @@ export default function SavingsPage() {
       }, 0),
     [goals, categories]
   );
+  const typicalSpend = Math.abs(budget?.totalActivity ?? 0);
   const behindCount = (goals ?? []).filter((goal) => {
     const row = categories.find((c) => c.category.id === goal.category_id);
     return isBehindSchedule(
       contributionThisMonth({ available: row?.available ?? 0, assigned: row?.assigned ?? 0, moved: row?.moved ?? 0 }),
-      suggestedForGoal(goal, row?.available ?? 0)
+      suggestedForGoal(goal, row?.available ?? 0, typicalSpend)
     );
   }).length;
   const history = contributionHistory(allocations ?? [], goalIds, year, month, 6);
-  const typicalSpend = Math.abs(budget?.totalActivity ?? 0);
   const rate = savingsRate(budget?.incomeThisMonth ?? 0, contributedThisMonth);
   const recent = [...history].reverse().filter((p) => p.amount > 0).slice(0, 6);
   const primaryGoal = (goals ?? []).find((goal) => {
     const row = categories.find((c) => c.category.id === goal.category_id);
     return isBehindSchedule(
       contributionThisMonth({ available: row?.available ?? 0, assigned: row?.assigned ?? 0, moved: row?.moved ?? 0 }),
-      suggestedForGoal(goal, row?.available ?? 0)
+      suggestedForGoal(goal, row?.available ?? 0, typicalSpend)
     );
   }) ?? goals?.[0];
   const primaryRow = categories.find((c) => c.category.id === primaryGoal?.category_id);
@@ -216,6 +232,22 @@ export default function SavingsPage() {
   const whatIfMonthly = primaryGoal ? suggestedForGoal(primaryGoal, primaryRow?.available ?? 0) : 0;
   const extraNum = parseFloat(whatIfExtra.replace(",", ".")) || 0;
   const whatIf = whatIfGoal(whatIfRemaining, whatIfMonthly, extraNum);
+  const orderedGoals = sortGoalsForDashboard(
+    (goals ?? []).map((goal) => {
+      const row = categories.find((c) => c.category.id === goal.category_id);
+      const contributed = contributionThisMonth({
+        available: row?.available ?? 0,
+        assigned: row?.assigned ?? 0,
+        moved: row?.moved ?? 0,
+      });
+      const monthly = suggestedForGoal(goal, row?.available ?? 0, typicalSpend);
+      return {
+        ...goal,
+        behind: isBehindSchedule(contributed, monthly),
+        name: goal.category?.name ?? "",
+      };
+    })
+  );
 
   const contribute = async () => {
     if (!contributeFor) return;
@@ -257,7 +289,7 @@ export default function SavingsPage() {
         <div>
           <h1 className="text-2xl font-bold">Oszczędności</h1>
           <p className="text-sm text-muted-foreground">
-            Cele i postęp. Wpłata to przydział albo przeniesienie — każda złotówka ma zadanie.
+            W ~5 minut: utwórz cel → wpłać z Do rozdzielenia → zobacz, czy jesteś na bieżąco.
           </p>
         </div>
         <Button onClick={() => setOpen(true)}>
@@ -357,21 +389,24 @@ export default function SavingsPage() {
       )}
 
       <div className="space-y-3">
-        {(goals ?? []).map((goal) => {
+        {orderedGoals.map((goal) => {
           const row = categories.find((c) => c.category.id === goal.category_id);
           const available = row?.available ?? 0;
           const assigned = row?.assigned ?? 0;
           const moved = row?.moved ?? 0;
           const target = Number(goal.target_amount);
           const contributed = contributionThisMonth({ available, assigned, moved });
-          const monthly = suggestedForGoal(goal, available);
+          const monthly = suggestedForGoal(goal, available, typicalSpend);
           const behind = isBehindSchedule(contributed, monthly);
-                  const remaining = remainingToGoal(available, target);
+          const remaining = remainingToGoal(available, target);
           const progress =
             goal.type === "monthly_contribution"
               ? goalPercent(contributed, target)
               : goalPercent(available, target);
           const monthsCovered = emergencyFundMonths(available, typicalSpend);
+          const emergency = isEmergencyGoal(goal);
+          const marks = goalMilestones(available, target);
+          const onTrack = !behind && (monthly <= 0.005 || contributed + 0.005 >= monthly);
 
           return (
             <Card key={goal.id} className={cn(behind && "border-amber-500/40")}>
@@ -381,7 +416,9 @@ export default function SavingsPage() {
                     <PiggyBank className="h-4 w-4" />
                     {goal.category?.icon} {goal.category?.name}
                   </span>
-                  <span className="text-xs font-normal text-muted-foreground">{TYPE_LABEL[goal.type]}</span>
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {TYPE_LABEL[goal.type]} · priorytet {goalPriority(goal)}
+                  </span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -391,9 +428,26 @@ export default function SavingsPage() {
                       ? `${formatCurrency(contributed)} / ${formatCurrency(target)} w tym miesiącu`
                       : `${formatCurrency(available)} / ${formatCurrency(target)}`}
                   </span>
-                  <span className="text-muted-foreground">{progress.toFixed(0)}%</span>
+                  <span className={cn("font-medium", onTrack ? "text-green-600" : "text-amber-600")}>
+                    {progress.toFixed(0)}% · {onTrack ? "na bieżąco" : "zaległość"}
+                  </span>
                 </div>
                 <Progress value={progress} />
+                {goal.type !== "monthly_contribution" && (
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {marks.map((mark) => (
+                      <span
+                        key={mark.pct}
+                        className={cn(
+                          "rounded-full border px-2 py-0.5",
+                          mark.reached ? "border-green-600 text-green-700" : "text-muted-foreground"
+                        )}
+                      >
+                        {mark.pct}% {mark.reached ? "✓" : formatCurrency(mark.amount)}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className="flex flex-wrap gap-3 text-sm text-muted-foreground">
                   {goal.type !== "monthly_contribution" && <span>Zostało {formatCurrency(remaining)}</span>}
                   <span>Wpłata w tym miesiącu {formatCurrency(contributed)}</span>
@@ -401,7 +455,7 @@ export default function SavingsPage() {
                   {goal.target_date && (
                     <span>Do {new Date(goal.target_date).toLocaleDateString("pl-PL")}</span>
                   )}
-                  {goal.category?.name.toLowerCase().includes("awaryj") && typicalSpend > 0 && (
+                  {emergency && typicalSpend > 0 && (
                     <span>Fundusz: {monthsCovered.toFixed(1)} mies. wydatków</span>
                   )}
                 </div>
@@ -439,7 +493,7 @@ export default function SavingsPage() {
         {goals?.length === 0 && (
           <Card>
             <CardContent className="space-y-2 py-8 text-center text-muted-foreground">
-              <p>Brak celów. Utwórz kopertę (np. fundusz awaryjny albo wakacje) i nadaj jej zadanie.</p>
+              <p>Brak celów. W ~5 minut: utwórz fundusz albo wakacje, wpłać z Do rozdzielenia i zobacz status na bieżąco.</p>
               <Button onClick={() => setOpen(true)}>Nowy cel</Button>
             </CardContent>
           </Card>
@@ -489,14 +543,40 @@ export default function SavingsPage() {
           <div className="space-y-4">
             <div>
               <Label>Rodzaj</Label>
-              <Select value={goalType} onValueChange={(v) => setGoalType(v as GoalType)}>
+              <Select
+                value={goalType}
+                onValueChange={(v) => {
+                  const next = v as GoalType;
+                  setGoalType(next);
+                  if (next === "emergency_fund") {
+                    setPriority("1");
+                    if (!newEnvelope.trim() && !categoryId) setNewEnvelope("Fundusz awaryjny");
+                  }
+                }}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="target_balance">Cel kwotowy (fundusz, wakacje)</SelectItem>
+                  <SelectItem value="target_balance">Cel kwotowy (wakacje, auto)</SelectItem>
+                  <SelectItem value="emergency_fund">Fundusz awaryjny</SelectItem>
                   <SelectItem value="monthly_contribution">Stała wpłata co miesiąc</SelectItem>
                   <SelectItem value="pay_off">Spłata</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Priorytet</Label>
+              <Select value={priority} onValueChange={setPriority}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(PRIORITY_LABEL).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -535,7 +615,7 @@ export default function SavingsPage() {
             <div>
               <Label>{goalType === "monthly_contribution" ? "Kwota co miesiąc" : "Kwota docelowa"}</Label>
               <Input type="number" value={targetAmount} onChange={(e) => setTargetAmount(e.target.value)} />
-              {goalType === "target_balance" && typicalSpend > 0 && (
+              {(goalType === "target_balance" || goalType === "emergency_fund") && typicalSpend > 0 && (
                 <Button
                   type="button"
                   variant="ghost"

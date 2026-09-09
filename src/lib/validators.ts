@@ -86,7 +86,8 @@ export const goalSchema = z.object({
   category_id: z.string().uuid(),
   target_amount: z.number().positive(),
   target_date: z.string().nullable().optional(),
-  type: z.enum(["target_balance", "monthly_contribution", "pay_off"]),
+  type: z.enum(["target_balance", "monthly_contribution", "pay_off", "emergency_fund"]),
+  priority: z.number().int().min(1).max(5).optional(),
 });
 
 export const scheduledSchema = z.object({
