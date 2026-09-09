@@ -62,9 +62,10 @@ npm install
    - `supabase/migrations/007_scheduled_transactions.sql` (naprawa `scheduled_transactions` na istniejących bazach)
    - `supabase/migrations/008_account_columns.sql` (naprawa `accounts.on_budget` i typów kont na istniejących bazach)
    - `supabase/migrations/009_live_schema_gaps.sql` (naprawa `transactions.paid_by`, `budget_categories.kind` i pozostałych kolumn zapisu)
+   - `supabase/migrations/010_delete_household_account.sql` (atomowe usuwanie konta + `expense_splits`)
 3. Włącz Realtime dla `transactions`, `budget_allocations` i `scheduled_transactions` (002/007 robi to automatycznie, jeśli publikacja istnieje).
 
-Istniejąca baza: odpal `002`–`009` (są idempotentne) albo zredeployuj Docker/Coolify z `DATABASE_URL` do bazy PostgREST. Kontener zawsze dopina `paid_by`, `kind`, kolumny transferu, `scheduled_transactions` i `accounts.on_budget` przez `scripts/ensure-schema.sql`.
+Istniejąca baza: odpal `002`–`010` (są idempotentne) albo zredeployuj Docker/Coolify z `DATABASE_URL` do bazy PostgREST. Kontener zawsze dopina `paid_by`, `kind`, kolumny transferu, `scheduled_transactions`, `accounts.on_budget` i `delete_household_account` przez `scripts/ensure-schema.sql`.
 
 Coolify: po pushu na `main` workflow **Deploy to Coolify** się uruchamia, ale sekret GitHub `COOLIFY_TOKEN` jest pusty — deploy jest pomijany. Live: panel Coolify → MyBudget → **Deploy** (branch `main`). Szczegóły: `docs/COOLIFY.md`.
 
@@ -97,14 +98,16 @@ Dane przykładowe (tylko pusty budżet): Ustawienia → **Wczytaj dane przykład
 
 ### Usuwanie konta (`DELETE /api/accounts/[id]`)
 
-Tylko zalogowany członek gospodarstwa (to samo auth + `family_id` co reszta API). Brak nowej migracji — deploy-safe na istniejącym schemacie.
+Tylko zalogowany członek gospodarstwa (to samo auth + `family_id` co reszta API). Additive `010_delete_household_account.sql` + ensure-schema (Coolify boot) — nie rusza istniejącego schematu poza `CREATE OR REPLACE FUNCTION`.
 
 | Stan | Zachowanie |
 | --- | --- |
 | Konto bez transakcji i bez zaplanowanych płatności | Usuwane od razu (`mode: "empty"`). |
 | Konto z transakcjami / harmonogramem | `409` + `code: "HAS_TRANSACTIONS"` i liczby (`counts.transactions`, `counts.scheduled`, `counts.transferPairs`). Komunikat po polsku. |
-| `force=true` (body JSON albo `?force=1`) po potwierdzeniu w UI | Kasuje transakcje tego konta, **pary transferów** na drugim koncie, reguły `scheduled_transactions` (albo zeruje `transfer_account_id`), potem konto (`mode: "cascade"`). |
+| `force=true` (body JSON albo `?force=1`) po potwierdzeniu w UI | Jedna transakcja DB (`rpc delete_household_account`): kasuje `expense_splits`, transakcje tego konta, **pary transferów**, reguły `scheduled_transactions` (albo zeruje `transfer_account_id`), potem konto (`mode: "cascade"`). Błąd po drodze wycofuje całość. |
 | Nazwa `QA-…` / `QA_…` (np. leftover `QA-CTO-Account-20260909-postdeploy`) | Traktowane jako dane testowe — kaskada **bez** `force`. |
+
+Gdy PostgREST jeszcze nie widzi funkcji (schema lag): ensure-schema + retry RPC; ostatecznie sekwencyjny fallback, który i tak najpierw kasuje `expense_splits` (tabele z 009/ensure-schema nie mają FK).
 
 Konta z listy **Konta** to konta gospodarstwa (RLS). Kosz jest przy każdym z nich; UI zawsze pyta o potwierdzenie i przy konflikcie 409 ponawia z `force`.
 - **Majątek** — cały majątek: aktywa, zobowiązania, wartość netto i trend; mieszkanie/auto/inwestycje ręcznie; kredyty i hipoteki
