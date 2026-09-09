@@ -1,20 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
+import { safeInternalPath } from "@/lib/paths";
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextPath = safeInternalPath(searchParams.get("next"), "/");
   const supabase = createClient();
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -29,7 +32,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/");
+    router.push(nextPath);
     router.refresh();
   };
 
@@ -42,7 +45,7 @@ export default function LoginPage() {
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(nextPath)}`,
       },
     });
 
@@ -55,10 +58,12 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">MyBudget</CardTitle>
-          <CardDescription>Zaloguj się do swojego budżetu</CardDescription>
+          <CardDescription>
+            Budżet kopertowy: nadaj każdej złotówce zadanie. Do rozdzielenia, kategorie, konta i przepływy.
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleLogin} className="flex flex-col gap-4">
             <div>
               <Label htmlFor="email">Email</Label>
               <Input
@@ -82,23 +87,29 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={loading}>
               Zaloguj się
             </Button>
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full"
-              onClick={handleMagicLink}
-            >
+            <Button type="button" variant="outline" className="w-full" onClick={handleMagicLink}>
               Wyślij magic link
             </Button>
           </form>
           <p className="mt-4 text-center text-sm text-muted-foreground">
             Nie masz konta?{" "}
-            <Link href="/register" className="text-primary hover:underline">
+            <Link
+              href={nextPath === "/" ? "/register" : `/register?next=${encodeURIComponent(nextPath)}`}
+              className="text-primary hover:underline"
+            >
               Zarejestruj się
             </Link>
           </p>
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginForm />
+    </Suspense>
   );
 }

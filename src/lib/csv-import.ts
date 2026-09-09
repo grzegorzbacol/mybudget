@@ -8,13 +8,16 @@ export interface CsvRow {
 type BankFormat = "pko" | "ing" | "mbank" | "generic";
 
 function parseAmount(value: string): number {
-  const cleaned = value.replace(/"/g, "").replace(/\s/g, "").replace(",", ".");
+  const cleaned = value
+    .replace(/"/g, "")
+    .replace(/\s/g, "")
+    .replace(/PLN|EUR|USD|GBP|zł/gi, "")
+    .replace(",", ".");
   return parseFloat(cleaned) || 0;
 }
 
 function parseDate(value: string): string {
   const v = value.replace(/"/g, "").trim();
-  // DD.MM.YYYY or YYYY-MM-DD
   if (v.includes(".")) {
     const [d, m, y] = v.split(".");
     return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
@@ -22,53 +25,84 @@ function parseDate(value: string): string {
   return v.slice(0, 10);
 }
 
-function detectFormat(headers: string[]): BankFormat {
+function splitLine(line: string, delimiter: string): string[] {
+  return line.split(delimiter).map((cell) => cell.replace(/"/g, "").trim());
+}
+
+function looksLikeHeader(headers: string[]): boolean {
+  const joined = headers.join(" ").toLowerCase();
+  return (
+    joined.includes("data operacji") ||
+    joined.includes("data księgowania") ||
+    joined.includes("data ksiegowania") ||
+    (joined.includes("date") && (joined.includes("amount") || joined.includes("kwota")))
+  );
+}
+
+export function detectBankFormat(headers: string[]): BankFormat {
   const h = headers.map((x) => x.toLowerCase());
-  if (h.some((x) => x.includes("data operacji")) && h.some((x) => x.includes("kwota")))
-    return "pko";
-  if (h.some((x) => x.includes("data księgowania")))
-    return "ing";
-  if (h.some((x) => x.includes("data operacji")) && h.some((x) => x.includes("#klient")))
-    return "mbank";
+  const hashed = h.some((x) => x.startsWith("#"));
+  if (hashed && h.some((x) => x.includes("data operacji"))) return "mbank";
+  if (h.some((x) => x.includes("data księgowania") || x.includes("data ksiegowania"))) return "ing";
+  if (h.some((x) => x.includes("data operacji")) && h.some((x) => x.includes("kwota"))) return "pko";
   return "generic";
 }
 
-export function parseBankCsv(content: string): CsvRow[] {
-  const lines = content.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return [];
-
+function findHeader(lines: string[]): { index: number; delimiter: string; headers: string[] } | null {
+  for (let i = 0; i < Math.min(lines.length, 40); i++) {
+    const delimiter = lines[i].includes(";") ? ";" : ",";
+    const headers = splitLine(lines[i], delimiter);
+    if (looksLikeHeader(headers)) {
+      return { index: i, delimiter, headers };
+    }
+  }
+  if (lines.length === 0) return null;
   const delimiter = lines[0].includes(";") ? ";" : ",";
-  const headers = lines[0].split(delimiter).map((h) => h.replace(/"/g, "").trim());
-  const format = detectFormat(headers);
+  return { index: 0, delimiter, headers: splitLine(lines[0], delimiter) };
+}
 
+function col(headers: string[], ...needles: string[]): number {
+  return headers.findIndex((header) => {
+    const value = header.toLowerCase();
+    return needles.some((needle) => value.includes(needle));
+  });
+}
+
+export function parseBankCsv(content: string): CsvRow[] {
+  const lines = content.split(/\r?\n/).filter((line) => line.trim());
+  const header = findHeader(lines);
+  if (!header || lines.length < header.index + 2) return [];
+
+  const { headers, delimiter, index } = header;
+  const format = detectBankFormat(headers);
   const rows: CsvRow[] = [];
 
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(delimiter).map((c) => c.replace(/"/g, "").trim());
+  for (let i = index + 1; i < lines.length; i++) {
+    const cols = splitLine(lines[i], delimiter);
     if (cols.length < 2) continue;
+    if (cols[0].startsWith("#") && !/^\d/.test(cols[0].replace("#", ""))) continue;
 
     let row: CsvRow | null = null;
 
     switch (format) {
       case "pko": {
-        const dateIdx = headers.findIndex((h) => h.toLowerCase().includes("data operacji"));
+        const dateIdx = col(headers, "data operacji");
         const amountIdx = headers.findIndex((h) => h.toLowerCase() === "kwota");
-        const descIdx = headers.findIndex((h) => h.toLowerCase().includes("opis"));
+        const descIdx = col(headers, "opis");
         if (dateIdx >= 0 && amountIdx >= 0) {
-          const amount = parseAmount(cols[amountIdx]);
           row = {
             date: parseDate(cols[dateIdx]),
             payee: descIdx >= 0 ? cols[descIdx] : "Import CSV",
-            amount,
+            amount: parseAmount(cols[amountIdx]),
             memo: "Import PKO",
           };
         }
         break;
       }
       case "ing": {
-        const dateIdx = headers.findIndex((h) => h.toLowerCase().includes("data księgowania"));
-        const amountIdx = headers.findIndex((h) => h.toLowerCase().includes("kwota"));
-        const titleIdx = headers.findIndex((h) => h.toLowerCase().includes("tytuł"));
+        const dateIdx = col(headers, "data księgowania", "data ksiegowania");
+        const amountIdx = col(headers, "kwota");
+        const titleIdx = col(headers, "tytuł", "tytul");
         if (dateIdx >= 0 && amountIdx >= 0) {
           row = {
             date: parseDate(cols[dateIdx]),
@@ -80,9 +114,9 @@ export function parseBankCsv(content: string): CsvRow[] {
         break;
       }
       case "mbank": {
-        const dateIdx = headers.findIndex((h) => h.toLowerCase().includes("data operacji"));
-        const amountIdx = headers.findIndex((h) => h.toLowerCase().includes("kwota"));
-        const descIdx = headers.findIndex((h) => h.toLowerCase().includes("opis"));
+        const dateIdx = col(headers, "data operacji");
+        const amountIdx = col(headers, "kwota");
+        const descIdx = col(headers, "opis");
         if (dateIdx >= 0 && amountIdx >= 0) {
           row = {
             date: parseDate(cols[dateIdx]),
@@ -94,15 +128,9 @@ export function parseBankCsv(content: string): CsvRow[] {
         break;
       }
       default: {
-        const dateIdx = headers.findIndex((h) =>
-          ["date", "data", "data operacji"].some((k) => h.toLowerCase().includes(k))
-        );
-        const amountIdx = headers.findIndex((h) =>
-          ["amount", "kwota", "wartość"].some((k) => h.toLowerCase().includes(k))
-        );
-        const payeeIdx = headers.findIndex((h) =>
-          ["payee", "opis", "tytuł", "kontrahent"].some((k) => h.toLowerCase().includes(k))
-        );
+        const dateIdx = col(headers, "date", "data operacji", "data");
+        const amountIdx = col(headers, "amount", "kwota", "wartość", "wartosc");
+        const payeeIdx = col(headers, "payee", "opis", "tytuł", "tytul", "kontrahent");
         if (dateIdx >= 0 && amountIdx >= 0) {
           row = {
             date: parseDate(cols[dateIdx]),
@@ -113,7 +141,7 @@ export function parseBankCsv(content: string): CsvRow[] {
       }
     }
 
-    if (row) rows.push(row);
+    if (row && row.date) rows.push(row);
   }
 
   return rows;

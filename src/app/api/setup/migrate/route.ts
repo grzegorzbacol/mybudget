@@ -1,4 +1,4 @@
-import { readFile } from "fs/promises";
+import { readdir, readFile } from "fs/promises";
 import { join } from "path";
 import { NextResponse } from "next/server";
 import { Client } from "pg";
@@ -25,22 +25,38 @@ export async function POST(request: Request) {
 
   try {
     await client.connect();
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        id text PRIMARY KEY,
+        applied_at timestamptz NOT NULL DEFAULT now()
+      )
+    `);
 
-    const exists = await client.query(
-      "SELECT to_regclass('public.families') AS table_name"
-    );
-    if (exists.rows[0]?.table_name) {
-      return NextResponse.json({ ok: true, message: "Schema already exists" });
+    const dir = join(process.cwd(), "supabase/migrations");
+    const files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
+    const applied = await client.query("SELECT id FROM schema_migrations");
+    const appliedIds = new Set(applied.rows.map((row) => row.id as string));
+
+    const families = await client.query("SELECT to_regclass('public.families') AS table_name");
+    if (families.rows[0]?.table_name && !appliedIds.has("001_initial_schema.sql")) {
+      await client.query("INSERT INTO schema_migrations (id) VALUES ($1)", ["001_initial_schema.sql"]);
+      appliedIds.add("001_initial_schema.sql");
     }
 
-    const sqlPath = join(
-      process.cwd(),
-      "supabase/migrations/001_initial_schema.sql"
-    );
-    const sql = await readFile(sqlPath, "utf8");
-    await client.query(sql);
+    const ran: string[] = [];
+    for (const file of files) {
+      if (appliedIds.has(file)) continue;
+      const sql = await readFile(join(dir, file), "utf8");
+      await client.query(sql);
+      await client.query("INSERT INTO schema_migrations (id) VALUES ($1)", [file]);
+      ran.push(file);
+    }
 
-    return NextResponse.json({ ok: true, message: "Migration applied" });
+    return NextResponse.json({
+      ok: true,
+      message: ran.length ? `Applied: ${ran.join(", ")}` : "Schema up to date",
+      applied: ran,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Migration failed";
     return NextResponse.json({ error: message }, { status: 500 });

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { Copy, LogOut } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Copy, Download, LogOut, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,13 +12,37 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import type { BudgetCategory } from "@/lib/types";
+import Link from "next/link";
 
 export default function SettingsPage() {
   const { data: familyData } = useFamily();
   const { data: members } = useFamilyMembers();
   const router = useRouter();
   const supabase = createClient();
+  const queryClient = useQueryClient();
   const [inviteCode, setInviteCode] = useState(familyData?.family.invite_code ?? "");
+  const [groupName, setGroupName] = useState("Życie codzienne");
+  const [catName, setCatName] = useState("");
+
+  useEffect(() => {
+    if (familyData?.family.invite_code) {
+      setInviteCode(familyData.family.invite_code);
+    }
+  }, [familyData?.family.invite_code]);
+
+  const { data: categories } = useQuery({
+    queryKey: ["categories", familyData?.family.id],
+    enabled: !!familyData?.family.id,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("budget_categories")
+        .select("*")
+        .eq("family_id", familyData!.family.id)
+        .order("sort_order");
+      return (data ?? []) as BudgetCategory[];
+    },
+  });
 
   const generateInvite = useMutation({
     mutationFn: async () => {
@@ -29,6 +53,7 @@ export default function SettingsPage() {
     },
     onSuccess: (data) => {
       setInviteCode(data.invite_code);
+      queryClient.invalidateQueries({ queryKey: ["family"] });
       toast.success("Nowy kod zaproszenia wygenerowany");
     },
     onError: (err) => toast.error(err.message),
@@ -49,6 +74,33 @@ export default function SettingsPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-bold">Ustawienia</h1>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Pierwsza sesja</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <Button variant="outline" asChild>
+            <Link href="/setup">Kreator startu</Link>
+          </Button>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              const res = await fetch("/api/setup/demo", { method: "POST" });
+              const data = await res.json();
+              if (!res.ok) {
+                toast.error(typeof data.error === "string" ? data.error : "Błąd");
+                return;
+              }
+              toast.success("Wczytano dane przykładowe");
+              queryClient.invalidateQueries();
+              router.push("/budget");
+            }}
+          >
+            Wczytaj dane przykładowe
+          </Button>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -87,7 +139,7 @@ export default function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Członkowie rodziny</CardTitle>
+          <CardTitle className="text-base">Członkowie</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           {members?.map((m) => (
@@ -99,10 +151,137 @@ export default function SettingsPage() {
               </Avatar>
               <div className="flex-1">
                 <p className="font-medium">{m.profile?.display_name ?? "Użytkownik"}</p>
-                <p className="text-xs text-muted-foreground capitalize">{m.role}</p>
+                <p className="text-xs text-muted-foreground">
+                  {m.role === "owner" ? "Właściciel" : m.role === "admin" ? "Admin" : "Członek"}
+                </p>
               </div>
             </div>
           ))}
+          <Button variant="outline" asChild>
+            <Link href="/household">Wspólny budżet i rozliczenia</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Koperty (kategorie)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="max-h-64 space-y-1 overflow-y-auto text-sm">
+            {categories?.map((c) => (
+              <div key={c.id} className="flex justify-between rounded border px-3 py-1.5">
+                <span>
+                  {c.icon} {c.group_name} / {c.name}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  {c.kind === "income" ? "przychód" : "wydatek"}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label>Grupa</Label>
+              <Input value={groupName} onChange={(e) => setGroupName(e.target.value)} />
+            </div>
+            <div>
+              <Label>Nazwa koperty</Label>
+              <Input value={catName} onChange={(e) => setCatName(e.target.value)} />
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            className="w-full"
+            disabled={!catName || !groupName}
+            onClick={async () => {
+              const res = await fetch("/api/categories", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ group_name: groupName, name: catName }),
+              });
+              if (!res.ok) {
+                toast.error("Nie udało się dodać kategorii");
+                return;
+              }
+              toast.success("Dodano kopertę");
+              setCatName("");
+              queryClient.invalidateQueries({ queryKey: ["categories"] });
+              queryClient.invalidateQueries({ queryKey: ["budget"] });
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Dodaj kategorię
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Wspólny budżet</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            Jeden budżet dla gospodarstwa: wspólne koperty, Do rozdzielenia i konta. Zaproś partnera kodem powyżej.
+            Wydatki możesz dzielić między osoby — rozliczenia są w osobnym widoku.
+          </p>
+          <Button variant="outline" asChild>
+            <Link href="/household">Otwórz wspólny budżet</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Import banku (mBank i inne)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            Żywe połączenie z mBank (PSD2 / AIS, np. GoCardless, Enable Banking, Kontomatik) nie jest w tej wersji —
+            wymaga zgody banku i agregatora. Teraz: eksport CSV z mBank/PKO/ING albo plik OFX, potem Import na ekranie Transakcje.
+          </p>
+          <Button variant="outline" asChild>
+            <Link href="/import">Import CSV/OFX (mBank)</Link>
+          </Button>
+          <Button variant="ghost" asChild>
+            <Link href="/reports">Raporty</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Kopia zapasowa</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            Pobierz JSON z kontami, kopertami, transakcjami, celami i rozliczeniami. Przywracanie z pliku nie jest w tej
+            wersji — to eksport do archiwum.
+          </p>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              const res = await fetch("/api/backup");
+              if (!res.ok) {
+                toast.error("Nie udało się pobrać kopii");
+                return;
+              }
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `mybudget-backup-${new Date().toISOString().slice(0, 10)}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+              toast.success("Pobrano kopię JSON");
+            }}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Pobierz kopię JSON
+          </Button>
+          <Button variant="ghost" asChild>
+            <Link href="/review">Rytuał tygodnia</Link>
+          </Button>
         </CardContent>
       </Card>
 

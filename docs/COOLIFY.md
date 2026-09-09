@@ -3,7 +3,7 @@
 ## Wymagania
 
 - Repozytorium Git (GitHub / GitLab / Gitea)
-- Projekt Supabase z uruchomioną migracją `supabase/migrations/001_initial_schema.sql`
+- Projekt Supabase z uruchomionymi migracjami `supabase/migrations/001_initial_schema.sql` oraz `002_ynab_model.sql`
 - Klucze API: Supabase, OpenAI (opcjonalnie Google Vision)
 
 ## Kroki w Coolify
@@ -46,7 +46,7 @@ Jeśli Supabase działa jako usługa w tym samym środowisku Coolify:
 | `NEXT_PUBLIC_SUPABASE_URL` | `http://supabasekong-<ID>.51.38.132.184.sslip.io` (bez `:8000`) |
 | `DATABASE_URL` | `postgresql://postgres:<HASLO>@supabase-db-<ID>:5432/postgres` |
 
-Przy starcie kontenera migracja `supabase/migrations/001_initial_schema.sql` uruchamia się automatycznie (wymaga `DATABASE_URL`).
+Przy starcie kontenera migracje z `supabase/migrations/` uruchamiają się automatycznie (wymaga `DATABASE_URL`), w tym `002_ynab_model.sql` na istniejących bazach.
 
 W usłudze Supabase ustaw też:
 - `GOTRUE_SITE_URL` → URL aplikacji MyBudget

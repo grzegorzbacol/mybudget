@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TransactionForm } from "@/components/transactions/TransactionForm";
@@ -9,6 +10,25 @@ import { CsvImport } from "@/components/transactions/CsvImport";
 import { ReceiptScanner } from "@/components/ReceiptScanner";
 import { MonthSwitcher } from "@/components/MonthSwitcher";
 import { getCurrentYearMonth } from "@/lib/format";
+
+function CaptureFromQuery({
+  onAdd,
+  onScan,
+}: {
+  onAdd: () => void;
+  onScan: () => void;
+}) {
+  const params = useSearchParams();
+  const add = params.get("add");
+  const scan = params.get("scan");
+  useEffect(() => {
+    if (add === "1") onAdd();
+    if (scan === "1") onScan();
+    // Open once when the PWA shortcut lands here.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [add, scan]);
+  return null;
+}
 
 export default function TransactionsPage() {
   const { year: initYear, month: initMonth } = getCurrentYearMonth();
@@ -33,6 +53,11 @@ export default function TransactionsPage() {
         </div>
       </div>
 
+      <p className="text-sm text-muted-foreground">
+        Wydatek schodzi z koperty, przychód idzie do Do rozdzielenia, transfer tylko między kontami. Import: CSV
+        mBank/PKO/ING albo OFX. Reguły payee proponują kopertę po imporcie.
+      </p>
+
       <MonthSwitcher
         year={year}
         month={month}
@@ -42,7 +67,10 @@ export default function TransactionsPage() {
         }}
       />
 
-      <TransactionList year={year} month={month} />
+      <Suspense fallback={<p className="text-center text-muted-foreground">Ładowanie...</p>}>
+        <CaptureFromQuery onAdd={() => setFormOpen(true)} onScan={() => setScannerOpen(true)} />
+        <TransactionList year={year} month={month} />
+      </Suspense>
       <TransactionForm open={formOpen} onOpenChange={setFormOpen} />
       <ReceiptScanner open={scannerOpen} onOpenChange={setScannerOpen} />
     </div>

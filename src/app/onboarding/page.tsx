@@ -32,8 +32,8 @@ export default function OnboardingPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      toast.success("Rodzina utworzona!");
-      router.push("/budget");
+      toast.success("Gospodarstwo utworzone");
+      router.push("/setup");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Błąd");
     } finally {
@@ -52,7 +52,7 @@ export default function OnboardingPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      toast.success("Dołączono do rodziny!");
+      toast.success("Dołączono do wspólnego budżetu");
       router.push("/budget");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Błąd");
@@ -65,24 +65,24 @@ export default function OnboardingPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <CardTitle>Witaj w MyBudget!</CardTitle>
+          <CardTitle>Wspólny budżet</CardTitle>
           <CardDescription>
-            Utwórz nową rodzinę lub dołącz przez kod zaproszenia
+            Kilka osób, jeden budżet: wspólne koperty, konta i Do rozdzielenia. Utwórz gospodarstwo albo dołącz kodem.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <Tabs defaultValue={inviteCode ? "join" : "create"}>
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="create">Nowa rodzina</TabsTrigger>
+              <TabsTrigger value="create">Nowy budżet</TabsTrigger>
               <TabsTrigger value="join">Dołącz</TabsTrigger>
             </TabsList>
             <TabsContent value="create" className="space-y-4 pt-4">
               <div>
-                <Label>Nazwa rodziny / gospodarstwa</Label>
+                <Label>Nazwa gospodarstwa</Label>
                 <Input
                   value={familyName}
                   onChange={(e) => setFamilyName(e.target.value)}
-                  placeholder="np. Rodzina Kowalskich"
+                  placeholder="np. Dom Kowalskich"
                 />
               </div>
               <Button
@@ -90,7 +90,7 @@ export default function OnboardingPage() {
                 onClick={createFamily}
                 disabled={loading || familyName.length < 2}
               >
-                Utwórz rodzinę
+                Utwórz wspólny budżet
               </Button>
             </TabsContent>
             <TabsContent value="join" className="space-y-4 pt-4">
@@ -107,7 +107,7 @@ export default function OnboardingPage() {
                 onClick={joinFamily}
                 disabled={loading || inviteCode.length < 4}
               >
-                Dołącz do rodziny
+                Dołącz do wspólnego budżetu
               </Button>
             </TabsContent>
           </Tabs>

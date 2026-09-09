@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { getAuthContext } from "@/lib/api-helpers";
+import { getAuthContext, getOrCreateAllocation } from "@/lib/api-helpers";
 import { allocateSchema } from "@/lib/validators";
+import { money } from "@/lib/money";
 
 export async function POST(request: Request) {
   const ctx = await getAuthContext();
@@ -16,31 +17,21 @@ export async function POST(request: Request) {
 
   const { category_id, year, month, allocated, rollover } = parsed.data;
 
-  const { data: allocation } = await ctx.supabase
-    .from("budget_allocations")
-    .select("activity")
-    .eq("category_id", category_id)
-    .eq("year", year)
-    .eq("month", month)
-    .single();
-
-  const activity = Number(allocation?.activity ?? 0);
+  const current = await getOrCreateAllocation(
+    ctx.supabase,
+    ctx.family.id,
+    category_id,
+    year,
+    month
+  );
 
   const { data, error } = await ctx.supabase
     .from("budget_allocations")
-    .upsert(
-      {
-        family_id: ctx.family.id,
-        category_id,
-        year,
-        month,
-        allocated,
-        activity,
-        available: allocated - activity,
-        rollover: rollover ?? false,
-      },
-      { onConflict: "category_id,year,month" }
-    )
+    .update({
+      allocated: money(allocated),
+      rollover: rollover ?? current.rollover,
+    })
+    .eq("id", current.id)
     .select()
     .single();
 

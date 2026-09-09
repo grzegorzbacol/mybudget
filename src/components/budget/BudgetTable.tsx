@@ -1,15 +1,25 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
-import { useBudget, useAllocateBudget } from "@/hooks/use-budget";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { useAllocateMany, useBudget } from "@/hooks/use-budget";
 import { formatCurrency, getMonthLabel } from "@/lib/format";
+import { planFillEnvelopeGaps } from "@/lib/budget";
 import { cn } from "@/lib/utils";
 import { CategoryPanel } from "./CategoryPanel";
+import { AssignedInput, Money } from "./AssignedInput";
 import type { BudgetCategoryRow } from "@/lib/types";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface BudgetTableProps {
   year: number;
@@ -19,8 +29,13 @@ interface BudgetTableProps {
 
 export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
   const { data, isLoading } = useBudget(year, month);
-  const allocate = useAllocateBudget();
   const [selected, setSelected] = useState<BudgetCategoryRow | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [groupName, setGroupName] = useState("Życie codzienne");
+  const [catName, setCatName] = useState("");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const allocateMany = useAllocateMany();
+  const queryClient = useQueryClient();
 
   const goMonth = (delta: number) => {
     let m = month + delta;
@@ -41,108 +56,281 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
 
   if (!data) return null;
 
+  const rtaPositive = data.readyToAssign >= 0;
+  const allRows = data.groups.flatMap((g) => g.categories);
+  const gapPlan = planFillEnvelopeGaps(allRows, data.readyToAssign);
+  const gapTotal = gapPlan.reduce((sum, row) => sum + row.add, 0);
+  const selectedRow = selected
+    ? allRows.find((row) => row.category.id === selected.category.id) ?? selected
+    : null;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <Button variant="ghost" size="icon" onClick={() => goMonth(-1)}>
+        <Button variant="ghost" size="icon" onClick={() => goMonth(-1)} aria-label="Poprzedni miesiąc">
           <ChevronLeft className="h-5 w-5" />
         </Button>
         <h2 className="text-lg font-semibold capitalize">{getMonthLabel(year, month)}</h2>
-        <Button variant="ghost" size="icon" onClick={() => goMonth(1)}>
+        <Button variant="ghost" size="icon" onClick={() => goMonth(1)} aria-label="Następny miesiąc">
           <ChevronRight className="h-5 w-5" />
         </Button>
       </div>
 
       <div
         className={cn(
-          "rounded-lg border p-4",
-          data.readyToAssign >= 0 ? "border-green-500/30 bg-green-500/5" : "border-red-500/30 bg-red-500/5"
+          "sticky top-14 z-20 rounded-lg border p-4 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/90",
+          rtaPositive ? "border-green-500/30 bg-green-500/10" : "border-red-500/30 bg-red-500/10"
         )}
       >
-        <p className="text-sm text-muted-foreground">Do przydzielenia</p>
-        <p className="text-2xl font-bold">{formatCurrency(data.readyToAssign)}</p>
+        <p className="text-sm text-muted-foreground">Do rozdzielenia</p>
+        <p className={cn("text-2xl font-bold", !rtaPositive && "text-red-500")}>
+          {formatCurrency(data.readyToAssign)}
+        </p>
+        <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+          <div>
+            <p className="text-muted-foreground">Przychody w miesiącu</p>
+            <p className="font-medium">{formatCurrency(data.incomeThisMonth)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Przydzielone</p>
+            <p className="font-medium">{formatCurrency(data.totalAllocated)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Saldo w budżecie</p>
+            <p className="font-medium">{formatCurrency(data.onBudgetBalance)}</p>
+          </div>
+        </div>
+        {!rtaPositive && (
+          <p className="mt-3 text-sm text-red-600 dark:text-red-400">
+            Przydzieliłeś więcej, niż masz. Cofnij przydział albo przenieś środki z kategorii.
+          </p>
+        )}
+        {rtaPositive && data.readyToAssign > 0 && (
+          <p className="mt-3 text-sm text-muted-foreground">
+            Nadaj każdej złotówce zadanie — przydziel przychód do kopert.
+          </p>
+        )}
+        {(data.uncategorizedCount ?? 0) > 0 && (
+          <a
+            href="/transactions?filter=uncategorized"
+            className="mt-3 block rounded-md border border-amber-500/40 bg-background px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
+          >
+            {data.uncategorizedCount}{" "}
+            {data.uncategorizedCount === 1 ? "transakcja bez kategorii" : "transakcji bez kategorii"} — przypisz koperty.
+          </a>
+        )}
+        {gapPlan.length > 0 && data.readyToAssign > 0 && (
+          <Button
+            className="mt-3"
+            size="sm"
+            variant="outline"
+            disabled={allocateMany.isPending}
+            onClick={() =>
+              allocateMany.mutate(
+                gapPlan.map((row) => ({
+                  category_id: row.category_id,
+                  year,
+                  month,
+                  allocated: row.allocated,
+                }))
+              )
+            }
+          >
+            Zasil braki ({formatCurrency(gapTotal)})
+          </Button>
+        )}
+        {data.onBudgetBalance === 0 && data.incomeThisMonth === 0 && (
+          <div className="mt-3 rounded-md border bg-background p-3 text-sm">
+            <p className="font-medium">Pierwsza sesja</p>
+            <ol className="mt-1 list-decimal space-y-1 pl-4 text-muted-foreground">
+              <li>
+                Otwórz <a className="underline" href="/setup">kreator startu</a> i wpisz saldo na koncie (albo wczytaj dane przykładowe).
+              </li>
+              <li>Kwota trafia do <strong>Do rozdzielenia</strong> — przydziel ją do kopert, aż zostanie 0 zł.</li>
+              <li>
+                Dodaj <a className="underline" href="/transactions">wydatek</a> z kategorią. <strong>Dostępne</strong> w kopercie spadnie.
+              </li>
+            </ol>
+          </div>
+        )}
       </div>
 
       <div className="overflow-hidden rounded-lg border">
         <div className="hidden grid-cols-12 gap-2 border-b bg-muted/50 px-4 py-2 text-xs font-medium text-muted-foreground md:grid">
-          <div className="col-span-2">Grupa</div>
-          <div className="col-span-3">Kategoria</div>
-          <div className="col-span-2 text-right">Zaplanowane</div>
-          <div className="col-span-2 text-right">Wydane</div>
+          <div className="col-span-4">Kategoria</div>
+          <div className="col-span-2 text-right">Przydzielone</div>
+          <div className="col-span-3 text-right">Aktywność</div>
           <div className="col-span-3 text-right">Dostępne</div>
         </div>
 
         {data.groups.map((group) => (
           <div key={group.groupName}>
-            {group.categories.map((row, idx) => {
-              const pct =
-                row.allocation.allocated > 0
-                  ? Math.min(100, (row.allocation.activity / row.allocation.allocated) * 100)
-                  : 0;
-              const overBudget = row.allocation.available < 0;
+            <div className="grid grid-cols-12 items-center gap-2 border-b bg-muted/40 px-4 py-2 text-sm font-semibold">
+              <button
+                type="button"
+                className="col-span-12 flex items-center gap-2 text-left md:col-span-4"
+                onClick={() => {
+                  const next = new Set(collapsed);
+                  if (next.has(group.groupName)) next.delete(group.groupName);
+                  else next.add(group.groupName);
+                  setCollapsed(next);
+                }}
+              >
+                <ChevronDown
+                  className={cn("h-4 w-4 shrink-0 transition-transform", collapsed.has(group.groupName) && "-rotate-90")}
+                />
+                {group.groupName}
+              </button>
+              <div className="col-span-4 hidden text-right tabular-nums md:col-span-2 md:block">
+                {formatCurrency(group.assigned)}
+              </div>
+              <div className="col-span-4 hidden text-right tabular-nums md:col-span-3 md:block">
+                {formatCurrency(group.activity)}
+              </div>
+              <div className="col-span-4 hidden text-right tabular-nums md:col-span-3 md:block">
+                {formatCurrency(group.available)}
+              </div>
+            </div>
+
+            {!collapsed.has(group.groupName) && group.categories.map((row) => {
+              const overBudget = row.available < 0;
+              const unfunded = row.upcoming > 0 && row.available + 0.0001 < row.upcoming;
 
               return (
-                <button
+                <div
                   key={row.category.id}
-                  type="button"
-                  onClick={() => setSelected(row)}
-                  className="grid w-full grid-cols-1 gap-2 border-b px-4 py-3 text-left transition-colors hover:bg-muted/30 md:grid-cols-12 md:items-center"
+                  className="grid grid-cols-12 items-center gap-2 border-b px-4 py-3 hover:bg-muted/30"
                 >
-                  <div className="col-span-2 text-xs font-medium text-muted-foreground md:text-sm">
-                    {idx === 0 ? group.groupName : ""}
-                  </div>
-                  <div className="col-span-3 flex items-center gap-2">
-                    <span>{row.category.icon}</span>
-                    <span className="font-medium">{row.category.name}</span>
-                  </div>
-                  <div className="col-span-2 text-right text-sm md:block">
-                    {formatCurrency(row.allocation.allocated)}
-                  </div>
-                  <div className="col-span-2 text-right text-sm">
-                    {formatCurrency(row.allocation.activity)}
-                  </div>
-                  <div className="col-span-3 space-y-1">
-                    <p
-                      className={cn(
-                        "text-right font-semibold",
-                        overBudget ? "text-red-500" : "text-green-600 dark:text-green-400"
-                      )}
-                    >
-                      {formatCurrency(row.allocation.available)}
-                    </p>
-                    <Progress
-                      value={pct}
-                      className={cn("h-1.5", overBudget && "[&>div]:bg-red-500")}
+                  <button
+                    type="button"
+                    onClick={() => setSelected(row)}
+                    className="col-span-12 text-left md:col-span-4"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span>{row.category.icon}</span>
+                      <span className="font-medium">{row.category.name}</span>
+                    </div>
+                    {(row.leftover !== 0 || unfunded) && (
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {row.leftover !== 0 && `Z zaległości: ${formatCurrency(row.leftover)}`}
+                        {row.leftover !== 0 && unfunded && " · "}
+                        {unfunded && `Plan: ${formatCurrency(row.upcoming)}`}
+                      </p>
+                    )}
+                  </button>
+
+                  <div className="col-span-4 md:col-span-2">
+                    <p className="mb-1 text-xs text-muted-foreground md:hidden">Przydzielone</p>
+                    <AssignedInput
+                      categoryId={row.category.id}
+                      year={year}
+                      month={month}
+                      value={row.assigned}
                     />
                   </div>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(row)}
+                    className="col-span-4 text-right text-sm md:col-span-3"
+                  >
+                    <p className="mb-1 text-xs text-muted-foreground md:hidden">Aktywność</p>
+                    <Money amount={row.activity} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(row)}
+                    className="col-span-4 text-right md:col-span-3"
+                  >
+                    <p className="mb-1 text-xs text-muted-foreground md:hidden">Dostępne</p>
+                    <p
+                      className={cn(
+                        "font-semibold",
+                        overBudget
+                          ? "text-red-500"
+                          : row.available > 0
+                            ? "text-green-600 dark:text-green-400"
+                            : "text-muted-foreground"
+                      )}
+                    >
+                      {formatCurrency(row.available)}
+                    </p>
+                    {unfunded && (
+                      <p className="text-xs text-amber-600">Brakuje {formatCurrency(row.upcoming - row.available)}</p>
+                    )}
+                  </button>
+                </div>
               );
             })}
           </div>
         ))}
       </div>
 
-      {selected && (
+      {data.groups.length === 0 && (
+        <div className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
+          Brak kopert. Dodaj pierwszą kategorię, żeby zacząć przydzielać pieniądze.
+        </div>
+      )}
+
+      <Button variant="outline" className="w-full" onClick={() => setAddOpen(true)}>
+        <Plus className="mr-2 h-4 w-4" />
+        Dodaj kopertę
+      </Button>
+
+      {selectedRow && (
         <CategoryPanel
-          row={selected}
+          row={selectedRow}
           year={year}
           month={month}
+          readyToAssign={data.readyToAssign}
+          categories={allRows}
           open={!!selected}
           onOpenChange={(open) => !open && setSelected(null)}
-          onAllocate={async (allocated) => {
-            await allocate.mutateAsync({
-              category_id: selected.category.id,
-              year,
-              month,
-              allocated,
-            });
-            if (allocated > 0 && selected.allocation.activity > allocated) {
-              toast.warning(`Kategoria „${selected.category.name}" przekroczyła budżet!`);
-            }
-            setSelected(null);
-          }}
         />
       )}
+
+      <Dialog open={addOpen} onOpenChange={setAddOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Nowa koperta</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label>Grupa</Label>
+              <Input value={groupName} onChange={(e) => setGroupName(e.target.value)} />
+            </div>
+            <div>
+              <Label>Nazwa</Label>
+              <Input
+                value={catName}
+                onChange={(e) => setCatName(e.target.value)}
+                placeholder="np. Prezent dla mamy"
+              />
+            </div>
+            <Button
+              className="w-full"
+              disabled={!catName || !groupName}
+              onClick={async () => {
+                const res = await fetch("/api/categories", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ group_name: groupName, name: catName }),
+                });
+                if (!res.ok) {
+                  toast.error("Nie udało się dodać koperty");
+                  return;
+                }
+                toast.success("Dodano kopertę");
+                setCatName("");
+                setAddOpen(false);
+                queryClient.invalidateQueries({ queryKey: ["budget"] });
+                queryClient.invalidateQueries({ queryKey: ["categories"] });
+              }}
+            >
+              Dodaj
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   if (existing) {
-    return NextResponse.json({ error: "Już należysz do rodziny" }, { status: 400 });
+    return NextResponse.json({ error: "Już należysz do budżetu" }, { status: 400 });
   }
 
   const body = await request.json();
@@ -69,6 +69,7 @@ export async function POST(request: Request) {
     type: "checking",
     balance: 0,
     currency: "PLN",
+    on_budget: true,
   });
 
   const { year, month } = getCurrentYearMonth();
@@ -82,6 +83,7 @@ export async function POST(request: Request) {
         allocated: 0,
         activity: 0,
         available: 0,
+        moved: 0,
       }))
     );
   }

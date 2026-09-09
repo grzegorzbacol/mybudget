@@ -5,14 +5,16 @@ import { usePathname } from "next/navigation";
 import { useFamily } from "@/hooks/use-family";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "./ui/button";
-import { Settings, Target } from "lucide-react";
+import { Settings, Users, BarChart3, ClipboardCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/budget", label: "Budżet" },
   { href: "/transactions", label: "Transakcje" },
-  { href: "/reports", label: "Raporty" },
+  { href: "/cashflow", label: "Przepływy" },
+  { href: "/wealth", label: "Majątek" },
   { href: "/accounts", label: "Konta" },
+  { href: "/savings", label: "Oszczędności" },
 ];
 
 export function AppHeader() {
@@ -51,8 +53,18 @@ export function AppHeader() {
         </div>
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="icon" asChild>
-            <Link href="/goals" aria-label="Cele">
-              <Target className="h-5 w-5" />
+            <Link href="/review" aria-label="Przegląd">
+              <ClipboardCheck className="h-5 w-5" />
+            </Link>
+          </Button>
+          <Button variant="ghost" size="icon" asChild>
+            <Link href="/reports" aria-label="Raporty">
+              <BarChart3 className="h-5 w-5" />
+            </Link>
+          </Button>
+          <Button variant="ghost" size="icon" asChild>
+            <Link href="/household" aria-label="Wspólny budżet">
+              <Users className="h-5 w-5" />
             </Link>
           </Button>
           <Button variant="ghost" size="icon" asChild>

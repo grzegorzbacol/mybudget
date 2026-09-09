@@ -3,8 +3,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
+import { isTransferTx } from "@/lib/budget";
 import type { Transaction } from "@/lib/types";
-import type { TransactionInput } from "@/lib/validators";
+import type { TransactionInput, TransferInput } from "@/lib/validators";
 
 interface TransactionFilters {
   accountId?: string;
@@ -20,8 +21,6 @@ export function useTransactions(filters: TransactionFilters = {}) {
   return useQuery({
     queryKey: ["transactions", filters],
     queryFn: async () => {
-      // added_by wskazuje na auth.users, nie na profiles — PostgREST nie ma
-      // relacji transactions->profiles, więc profile dociągamy osobnym zapytaniem.
       let query = supabase
         .from("transactions")
         .select("*, account:accounts(*), category:budget_categories(*)")
@@ -42,15 +41,16 @@ export function useTransactions(filters: TransactionFilters = {}) {
       const { data, error } = await query;
       if (error) throw error;
 
-      const transactions = (data ?? []) as Transaction[];
+      let transactions = (data ?? []) as Transaction[];
+      if (!filters.accountId) {
+        transactions = transactions.filter((t) => !isTransferTx(t) || Number(t.amount) < 0);
+      }
+
       const userIds = Array.from(
         new Set(transactions.map((t) => t.added_by).filter(Boolean))
       ) as string[];
       if (userIds.length > 0) {
-        const { data: profiles } = await supabase
-          .from("profiles")
-          .select("*")
-          .in("id", userIds);
+        const { data: profiles } = await supabase.from("profiles").select("*").in("id", userIds);
         const profileById = new Map((profiles ?? []).map((p) => [p.id, p]));
         for (const t of transactions) {
           t.profile = t.added_by ? profileById.get(t.added_by) : undefined;
@@ -63,50 +63,129 @@ export function useTransactions(filters: TransactionFilters = {}) {
 
 export function useCreateTransaction() {
   const queryClient = useQueryClient();
-  const supabase = createClient();
 
   return useMutation({
-    mutationFn: async (input: TransactionInput & { family_id: string }) => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      const { data, error } = await supabase
-        .from("transactions")
-        .insert({
-          ...input,
-          added_by: user?.id,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
+    mutationFn: async (input: TransactionInput) => {
+      const res = await fetch("/api/transactions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Nie udało się dodać transakcji");
       return data as Transaction;
-    },
-    onMutate: async (input) => {
-      await queryClient.cancelQueries({ queryKey: ["transactions"] });
-      const optimistic: Partial<Transaction> = {
-        id: `temp-${Date.now()}`,
-        ...input,
-        cleared: input.cleared ?? false,
-        source: input.source ?? "manual",
-        memo: input.memo ?? "",
-        created_at: new Date().toISOString(),
-      };
-      queryClient.setQueriesData<Transaction[]>({ queryKey: ["transactions"] }, (old) =>
-        old ? [optimistic as Transaction, ...old] : [optimistic as Transaction]
-      );
     },
     onSuccess: () => {
       toast.success("Transakcja dodana");
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["budget"] });
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+      queryClient.invalidateQueries({ queryKey: ["settle"] });
     },
-    onError: () => {
-      toast.error("Nie udało się dodać transakcji");
+    onError: (err) => {
+      toast.error(err instanceof Error ? err.message : "Nie udało się dodać transakcji");
+    },
+  });
+}
+
+export function useCreateTransfer() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: TransferInput) => {
+      const res = await fetch("/api/transactions/transfer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "Błąd transferu");
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Transfer zapisany");
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["budget"] });
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["cashflow"] });
     },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd transferu"),
+  });
+}
+
+export function useUpdateTransaction() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ id, ...patch }: { id: string } & Partial<TransactionInput>) => {
+      const res = await fetch(`/api/transactions/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Błąd zapisu");
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["budget"] });
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd zapisu"),
+  });
+}
+
+export function useDeleteTransaction() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const res = await fetch(`/api/transactions/${id}`, { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Błąd usuwania");
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Transakcja usunięta");
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["budget"] });
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd usuwania"),
+  });
+}
+
+export function useApplyCategoryMap() {
+  const queryClient = useQueryClient();
+  const supabase = createClient();
+
+  return useMutation({
+    mutationFn: async (updates: Array<{ id: string; categoryId: string }>) => {
+      const grouped = new Map<string, string[]>();
+      for (const row of updates) {
+        const ids = grouped.get(row.categoryId) ?? [];
+        ids.push(row.id);
+        grouped.set(row.categoryId, ids);
+      }
+      for (const [categoryId, ids] of Array.from(grouped.entries())) {
+        const { error } = await supabase
+          .from("transactions")
+          .update({ category_id: categoryId })
+          .in("id", ids);
+        if (error) throw error;
+      }
+      return updates.length;
+    },
+    onSuccess: (count) => {
+      toast.success(count ? `Przypisano ${count} wg reguł payee` : "Brak dopasowań");
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["budget"] });
+    },
+    onError: () => toast.error("Nie udało się zastosować reguł"),
   });
 }
 

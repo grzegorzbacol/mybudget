@@ -37,7 +37,7 @@ export function CsvImport() {
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !accountId) {
-      toast.error("Wybierz konto i plik CSV");
+      toast.error("Wybierz konto i plik CSV lub OFX");
       return;
     }
 
@@ -81,10 +81,10 @@ export function CsvImport() {
       <Button variant="outline" size="sm" disabled={importing || !accountId} asChild>
         <label className="cursor-pointer">
           <Upload className="mr-2 h-4 w-4" />
-          Import CSV
+          Import CSV/OFX
           <input
             type="file"
-            accept=".csv,.txt"
+            accept=".csv,.txt,.ofx,.qfx"
             className="hidden"
             onChange={handleImport}
           />

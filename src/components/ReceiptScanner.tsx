@@ -196,7 +196,6 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
     if (items.length === 0) {
       // No items — save as single transaction with total
       await createTransaction.mutateAsync({
-        family_id: familyData.family.id,
         account_id: accountId,
         category_id: itemCategories[0] || null,
         amount: -Math.abs(preview.total),
@@ -213,7 +212,6 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
         const name = itemNames[i] ?? item.name;
         const amount = parseFloat(itemAmounts[i] ?? "") || item.amount;
         await createTransaction.mutateAsync({
-          family_id: familyData.family.id,
           account_id: accountId,
           category_id: itemCategories[i] || null,
           amount: -Math.abs(amount),
