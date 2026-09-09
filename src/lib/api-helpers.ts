@@ -1,5 +1,10 @@
 import { createClient } from "@/lib/supabase/server";
-import { isMissingRelationError, isSchemaLagError, schemaLagMessage } from "@/lib/schema";
+import {
+  isMissingRelationError,
+  isSchemaLagError,
+  missingScheduledTableMessage,
+  schemaLagMessage,
+} from "@/lib/schema";
 import { ledgerRowsForEnvelopeMath } from "@/lib/budget";
 import type {
   Account,
@@ -94,7 +99,7 @@ export async function loadBudgetSnapshot(
   supabase: Awaited<ReturnType<typeof createClient>>,
   familyId: string
 ) {
-  const [categoriesRes, allocationsRes, accountsRes, transactionsRes, scheduledRes] =
+  const [categoriesRes, allocationsRes, accountsRes, transactionsRes, scheduledFirst] =
     await Promise.all([
       supabase
         .from("budget_categories")
@@ -109,6 +114,18 @@ export async function loadBudgetSnapshot(
         .eq("family_id", familyId),
       supabase.from("scheduled_transactions").select("*").eq("family_id", familyId),
     ]);
+
+  let scheduledRes = scheduledFirst;
+  if (scheduledRes.error && isMissingRelationError(scheduledRes.error.message)) {
+    const { applyEnsureSchema } = await import("@/lib/ensure-schema");
+    const ensured = await applyEnsureSchema();
+    if (ensured.ok || (ensured.applied ?? 0) > 0) {
+      scheduledRes = await supabase
+        .from("scheduled_transactions")
+        .select("*")
+        .eq("family_id", familyId);
+    }
+  }
 
   let transactions = (transactionsRes.data ?? []) as LedgerTransaction[];
   let transactionsError = transactionsRes.error?.message;
@@ -131,7 +148,9 @@ export async function loadBudgetSnapshot(
   if (scheduledMissing) {
     schemaLag = schemaLag
       ? `${schemaLag} Brak scheduled_transactions.`
-      : `Brak tabeli scheduled_transactions — uruchom migracje na bazie PostgREST (${scheduledError}).`;
+      : missingScheduledTableMessage(scheduledError);
+  } else if (scheduledError) {
+    schemaLag = schemaLag ? `${schemaLag} ${scheduledError}` : scheduledError;
   }
 
   return {

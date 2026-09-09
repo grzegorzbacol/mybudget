@@ -290,6 +290,14 @@ export default function CashflowPage() {
 
       {isLoading && <p className="text-center text-muted-foreground">Ładowanie...</p>}
 
+      {data?.warning && (
+        <Card className="border-amber-500/40">
+          <CardContent className="py-3 text-sm text-amber-800">
+            {data.warning}
+          </CardContent>
+        </Card>
+      )}
+
       {!isLoading && !cashflow && (
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground">
