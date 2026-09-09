@@ -25,6 +25,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { isExpenseCategory, isOnBudget } from "@/lib/budget";
 import { customSplits, equalSplits, splitsMatchTotal } from "@/lib/splits";
+import { buildPayeeCategoryRules, suggestCategoryForPayee } from "@/lib/categorize";
 import { cn } from "@/lib/utils";
 
 interface TransactionFormProps {
@@ -104,13 +105,14 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
     queryFn: async () => {
       const { data } = await supabase
         .from("transactions")
-        .select("payee")
+        .select("payee, category_id, amount, date")
         .eq("family_id", familyData!.family.id)
         .order("created_at", { ascending: false })
         .limit(200);
-      return Array.from(new Set((data ?? []).map((row) => row.payee).filter(Boolean)));
+      return data ?? [];
     },
   });
+  const payeeNames = Array.from(new Set((payees ?? []).map((row) => row.payee).filter(Boolean)));
 
   const { data: categories } = useQuery({
     queryKey: ["categories", familyData?.family.id],
@@ -147,6 +149,13 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
     if (!open) return;
     if (!paidBy && currentUserId) setPaidBy(currentUserId);
   }, [open, paidBy, currentUserId]);
+
+  useEffect(() => {
+    if (!open || type !== "expense" || categoryId || !payee.trim()) return;
+    const rules = buildPayeeCategoryRules(payees ?? []);
+    const suggested = suggestCategoryForPayee(payee, rules);
+    if (suggested) setCategoryId(suggested);
+  }, [open, type, payee, payees, categoryId]);
 
   useEffect(() => {
     if (splitMode !== "equal" || memberIds.length === 0) return;
@@ -330,7 +339,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
                 placeholder={type === "income" ? "np. Wynagrodzenie" : "np. Biedronka"}
               />
               <datalist id="payee-suggestions">
-                {(payees ?? []).map((name) => (
+                {payeeNames.map((name) => (
                   <option key={name} value={name} />
                 ))}
               </datalist>

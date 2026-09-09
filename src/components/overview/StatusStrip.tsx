@@ -92,6 +92,10 @@ export function StatusStrip() {
           <Link href="/cashflow" className="text-xs text-primary hover:underline">
             Cashflow / Przepływy
           </Link>
+          {" · "}
+          <Link href="/review" className="text-xs text-primary hover:underline">
+            Przegląd
+          </Link>
         </CardContent>
       </Card>
     </div>

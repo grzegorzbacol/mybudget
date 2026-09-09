@@ -1,7 +1,7 @@
 {
   "name": "MyBudget – Budżet domowy",
   "short_name": "MyBudget",
-  "description": "Aplikacja budżetowa YNAB-style z budżetem rodzinnym i skanowaniem paragonów",
+  "description": "Budżet kopertowy YNAB-style: oszczędzanie, przepływy i majątek w jednym gospodarstwie",
   "start_url": "/budget",
   "display": "standalone",
   "background_color": "#ffffff",
@@ -19,6 +19,25 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Dodaj wydatek",
+      "short_name": "Wydatek",
+      "url": "/transactions?add=1",
+      "description": "Szybki zapis wydatku"
+    },
+    {
+      "name": "Skanuj paragon",
+      "short_name": "Paragon",
+      "url": "/transactions?scan=1",
+      "description": "Zdjęcie paragonu z telefonu"
+    },
+    {
+      "name": "Przegląd tygodnia",
+      "short_name": "Przegląd",
+      "url": "/review"
     }
   ]
 }

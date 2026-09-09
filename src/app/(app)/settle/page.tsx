@@ -104,8 +104,8 @@ export default function SettlePage() {
       <div>
         <h1 className="text-2xl font-bold">Wspólny budżet</h1>
         <p className="text-sm text-muted-foreground">
-          Kilka osób, jeden budżet: wspólne koperty, konta i Do rozdzielenia. Podział wydatku nie rozbija koperty —
-          służy tylko do tego, kto komu oddaje.
+          Kilka osób, jeden budżet: wspólne koperty, konta, Do rozdzielenia i cele oszczędnościowe. Podział wydatku nie
+          rozbija koperty — służy tylko do tego, kto komu oddaje.
         </p>
       </div>
 
@@ -215,6 +215,11 @@ export default function SettlePage() {
       )}
 
       <p className="text-center text-sm text-muted-foreground">
+        Cele na{" "}
+        <Link href="/savings" className="text-primary hover:underline">
+          Oszczędnościach
+        </Link>{" "}
+        należą do całego gospodarstwa.{" "}
         <Link href="/transactions" className="text-primary hover:underline">
           Dodaj wydatek z podziałem
         </Link>

@@ -33,7 +33,7 @@ export default function ImportPage() {
           <ol className="list-decimal space-y-1 pl-4 text-muted-foreground">
             <li>mBank: Historia → eksport do pliku CSV (albo OFX/QFX z innego banku).</li>
             <li>Wybierz konto w budżecie, do którego trafią ruchy.</li>
-            <li>Po imporcie przypisz koperty filtrem „Bez kategorii”.</li>
+            <li>Po imporcie przypisz koperty filtrem „Bez kategorii” albo przyciskiem „Zastosuj reguły” (ostatnia kategoria dla payee).</li>
           </ol>
           <p className="text-muted-foreground">Obsługiwane nagłówki: mBank, PKO, ING oraz ogólny CSV i OFX.</p>
           <CsvImport />

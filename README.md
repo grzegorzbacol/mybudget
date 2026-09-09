@@ -1,6 +1,6 @@
 # MyBudget – budżet domowy w stylu YNAB
 
-Aplikacja do **budżetowania kopertowego** (Give Every Dollar a Job): konta, kategorie, miesięczny budżet, „Do rozdzielenia”, transakcje. Dane trzymasz we własnym Supabase — bez bankowego logowania w MVP.
+Aplikacja do **budżetowania kopertowego** (Give Every Dollar a Job) z gwiazdą polarną **oszczędzanie**. Dane trzymasz we własnym Supabase — bez logowania do banku i bez scrapowania.
 
 ## Phase 0 — codzienny YNAB (to jest produkt)
 
@@ -13,7 +13,17 @@ Definition of Done:
 
 UI po polsku. Deploy: Docker stosuje migracje 001–004.
 
-Szkielety (nie blokują P0): Przepływy, Majątek, Oszczędności. Kolejny priorytet po twardym P0: pełne oszczędności (cele, wpłata z Do rozdzielenia, fundusz awaryjny, alerty).
+## Roadmap F0–F8
+
+- **F0** Codzienny YNAB: konta, koperty, Do rozdzielenia, transakcje, transfery.
+- **F1** Oszczędności: cele, daty, sugerowana wpłata, Wpłać z RTA, fundusz awaryjny, alerty tempa (`/savings`).
+- **F2** Nadzór cashflow: stałe opłaty, plan vs fakt, 30/60/90 dni, kiedy ciasno (`/cashflow`).
+- **F3** Majątek: aktywa/zobowiązania, trend, ręczny check-in wartości (`/wealth`).
+- **F4** Analityka oszczędzania: stopa, wycieki, tempo celów, co-by-było-gdyby, treemap, rytuał (`/review`).
+- **F5** Gospodarstwo: członkowie, podziały wydatków, rozliczenia, wspólne cele (`/household`).
+- **F6** Import CSV/OFX (mBank/PKO/ING) + reguły payee i kolejka bez kategorii (`/import`).
+- **F7** PSD2 AIS — stub agregatora (`GET/POST /api/bank/sync` → 501), bez scrapowania.
+- **F8** Rytuał tygodnia, PWA (skróty + FAB skan/dodaj), eksport JSON (`/api/backup`).
 
 ## Model (YNAB)
 
@@ -75,18 +85,19 @@ Dane przykładowe (tylko pusty budżet): Ustawienia → **Wczytaj dane przykład
 
 - **Budżet miesięczny** — koperty, Do rozdzielenia, przydział, **Zasil braki**, przenoszenie środków, zaległości
 - **Transakcje** — wydatek, przychód (→ Do rozdzielenia), transfer między kontami, flaga uzgodnienia (C/U), podział równo lub własnymi kwotami
-- **Przepływy (cashflow)** — wpływy vs wydatki tydzień/miesiąc (plan vs fakt), kalendarz rachunków, czy plan jest zasilony, prognoza „kiedy ciasno”, tempo wydatków
+- **Przepływy (cashflow)** — wpływy vs wydatki tydzień/miesiąc (plan vs fakt), kalendarz rachunków, czy plan jest zasilony, prognoza „kiedy ciasno”, tempo wydatków, horyzont 30/60/90 dni
 - **Konta** — saldo robocze vs uzgodnione, konta w budżecie vs śledzone, korekta/uzgodnienie
 - **Majątek** — cały majątek: aktywa, zobowiązania, wartość netto i trend; mieszkanie/auto/inwestycje ręcznie; kredyty i hipoteki
-- **Budżet rodzinny / wspólny** — wielu użytkowników, role (właściciel / członek), zaproszenie kodem lub linkiem (`/household`)
+- **Budżet rodzinny / wspólny** — wielu użytkowników, role (właściciel / członek), zaproszenie kodem lub linkiem (`/household`); cele oszczędnościowe są wspólne
 - **Podział wydatków** — kto zapłacił, równo albo własne kwoty/%; koperta schodzi w całości; rozliczenia „kto komu”
-- **Import CSV/OFX** — mBank / PKO / ING (`/import`); żywe PSD2 (GoCardless, Enable Banking, Kontomatik) — później, bez scrapowania
-- **Skanowanie paragonów** — kamera PWA + OCR + AI
-- **Oszczędności** — cele, postęp, wpłata z Do rozdzielenia, nowa koperta przy tworzeniu celu
-- **Rozliczenia** — kto komu oddaje po podziale wydatków (`/household`)
-- **Raporty** — wykresy, PDF, przełączanie miesiąca
-- **Majątek** — aktywa, zobowiązania, wartość netto, trend i ręczna aktualizacja wartości
-- **PWA** — instalacja na telefonie
+- **Import CSV/OFX** — mBank / PKO / ING (`/import`); reguły payee (ostatnia kategoria) + kolejka bez kategorii
+- **PSD2 AIS** — punkt rozszerzenia `/api/bank/sync` (501). Żywe połączenie wymaga agregatora i zgody banku — bez scrapowania
+- **Skanowanie paragonów** — kamera PWA + OCR + AI; FAB na telefonie i skróty manifestu
+- **Oszczędności** — cele, postęp, wpłata z Do rozdzielenia, fundusz awaryjny, co-by-było-gdyby
+- **Przegląd** — rytuał tygodnia, stopa oszczędności, wycieki, tempo celów, treemap (`/review`)
+- **Raporty** — wykresy, treemap grup, PDF, przełączanie miesiąca
+- **Kopia zapasowa** — eksport JSON z Ustawień (`GET /api/backup`), bez restore
+- **PWA** — instalacja na telefonie, skróty: dodaj wydatek / skanuj / przegląd
 
 ## Testy
 
@@ -96,6 +107,8 @@ npx playwright install
 npm run test:e2e
 ```
 
+Silnik pieniędzy: `src/lib/budget.test.ts`, `savings.test.ts`, `splits.test.ts`, `wealth.test.ts`, `cashflow.test.ts`, `analytics.test.ts`, `categorize.test.ts`.
+
 ## Struktura
 
 ```
@@ -103,7 +116,7 @@ src/
   app/           # Strony i API routes
   components/    # Komponenty UI
   hooks/         # React Query hooks
-  lib/           # Silnik budżetu YNAB, cashflow, Supabase, OCR
+  lib/           # Silnik budżetu YNAB, cashflow, oszczędności, analityka, Supabase, OCR
   providers/     # Context providers
 supabase/
   migrations/    # Schemat bazy + RLS

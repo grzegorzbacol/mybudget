@@ -12,11 +12,13 @@ import {
   PieChart,
   ResponsiveContainer,
   Tooltip,
+  Treemap,
   XAxis,
   YAxis,
 } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/format";
+import { spendingByGroup } from "@/lib/analytics";
 import type { MonthlyReport } from "@/lib/types";
 
 interface ReportsChartsProps {
@@ -43,6 +45,9 @@ export function ReportsCharts({ report }: ReportsChartsProps) {
     zaplanowano: c.allocated,
     wydano: c.spent,
   }));
+  const tree = spendingByGroup(
+    report.byCategory.map((c) => ({ groupName: c.groupName, spent: c.spent, color: c.color }))
+  );
 
   return (
     <div className="grid gap-4 md:grid-cols-2">
@@ -111,6 +116,21 @@ export function ReportsCharts({ report }: ReportsChartsProps) {
           </ResponsiveContainer>
         </CardContent>
       </Card>
+
+      {tree.length > 0 && (
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base">Wydatki wg grup (treemap)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={260}>
+              <Treemap data={tree} dataKey="size" nameKey="name" stroke="#fff">
+                <Tooltip formatter={(v) => formatCurrency(Number(v))} />
+              </Treemap>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
 
       {report.byMember.length > 0 && (
         <Card className="md:col-span-2">

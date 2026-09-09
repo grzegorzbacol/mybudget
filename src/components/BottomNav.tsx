@@ -16,6 +16,7 @@ import {
   Scale,
   Sparkles,
   Upload,
+  ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -28,6 +29,7 @@ const navItems = [
 ];
 
 const moreItems = [
+  { href: "/review", label: "Przegląd", icon: ClipboardCheck },
   { href: "/accounts", label: "Konta", icon: Landmark },
   { href: "/wealth", label: "Majątek", icon: Scale },
   { href: "/household", label: "Wspólny budżet", icon: Users },

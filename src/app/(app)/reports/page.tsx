@@ -9,6 +9,7 @@ import { exportReportToPdf } from "@/lib/pdf-export";
 import { getCurrentYearMonth } from "@/lib/format";
 import { MonthSwitcher } from "@/components/MonthSwitcher";
 import type { MonthlyReport } from "@/lib/types";
+import Link from "next/link";
 
 export default function ReportsPage() {
   const { year: initYear, month: initMonth } = getCurrentYearMonth();
@@ -28,12 +29,17 @@ export default function ReportsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Raporty</h1>
-        {report && (
-          <Button variant="outline" onClick={() => exportReportToPdf(report)}>
-            <Download className="mr-2 h-4 w-4" />
-            Eksport PDF
+        <div className="flex gap-2">
+          <Button variant="ghost" asChild>
+            <Link href="/review">Przegląd miesiąca</Link>
           </Button>
-        )}
+          {report && (
+            <Button variant="outline" onClick={() => exportReportToPdf(report)}>
+              <Download className="mr-2 h-4 w-4" />
+              Eksport PDF
+            </Button>
+          )}
+        </div>
       </div>
 
       {isLoading && (

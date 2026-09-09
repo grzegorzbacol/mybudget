@@ -14,8 +14,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useTransactions, useBulkUpdateCategory, useUpdateTransaction } from "@/hooks/use-transactions";
+import { useTransactions, useBulkUpdateCategory, useUpdateTransaction, useApplyCategoryMap } from "@/hooks/use-transactions";
 import { isTransferTx } from "@/lib/budget";
+import { suggestedUpdatesForUncategorized } from "@/lib/categorize";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
@@ -45,6 +46,7 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState(searchParams.get("filter") ?? "all");
   const bulkUpdate = useBulkUpdateCategory();
+  const applyRules = useApplyCategoryMap();
   const updateTx = useUpdateTransaction();
   const { data: familyData } = useFamily();
   const supabase = createClient();
@@ -76,6 +78,16 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
       categoryId: bulkCategory,
     });
     setSelected(new Set());
+  };
+
+  const ruleUpdates = useMemo(
+    () => suggestedUpdatesForUncategorized(transactions ?? []),
+    [transactions]
+  );
+
+  const handleApplyRules = async () => {
+    if (ruleUpdates.length === 0) return;
+    await applyRules.mutateAsync(ruleUpdates);
   };
 
   const visible = useMemo(() => {
@@ -120,6 +132,11 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
             <SelectItem value="uncategorized">Bez kategorii</SelectItem>
           </SelectContent>
         </Select>
+        {ruleUpdates.length > 0 && (
+          <Button variant="outline" size="sm" onClick={handleApplyRules} disabled={applyRules.isPending}>
+            Zastosuj reguły ({ruleUpdates.length})
+          </Button>
+        )}
       </div>
       {selected.size > 0 && (
         <div className="flex items-center gap-2 rounded-lg border bg-muted/50 p-3">

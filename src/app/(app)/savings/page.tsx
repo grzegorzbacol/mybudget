@@ -43,6 +43,7 @@ import {
   savingsRate,
   suggestedForGoal,
 } from "@/lib/savings";
+import { whatIfGoal } from "@/lib/analytics";
 import type { Account, BudgetAllocation, Goal, GoalType } from "@/lib/types";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -71,6 +72,7 @@ export default function SavingsPage() {
   const [targetAmount, setTargetAmount] = useState("");
   const [targetDate, setTargetDate] = useState("");
   const [goalType, setGoalType] = useState<GoalType>("target_balance");
+  const [whatIfExtra, setWhatIfExtra] = useState("200");
 
   const { data: goals } = useQuery({
     queryKey: ["goals", familyData?.family.id],
@@ -200,6 +202,20 @@ export default function SavingsPage() {
   const typicalSpend = Math.abs(budget?.totalActivity ?? 0);
   const rate = savingsRate(budget?.incomeThisMonth ?? 0, contributedThisMonth);
   const recent = [...history].reverse().filter((p) => p.amount > 0).slice(0, 6);
+  const primaryGoal = (goals ?? []).find((goal) => {
+    const row = categories.find((c) => c.category.id === goal.category_id);
+    return isBehindSchedule(
+      contributionThisMonth({ available: row?.available ?? 0, assigned: row?.assigned ?? 0, moved: row?.moved ?? 0 }),
+      suggestedForGoal(goal, row?.available ?? 0)
+    );
+  }) ?? goals?.[0];
+  const primaryRow = categories.find((c) => c.category.id === primaryGoal?.category_id);
+  const whatIfRemaining = primaryGoal
+    ? remainingToGoal(primaryRow?.available ?? 0, Number(primaryGoal.target_amount))
+    : 0;
+  const whatIfMonthly = primaryGoal ? suggestedForGoal(primaryGoal, primaryRow?.available ?? 0) : 0;
+  const extraNum = parseFloat(whatIfExtra.replace(",", ".")) || 0;
+  const whatIf = whatIfGoal(whatIfRemaining, whatIfMonthly, extraNum);
 
   const contribute = async () => {
     if (!contributeFor) return;
@@ -291,6 +307,36 @@ export default function SavingsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {primaryGoal && whatIfRemaining > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Co by było gdyby — {primaryGoal.category?.name}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Zostało {formatCurrency(whatIfRemaining)}. Teraz {formatCurrency(whatIfMonthly)}/mies. →{" "}
+              {whatIf.currentMonths == null ? "bez tempa nie wiadomo kiedy" : `${whatIf.currentMonths} mies.`}
+            </p>
+            <div>
+              <Label>Dodatkowa wpłata co miesiąc</Label>
+              <Input
+                type="number"
+                min="0"
+                step="50"
+                value={whatIfExtra}
+                onChange={(e) => setWhatIfExtra(e.target.value)}
+              />
+            </div>
+            <p className="text-sm">
+              Z extra {formatCurrency(extraNum)}:{" "}
+              {whatIf.boostedMonths == null
+                ? "nadal brak tempa"
+                : `${whatIf.boostedMonths} mies. (szybciej o ${whatIf.savedMonths})`}
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       {history.some((p) => p.amount > 0) && (
         <Card>

@@ -159,6 +159,36 @@ export function useDeleteTransaction() {
   });
 }
 
+export function useApplyCategoryMap() {
+  const queryClient = useQueryClient();
+  const supabase = createClient();
+
+  return useMutation({
+    mutationFn: async (updates: Array<{ id: string; categoryId: string }>) => {
+      const grouped = new Map<string, string[]>();
+      for (const row of updates) {
+        const ids = grouped.get(row.categoryId) ?? [];
+        ids.push(row.id);
+        grouped.set(row.categoryId, ids);
+      }
+      for (const [categoryId, ids] of grouped) {
+        const { error } = await supabase
+          .from("transactions")
+          .update({ category_id: categoryId })
+          .in("id", ids);
+        if (error) throw error;
+      }
+      return updates.length;
+    },
+    onSuccess: (count) => {
+      toast.success(count ? `Przypisano ${count} wg reguł payee` : "Brak dopasowań");
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["budget"] });
+    },
+    onError: () => toast.error("Nie udało się zastosować reguł"),
+  });
+}
+
 export function useBulkUpdateCategory() {
   const queryClient = useQueryClient();
   const supabase = createClient();

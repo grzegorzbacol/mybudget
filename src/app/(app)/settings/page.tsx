@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, LogOut, Plus } from "lucide-react";
+import { Copy, Download, LogOut, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -245,6 +245,42 @@ export default function SettingsPage() {
           </Button>
           <Button variant="ghost" asChild>
             <Link href="/reports">Raporty</Link>
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Kopia zapasowa</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm text-muted-foreground">
+          <p>
+            Pobierz JSON z kontami, kopertami, transakcjami, celami i rozliczeniami. Przywracanie z pliku nie jest w tej
+            wersji — to eksport do archiwum.
+          </p>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              const res = await fetch("/api/backup");
+              if (!res.ok) {
+                toast.error("Nie udało się pobrać kopii");
+                return;
+              }
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `mybudget-backup-${new Date().toISOString().slice(0, 10)}.json`;
+              a.click();
+              URL.revokeObjectURL(url);
+              toast.success("Pobrano kopię JSON");
+            }}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Pobierz kopię JSON
+          </Button>
+          <Button variant="ghost" asChild>
+            <Link href="/review">Rytuał tygodnia</Link>
           </Button>
         </CardContent>
       </Card>
