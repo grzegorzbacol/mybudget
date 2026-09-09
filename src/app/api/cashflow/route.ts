@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
 import { buildBudgetMonthData } from "@/lib/budget";
-import { computeCashflow, upcomingByCategory, buildCashflowTimeline } from "@/lib/cashflow";
+import { computeCashflow, upcomingByCategory, buildCashflowTimeline, nextPayday, outflowUntil, isLowBalance } from "@/lib/cashflow";
 import { addDays, addMonths, monthRange, money } from "@/lib/money";
 import { getAuthContext, ensureMonthAllocations, loadBudgetSnapshot } from "@/lib/api-helpers";
 import { getCurrentYearMonth } from "@/lib/format";
 import { computeRunway, monthCashActual, monthSpendPace, netWorthHistory, wealthLayers } from "@/lib/wealth";
+import {
+  contributionThisMonth,
+  isBehindSchedule,
+  remainingToGoal,
+  savingsThreatenedByCashflow,
+  suggestedForGoal,
+} from "@/lib/savings";
+import type { Goal } from "@/lib/types";
 
 export async function GET(request: Request) {
   const ctx = await getAuthContext();
@@ -76,6 +84,47 @@ export async function GET(request: Request) {
     to,
   });
   const totals = wealthLayers(snapshot.accounts);
+  const payday = nextPayday(cashflow.items, today);
+  const untilPaydayOut = outflowUntil(cashflow.items, today, payday);
+  const lowBalance = isLowBalance(budget.onBudgetBalance, untilPaydayOut);
+  const overspentEnvelopes = rows
+    .filter((row) => row.available < -0.005)
+    .map((row) => ({
+      id: row.category.id,
+      name: row.category.name,
+      amount: money(Math.abs(row.available)),
+    }));
+
+  const { data: goalRows } = await ctx.supabase
+    .from("goals")
+    .select("id, category_id, target_amount, target_date, type, priority")
+    .eq("family_id", ctx.family.id);
+  const typicalSpend = Math.abs(budget.totalActivity);
+  const threatenedGoals = savingsThreatenedByCashflow({
+    goals: ((goalRows ?? []) as Goal[]).map((goal) => {
+      const row = rows.find((r) => r.category.id === goal.category_id);
+      const available = row?.available ?? 0;
+      const suggested = suggestedForGoal(goal, available, typicalSpend);
+      const contributed = contributionThisMonth({
+        available,
+        assigned: row?.assigned ?? 0,
+        moved: row?.moved ?? 0,
+      });
+      return {
+        id: goal.id,
+        name: row?.category.name ?? "Cel",
+        remaining: remainingToGoal(available, Number(goal.target_amount)),
+        behind: isBehindSchedule(contributed, suggested),
+        available,
+        priority: goal.priority,
+      };
+    }),
+    tightOn: runway.tightOn,
+    nextPayday: payday,
+    unfundedTotal: cashflow.unfundedTotal,
+    readyToAssign: budget.readyToAssign,
+    lowBalance,
+  });
 
   return NextResponse.json({
     budget,
@@ -98,6 +147,10 @@ export async function GET(request: Request) {
       tightOn: runway.tightOn,
       tightPayee: runway.tightPayee,
       runway: runway.points,
+      nextPayday: payday,
+      lowBalance,
+      overspentEnvelopes,
+      threatenedGoals,
     },
   });
 }

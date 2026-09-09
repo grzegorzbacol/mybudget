@@ -98,6 +98,24 @@ export function StatusStrip() {
           </Link>
         </CardContent>
       </Card>
+      {(supervision.threatenedGoals?.length ?? 0) > 0 && (
+        <Card className="border-amber-500/40 sm:col-span-2 lg:col-span-4">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm text-muted-foreground">Cele zagrożone cashflowem</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-1 text-sm">
+            {(supervision.threatenedGoals ?? []).slice(0, 3).map((goal) => (
+              <p key={goal.id}>
+                <span className="font-medium">{goal.name}</span>
+                <span className="text-muted-foreground"> — {goal.reason}</span>
+              </p>
+            ))}
+            <Link href="/savings" className="text-xs text-primary hover:underline">
+              Oszczędności
+            </Link>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

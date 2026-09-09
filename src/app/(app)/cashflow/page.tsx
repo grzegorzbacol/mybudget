@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -249,6 +250,43 @@ export default function CashflowPage() {
 
       <StatusStrip />
       <SavingsStrip />
+
+      {data?.supervision &&
+        (data.supervision.threatenedGoals?.length > 0 ||
+          data.supervision.lowBalance ||
+          (data.supervision.overspentEnvelopes?.length ?? 0) > 0) && (
+          <Card className="border-amber-500/40">
+            <CardHeader>
+              <CardTitle className="text-base">Alerty przed wypłatą</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {data.supervision.nextPayday ? (
+                <p className="text-muted-foreground">Następna wypłata: {data.supervision.nextPayday}</p>
+              ) : (
+                <p className="text-muted-foreground">Brak zaplanowanego przychodu w horyzoncie — dodaj wynagrodzenie.</p>
+              )}
+              {data.supervision.lowBalance && (
+                <p className="text-amber-700">
+                  Niskie saldo: konta w budżecie nie pokrywają zaplanowanych wydatków do wypłaty.
+                </p>
+              )}
+              {data.supervision.overspentEnvelopes?.map((row) => (
+                <p key={row.id} className="text-red-600">
+                  Koperta na minusie: {row.name} (−{formatCurrency(row.amount)})
+                </p>
+              ))}
+              {data.supervision.threatenedGoals?.map((row) => (
+                <div key={row.id} className="rounded border border-amber-500/40 px-3 py-2">
+                  <p className="font-medium">Cel zagrożony: {row.name}</p>
+                  <p className="text-xs text-muted-foreground">{row.reason}</p>
+                </div>
+              ))}
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/savings">Otwórz oszczędności</Link>
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
       {isLoading && <p className="text-center text-muted-foreground">Ładowanie...</p>}
 

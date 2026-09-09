@@ -259,3 +259,30 @@ export function buildCashflowTimeline(input: {
 
   return Array.from(buckets.values()).sort((a, b) => a.key.localeCompare(b.key));
 }
+
+export function nextPayday(
+  items: Array<{ kind: string; date: string }>,
+  from: string
+): string | null {
+  const next = items
+    .filter((item) => item.kind === "income" && item.date >= from)
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  return next?.date ?? null;
+}
+
+export function outflowUntil(
+  items: Array<{ kind: string; date: string; amount: number }>,
+  from: string,
+  until: string | null
+): number {
+  const end = until ?? "9999-12-31";
+  return money(
+    items
+      .filter((item) => item.kind === "expense" && item.date >= from && item.date <= end)
+      .reduce((sum, item) => sum + Math.abs(item.amount), 0)
+  );
+}
+
+export function isLowBalance(onBudgetBalance: number, outflowUntilPayday: number): boolean {
+  return onBudgetBalance + 0.005 < outflowUntilPayday;
+}
