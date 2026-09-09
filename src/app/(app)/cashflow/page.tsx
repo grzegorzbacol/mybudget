@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Plus, Trash2 } from "lucide-react";
+import { CheckCircle2, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -20,12 +20,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, getCurrentYearMonth } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { isExpenseCategory } from "@/lib/budget";
-import type { BudgetMonthData, CashflowData, CashflowSupervision, ScheduledTransaction } from "@/lib/types";
+import { isExpenseCategory, planFillEnvelopeGaps } from "@/lib/budget";
+import type { ScheduledTransaction } from "@/lib/types";
 import type { ScheduledInput } from "@/lib/validators";
 import { useFamily } from "@/hooks/use-family";
+import { useAllocateMany } from "@/hooks/use-budget";
+import { useCashflowOverview } from "@/hooks/use-cashflow";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import { StatusStrip } from "@/components/overview/StatusStrip";
@@ -43,13 +45,6 @@ import {
   YAxis,
 } from "recharts";
 
-interface CashflowResponse {
-  budget: BudgetMonthData;
-  cashflow: CashflowData;
-  scheduled: ScheduledTransaction[];
-  supervision?: CashflowSupervision;
-}
-
 const FREQ_LABEL: Record<ScheduledTransaction["frequency"], string> = {
   once: "Jednorazowo",
   weekly: "Co tydzień",
@@ -58,12 +53,43 @@ const FREQ_LABEL: Record<ScheduledTransaction["frequency"], string> = {
   yearly: "Co rok",
 };
 
+function rulePayload(
+  kind: "expense" | "income" | "transfer",
+  input: {
+    accountId: string;
+    toAccountId: string;
+    categoryId: string;
+    amount: string;
+    payee: string;
+    nextDate: string;
+    endDate: string;
+    frequency: ScheduledTransaction["frequency"];
+  }
+): ScheduledInput {
+  const abs = Math.abs(parseFloat(input.amount) || 0);
+  const signed = kind === "income" ? abs : -abs;
+  return {
+    account_id: input.accountId,
+    transfer_account_id: kind === "transfer" ? input.toAccountId : null,
+    category_id: kind === "expense" ? input.categoryId || null : null,
+    amount: kind === "transfer" ? -abs : signed,
+    payee: input.payee,
+    next_date: input.nextDate,
+    frequency: input.frequency,
+    end_date: input.endDate || null,
+  };
+}
+
 export default function CashflowPage() {
   const queryClient = useQueryClient();
   const { data: familyData } = useFamily();
   const supabase = createClient();
+  const allocateMany = useAllocateMany();
+  const { year, month } = getCurrentYearMonth();
   const [days, setDays] = useState(60);
+  const [bucket, setBucket] = useState<"week" | "month">("week");
   const [formOpen, setFormOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [payee, setPayee] = useState("");
   const [amount, setAmount] = useState("");
   const [kind, setKind] = useState<"expense" | "income" | "transfer">("expense");
@@ -71,16 +97,10 @@ export default function CashflowPage() {
   const [toAccountId, setToAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [nextDate, setNextDate] = useState(new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState("");
   const [frequency, setFrequency] = useState<ScheduledTransaction["frequency"]>("monthly");
 
-  const { data, isLoading } = useQuery<CashflowResponse>({
-    queryKey: ["cashflow", days],
-    queryFn: async () => {
-      const res = await fetch(`/api/cashflow?days=${days}`);
-      if (!res.ok) throw new Error("Nie udało się pobrać przepływów");
-      return res.json();
-    },
-  });
+  const { data, isLoading } = useCashflowOverview(days, bucket);
 
   const { data: accounts } = useQuery({
     queryKey: ["accounts", familyData?.family.id],
@@ -109,10 +129,39 @@ export default function CashflowPage() {
     },
   });
 
-  const createScheduled = useMutation({
+  const resetForm = () => {
+    setEditingId(null);
+    setPayee("");
+    setAmount("");
+    setEndDate("");
+    setKind("expense");
+    setFrequency("monthly");
+    setNextDate(new Date().toISOString().slice(0, 10));
+  };
+
+  const openCreate = () => {
+    resetForm();
+    setFormOpen(true);
+  };
+
+  const openEdit = (rule: ScheduledTransaction) => {
+    setEditingId(rule.id);
+    setPayee(rule.payee);
+    setAmount(String(Math.abs(Number(rule.amount))));
+    setAccountId(rule.account_id);
+    setToAccountId(rule.transfer_account_id ?? "");
+    setCategoryId(rule.category_id ?? "");
+    setNextDate(rule.next_date);
+    setEndDate(rule.end_date ?? "");
+    setFrequency(rule.frequency);
+    setKind(rule.transfer_account_id ? "transfer" : Number(rule.amount) >= 0 ? "income" : "expense");
+    setFormOpen(true);
+  };
+
+  const saveScheduled = useMutation({
     mutationFn: async (input: ScheduledInput) => {
-      const res = await fetch("/api/scheduled", {
-        method: "POST",
+      const res = await fetch(editingId ? `/api/scheduled/${editingId}` : "/api/scheduled", {
+        method: editingId ? "PATCH" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       });
@@ -121,12 +170,11 @@ export default function CashflowPage() {
       return json;
     },
     onSuccess: () => {
-      toast.success("Zaplanowano");
+      toast.success(editingId ? "Zapisano plan" : "Zaplanowano");
       queryClient.invalidateQueries({ queryKey: ["cashflow"] });
       queryClient.invalidateQueries({ queryKey: ["budget"] });
       setFormOpen(false);
-      setPayee("");
-      setAmount("");
+      resetForm();
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd"),
   });
@@ -161,14 +209,24 @@ export default function CashflowPage() {
 
   const cashflow = data?.cashflow;
   const budget = data?.budget;
+  const gapPlan = budget
+    ? planFillEnvelopeGaps(
+        budget.groups.flatMap((group) => group.categories),
+        budget.readyToAssign
+      )
+    : [];
+  const gapTotal = gapPlan.reduce((sum, row) => sum + row.add, 0);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-2xl font-bold">Przepływy</h1>
-        <div className="flex gap-2">
+        <div>
+          <h1 className="text-2xl font-bold">Przepływy</h1>
+          <p className="text-sm text-muted-foreground">Cashflow · wpływy vs wydatki, plan vs fakt, kiedy ciasno</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
           <Select value={String(days)} onValueChange={(v) => setDays(parseInt(v, 10))}>
-            <SelectTrigger className="w-[140px]">
+            <SelectTrigger className="w-[120px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -177,7 +235,7 @@ export default function CashflowPage() {
               <SelectItem value="90">90 dni</SelectItem>
             </SelectContent>
           </Select>
-          <Button onClick={() => setFormOpen(true)}>
+          <Button onClick={openCreate}>
             <Plus className="mr-2 h-4 w-4" />
             Zaplanuj
           </Button>
@@ -185,7 +243,8 @@ export default function CashflowPage() {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Koperty mówią, czy plan jest zasilony. Poniżej: czy wychodzisz na plus i kiedy saldo w budżecie mogłoby spaść poniżej zera przy zaplanowanych ruchach.
+        Koperty mówią, czy plan jest zasilony. Poniżej: czy wychodzisz na plus i kiedy saldo w budżecie mogłoby spaść
+        poniżej zera przy zaplanowanych ruchach.
       </p>
 
       <StatusStrip />
@@ -228,16 +287,55 @@ export default function CashflowPage() {
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm text-muted-foreground">Niezasilone koperty</CardTitle>
               </CardHeader>
-              <CardContent className={cn("text-xl font-bold", cashflow.unfundedTotal > 0 && "text-amber-600")}>
-                {formatCurrency(cashflow.unfundedTotal)}
+              <CardContent className="space-y-2">
+                <p className={cn("text-xl font-bold", cashflow.unfundedTotal > 0 && "text-amber-600")}>
+                  {formatCurrency(cashflow.unfundedTotal)}
+                </p>
+                {gapPlan.length > 0 && budget.readyToAssign > 0 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={allocateMany.isPending}
+                    onClick={() =>
+                      allocateMany.mutate(
+                        gapPlan.map((row) => ({
+                          category_id: row.category_id,
+                          year,
+                          month,
+                          allocated: row.allocated,
+                        }))
+                      )
+                    }
+                  >
+                    Zasil braki ({formatCurrency(gapTotal)})
+                  </Button>
+                )}
               </CardContent>
             </Card>
           </div>
 
           {(cashflow.timeline?.length ?? 0) > 0 && (
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Wpływy vs wydatki (tydzień)</CardTitle>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0">
+                <CardTitle className="text-base">
+                  Wpływy vs wydatki ({bucket === "month" ? "miesiąc" : "tydzień"})
+                </CardTitle>
+                <div className="flex gap-1 rounded-md bg-muted p-1 text-xs">
+                  <button
+                    type="button"
+                    className={cn("rounded px-2 py-1", bucket === "week" && "bg-background shadow")}
+                    onClick={() => setBucket("week")}
+                  >
+                    Tydzień
+                  </button>
+                  <button
+                    type="button"
+                    className={cn("rounded px-2 py-1", bucket === "month" && "bg-background shadow")}
+                    onClick={() => setBucket("month")}
+                  >
+                    Miesiąc
+                  </button>
+                </div>
               </CardHeader>
               <CardContent>
                 <p className="mb-3 text-sm text-muted-foreground">
@@ -267,7 +365,9 @@ export default function CashflowPage() {
               <CardContent>
                 <p className="mb-3 text-sm text-muted-foreground">
                   Start: saldo kont w budżecie. Każdy zaplanowany wpływ/wydatek przesuwa linię — spadek poniżej zera
-                  to moment „kiedy ciasno”.
+                  to moment „kiedy ciasno”. Tempo wydatków:{" "}
+                  {formatCurrency(data.supervision.spendPacePerDay)}/dzień (przy tym tempie miesiąc:{" "}
+                  {formatCurrency(data.supervision.paceProjectedNet)}).
                 </p>
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={data.supervision.runway}>
@@ -276,8 +376,8 @@ export default function CashflowPage() {
                     <Tooltip
                       formatter={(v) => formatCurrency(Number(v))}
                       labelFormatter={(label, payload) => {
-                        const payee = payload?.[0]?.payload?.payee;
-                        return payee ? `${label} · ${payee}` : String(label);
+                        const itemPayee = payload?.[0]?.payload?.payee;
+                        return itemPayee ? `${label} · ${itemPayee}` : String(label);
                       }}
                     />
                     <Line type="monotone" dataKey="balance" stroke="#6366f1" strokeWidth={2} />
@@ -316,7 +416,9 @@ export default function CashflowPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">Kalendarz ({cashflow.from} – {cashflow.to})</CardTitle>
+              <CardTitle className="text-base">
+                Kalendarz ({cashflow.from} – {cashflow.to})
+              </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
               {cashflow.items.length === 0 && (
@@ -338,7 +440,11 @@ export default function CashflowPage() {
                     <p
                       className={cn(
                         "font-semibold",
-                        item.kind === "income" ? "text-green-600" : item.kind === "expense" ? "text-foreground" : "text-muted-foreground"
+                        item.kind === "income"
+                          ? "text-green-600"
+                          : item.kind === "expense"
+                            ? "text-foreground"
+                            : "text-muted-foreground"
                       )}
                     >
                       {formatCurrency(item.amount)}
@@ -367,12 +473,16 @@ export default function CashflowPage() {
                   <div className="min-w-0">
                     <p className="truncate font-medium">{rule.payee}</p>
                     <p className="text-xs text-muted-foreground">
-                      {FREQ_LABEL[rule.frequency]} · następna {rule.next_date} · {formatCurrency(Number(rule.amount))}
+                      {FREQ_LABEL[rule.frequency]} · następna {rule.next_date}
+                      {rule.end_date ? ` · do ${rule.end_date}` : ""} · {formatCurrency(Number(rule.amount))}
                     </p>
                   </div>
                   <div className="flex shrink-0 gap-1">
                     <Button size="sm" variant="outline" onClick={() => enterNow.mutate(rule.id)}>
                       Wprowadź
+                    </Button>
+                    <Button size="icon" variant="ghost" onClick={() => openEdit(rule)} aria-label="Edytuj">
+                      <Pencil className="h-4 w-4" />
                     </Button>
                     <Button size="icon" variant="ghost" onClick={() => removeScheduled.mutate(rule.id)} aria-label="Usuń">
                       <Trash2 className="h-4 w-4" />
@@ -385,26 +495,33 @@ export default function CashflowPage() {
         </>
       )}
 
-      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+      <Dialog
+        open={formOpen}
+        onOpenChange={(open) => {
+          setFormOpen(open);
+          if (!open) resetForm();
+        }}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Zaplanowana transakcja</DialogTitle>
+            <DialogTitle>{editingId ? "Edytuj plan" : "Zaplanowana transakcja"}</DialogTitle>
           </DialogHeader>
           <form
             className="space-y-3"
             onSubmit={(e) => {
               e.preventDefault();
-              const abs = Math.abs(parseFloat(amount) || 0);
-              const signed = kind === "income" ? abs : -abs;
-              createScheduled.mutate({
-                account_id: accountId,
-                transfer_account_id: kind === "transfer" ? toAccountId : null,
-                category_id: kind === "expense" ? categoryId || null : null,
-                amount: kind === "transfer" ? -abs : signed,
-                payee,
-                next_date: nextDate,
-                frequency,
-              });
+              saveScheduled.mutate(
+                rulePayload(kind, {
+                  accountId,
+                  toAccountId,
+                  categoryId,
+                  amount,
+                  payee,
+                  nextDate,
+                  endDate,
+                  frequency,
+                })
+              );
             }}
           >
             <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
@@ -432,20 +549,26 @@ export default function CashflowPage() {
                 <Input type="date" value={nextDate} onChange={(e) => setNextDate(e.target.value)} required />
               </div>
             </div>
-            <div>
-              <Label>Cykliczność</Label>
-              <Select value={frequency} onValueChange={(v) => setFrequency(v as ScheduledTransaction["frequency"])}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(FREQ_LABEL).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <Label>Cykliczność</Label>
+                <Select value={frequency} onValueChange={(v) => setFrequency(v as ScheduledTransaction["frequency"])}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(FREQ_LABEL).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Koniec (opcjonalnie)</Label>
+                <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+              </div>
             </div>
             <div>
               <Label>Konto</Label>
@@ -496,7 +619,7 @@ export default function CashflowPage() {
                 </Select>
               </div>
             )}
-            <Button className="w-full" disabled={createScheduled.isPending || !accountId || !payee}>
+            <Button className="w-full" disabled={saveScheduled.isPending || !accountId || !payee}>
               Zapisz plan
             </Button>
           </form>

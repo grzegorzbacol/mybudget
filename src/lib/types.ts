@@ -221,10 +221,15 @@ export interface CashflowData {
   timeline: CashflowBucket[];
 }
 
-export interface WealthSnapshot {
+export interface WealthTotals {
   assets: number;
   liabilities: number;
   netWorth: number;
+}
+
+export interface WealthSnapshot extends WealthTotals {
+  onBudget: WealthTotals;
+  tracking: WealthTotals;
   history: Array<{ date: string; netWorth: number; assets: number; liabilities: number }>;
 }
 
@@ -232,10 +237,23 @@ export interface CashflowSupervision {
   actualIncome: number;
   actualSpending: number;
   monthNet: number;
+  projectedNet: number;
+  paceProjectedNet: number;
+  spendPacePerDay: number;
+  unfundedTotal: number;
+  readyToAssign: number;
   inTheBlack: boolean;
   tightOn: string | null;
   tightPayee: string | null;
   runway: Array<{ date: string; payee: string; amount: number; balance: number }>;
+}
+
+export interface CashflowOverview {
+  budget: BudgetMonthData;
+  cashflow: CashflowData;
+  scheduled: ScheduledTransaction[];
+  wealth: WealthSnapshot;
+  supervision: CashflowSupervision;
 }
 
 export interface OcrReceiptResult {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeNetWorth, computeRunway, netWorthContribution } from "./wealth";
+import { computeNetWorth, computeRunway, monthSpendPace, netWorthContribution, netWorthHistory, wealthLayers } from "./wealth";
 import type { Account, ScheduledTransaction } from "./types";
 
 function account(partial: Partial<Account> & Pick<Account, "id" | "type" | "balance">): Account {
@@ -25,6 +25,36 @@ describe("net worth", () => {
     expect(result.assets).toBe(462000);
     expect(result.liabilities).toBe(82400);
     expect(result.netWorth).toBe(379600);
+  });
+
+  it("splits on-budget vs tracking net worth", () => {
+    const layers = wealthLayers([
+      account({ id: "checking", type: "checking", balance: 12000, on_budget: true }),
+      account({ id: "flat", type: "property", balance: 450000, on_budget: false }),
+      account({ id: "cc", type: "credit", balance: -2400, on_budget: true }),
+      account({ id: "loan", type: "loan", balance: 80000, on_budget: false }),
+    ]);
+    expect(layers.onBudget.netWorth).toBe(9600);
+    expect(layers.tracking.netWorth).toBe(370000);
+    expect(layers.netWorth).toBe(379600);
+  });
+
+  it("replays history from opening balances, not from zero", () => {
+    const home = account({ id: "flat", type: "property", balance: 450000, on_budget: false });
+    const points = netWorthHistory(
+      [home],
+      [{ account_id: "flat", amount: 450000, date: "2026-01-15" }],
+      "2026-09-09"
+    );
+    expect(points[0]?.netWorth).toBe(0);
+    expect(points[points.length - 1]?.netWorth).toBe(450000);
+    expect(points[points.length - 1]?.date).toBe("2026-09-09");
+  });
+
+  it("projects month spend from daily pace", () => {
+    const pace = monthSpendPace(3000, "2026-09-10", 2026, 9);
+    expect(pace.perDay).toBe(300);
+    expect(pace.projectedSpend).toBe(9000);
   });
 
   it("treats a positive liability balance as debt", () => {

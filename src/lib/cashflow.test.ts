@@ -133,4 +133,34 @@ describe("scheduled cashflow", () => {
     expect(weekOfPay?.actualIn).toBe(8000);
     expect(weekOfPay?.plannedIn).toBe(8000);
   });
+
+  it("builds monthly actual vs planned buckets", () => {
+    const checking: Account = {
+      id: "checking",
+      family_id: "fam",
+      name: "Konto",
+      type: "checking",
+      balance: 1000,
+      currency: "PLN",
+      owner_user_id: null,
+      created_at: "",
+      on_budget: true,
+    };
+    const timeline = buildCashflowTimeline({
+      from: "2026-09-01",
+      to: "2026-09-30",
+      accounts: [checking],
+      scheduled: [rent, payday],
+      transactions: [
+        { account_id: "checking", category_id: null, amount: 8000, date: "2026-09-10" },
+        { account_id: "checking", category_id: "rent", amount: -2000, date: "2026-09-05" },
+      ],
+      bucket: "month",
+    });
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0].actualIn).toBe(8000);
+    expect(timeline[0].actualOut).toBe(2000);
+    expect(timeline[0].plannedIn).toBe(8000);
+    expect(timeline[0].plannedOut).toBe(2000);
+  });
 });

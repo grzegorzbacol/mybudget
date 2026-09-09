@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { buildBudgetMonthData } from "@/lib/budget";
 import { computeCashflow, upcomingByCategory, buildCashflowTimeline } from "@/lib/cashflow";
-import { addDays, monthRange } from "@/lib/money";
+import { addDays, addMonths, monthRange, money } from "@/lib/money";
 import { getAuthContext, ensureMonthAllocations, loadBudgetSnapshot } from "@/lib/api-helpers";
 import { getCurrentYearMonth } from "@/lib/format";
-import { computeNetWorth, computeRunway, monthCashActual, netWorthHistory } from "@/lib/wealth";
+import { computeRunway, monthCashActual, monthSpendPace, netWorthHistory, wealthLayers } from "@/lib/wealth";
 
 export async function GET(request: Request) {
   const ctx = await getAuthContext();
@@ -14,6 +14,7 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const days = Math.min(180, Math.max(7, parseInt(searchParams.get("days") ?? "60", 10)));
+  const bucket = searchParams.get("bucket") === "month" ? "month" : "week";
   const today = new Date().toISOString().slice(0, 10);
   const to = addDays(today, days);
   const { year, month } = getCurrentYearMonth();
@@ -44,13 +45,18 @@ export async function GET(request: Request) {
     accounts: snapshot.accounts,
     rows,
   });
+  const lookback = addMonths(year, month, -5);
+  const timelineFrom =
+    bucket === "month"
+      ? `${lookback.year}-${String(lookback.month).padStart(2, "0")}-01`
+      : addDays(today, -28);
   cashflow.timeline = buildCashflowTimeline({
-    from: addDays(today, -28),
+    from: timelineFrom,
     to,
     transactions: snapshot.transactions,
     accounts: snapshot.accounts,
     scheduled: snapshot.scheduled,
-    bucket: "week",
+    bucket,
   });
   const actual = monthCashActual(snapshot.transactions, snapshot.accounts, year, month);
   const remainingIncome = cashflow.items
@@ -60,6 +66,8 @@ export async function GET(request: Request) {
     .filter((item) => item.kind === "expense" && item.date >= start && item.date < end)
     .reduce((sum, item) => sum + Math.abs(item.amount), 0);
   const projectedNet = actual.net + remainingIncome - remainingSpend;
+  const pace = monthSpendPace(actual.spending, today, year, month);
+  const paceProjectedNet = money(actual.income + remainingIncome - pace.projectedSpend);
   const runway = computeRunway({
     onBudgetBalance: budget.onBudgetBalance,
     accounts: snapshot.accounts,
@@ -67,7 +75,7 @@ export async function GET(request: Request) {
     from: today,
     to,
   });
-  const totals = computeNetWorth(snapshot.accounts);
+  const totals = wealthLayers(snapshot.accounts);
 
   return NextResponse.json({
     budget,
@@ -75,12 +83,17 @@ export async function GET(request: Request) {
     scheduled: snapshot.scheduled,
     wealth: {
       ...totals,
-      history: netWorthHistory(snapshot.accounts, snapshot.transactions),
+      history: netWorthHistory(snapshot.accounts, snapshot.transactions, today),
     },
     supervision: {
       actualIncome: actual.income,
       actualSpending: actual.spending,
       monthNet: actual.net,
+      projectedNet,
+      paceProjectedNet,
+      spendPacePerDay: pace.perDay,
+      unfundedTotal: cashflow.unfundedTotal,
+      readyToAssign: budget.readyToAssign,
       inTheBlack: projectedNet >= 0 && cashflow.unfundedTotal <= 0.005 && budget.readyToAssign >= 0,
       tightOn: runway.tightOn,
       tightPayee: runway.tightPayee,

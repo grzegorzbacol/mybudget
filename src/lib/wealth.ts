@@ -1,7 +1,7 @@
 import { isOnBudget, isTransferTx } from "./budget";
 import { generateScheduleOccurrences } from "./cashflow";
-import { money } from "./money";
-import type { Account, LedgerTransaction, ScheduledTransaction } from "./types";
+import { addDays, daysInMonth, money } from "./money";
+import type { Account, LedgerTransaction, ScheduledTransaction, WealthTotals } from "./types";
 
 export const ACCOUNT_TYPE_META = {
   checking: { label: "Rozliczeniowe", kind: "asset", onBudget: true, group: "budget" },
@@ -36,7 +36,7 @@ export function displayBalance(account: Account): number {
   return netWorthContribution(account);
 }
 
-export function computeNetWorth(accounts: Account[]) {
+export function computeNetWorth(accounts: Account[]): WealthTotals {
   let assets = 0;
   let liabilities = 0;
   for (const account of accounts) {
@@ -51,12 +51,33 @@ export function computeNetWorth(accounts: Account[]) {
   };
 }
 
+export function wealthLayers(accounts: Account[]) {
+  return {
+    ...computeNetWorth(accounts),
+    onBudget: computeNetWorth(accounts.filter(isOnBudget)),
+    tracking: computeNetWorth(accounts.filter((account) => !isOnBudget(account))),
+  };
+}
+
+/**
+ * Replay ledger onto opening balances (current balance minus posted txs)
+ * so property/loans with few transactions still chart at the right level.
+ */
 export function netWorthHistory(
   accounts: Account[],
-  transactions: Array<Pick<LedgerTransaction, "account_id" | "amount" | "date">>
+  transactions: Array<Pick<LedgerTransaction, "account_id" | "amount" | "date">>,
+  asOf?: string
 ): Array<{ date: string; netWorth: number; assets: number; liabilities: number }> {
+  const today = asOf ?? new Date().toISOString().slice(0, 10);
+  const txSum = new Map<string, number>();
+  for (const tx of transactions) {
+    txSum.set(tx.account_id, money((txSum.get(tx.account_id) ?? 0) + Number(tx.amount)));
+  }
+
   const byAccount = new Map<string, number>();
-  accounts.forEach((account) => byAccount.set(account.id, 0));
+  for (const account of accounts) {
+    byAccount.set(account.id, money(Number(account.balance) - (txSum.get(account.id) ?? 0)));
+  }
 
   const snapshot = () => {
     const fake: Account[] = accounts.map((account) => ({
@@ -67,20 +88,43 @@ export function netWorthHistory(
   };
 
   const points: Array<{ date: string; netWorth: number; assets: number; liabilities: number }> = [];
-  const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date));
-  let lastDate = "";
+  const push = (date: string) => {
+    const { assets, liabilities, netWorth } = snapshot();
+    const last = points[points.length - 1];
+    if (last && last.date === date) {
+      points[points.length - 1] = { date, netWorth, assets, liabilities };
+    } else {
+      points.push({ date, netWorth, assets, liabilities });
+    }
+  };
+
+  const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date) || a.account_id.localeCompare(b.account_id));
+  if (sorted.length === 0) {
+    push(today);
+    return points;
+  }
+
+  push(addDays(sorted[0].date, -1));
   for (const tx of sorted) {
     byAccount.set(tx.account_id, money((byAccount.get(tx.account_id) ?? 0) + Number(tx.amount)));
-    if (tx.date !== lastDate) {
-      const { assets, liabilities, netWorth } = snapshot();
-      points.push({ date: tx.date, netWorth, assets, liabilities });
-      lastDate = tx.date;
-    } else if (points.length) {
-      const { assets, liabilities, netWorth } = snapshot();
-      points[points.length - 1] = { date: tx.date, netWorth, assets, liabilities };
-    }
+    push(tx.date);
   }
-  return points.slice(-90);
+  if (points[points.length - 1]?.date !== today) {
+    push(today);
+  }
+  return points.slice(-120);
+}
+
+export function monthSpendPace(actualSpending: number, today: string, year: number, month: number) {
+  const day = Math.max(1, parseInt(today.slice(8, 10), 10) || 1);
+  const dim = daysInMonth(year, month);
+  const perDay = money(actualSpending / day);
+  return {
+    perDay,
+    projectedSpend: money(perDay * dim),
+    daysElapsed: day,
+    daysInMonth: dim,
+  };
 }
 
 export function computeRunway(input: {

@@ -226,8 +226,16 @@ export function buildCashflowTimeline(input: {
     return row;
   };
 
-  for (let cursor = input.from; cursor <= input.to; cursor = addDays(cursor, bucket === "month" ? 14 : 7)) {
-    ensure(cursor);
+  if (bucket === "month") {
+    let cursor = `${yearMonthFromDate(input.from).year}-${String(yearMonthFromDate(input.from).month).padStart(2, "0")}-01`;
+    while (cursor <= input.to) {
+      ensure(cursor);
+      cursor = addMonthsToDate(cursor, 1);
+    }
+  } else {
+    for (let cursor = input.from; cursor <= input.to; cursor = addDays(cursor, 7)) {
+      ensure(cursor);
+    }
   }
   ensure(input.to);
 

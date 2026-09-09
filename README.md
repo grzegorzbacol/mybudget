@@ -62,8 +62,9 @@ Dane przykładowe (tylko pusty budżet): Ustawienia → **Wczytaj dane przykład
 
 - **Budżet miesięczny** — koperty, Do rozdzielenia, przydział, **Zasil braki**, przenoszenie środków, zaległości
 - **Transakcje** — wydatek, przychód (→ Do rozdzielenia), transfer między kontami, flaga uzgodnienia (C/U), podział równo lub własnymi kwotami
-- **Przepływy** — zaplanowane rachunki i wypłaty, status zasilenia kopert, prognoza salda („kiedy ciasno”)
+- **Przepływy (cashflow)** — wpływy vs wydatki tydzień/miesiąc (plan vs fakt), kalendarz rachunków, czy plan jest zasilony, prognoza „kiedy ciasno”, tempo wydatków
 - **Konta** — saldo robocze vs uzgodnione, konta w budżecie vs śledzone, korekta/uzgodnienie
+- **Majątek** — cały majątek: aktywa, zobowiązania, wartość netto i trend; mieszkanie/auto/inwestycje ręcznie; kredyty i hipoteki
 - **Budżet rodzinny / wspólny** — wielu użytkowników, role (właściciel / członek), zaproszenie kodem lub linkiem (`/household`)
 - **Podział wydatków** — kto zapłacił, równo albo własne kwoty/%; koperta schodzi w całości; rozliczenia „kto komu”
 - **Import CSV/OFX** — mBank / PKO / ING (`/import`); żywe PSD2 (GoCardless, Enable Banking, Kontomatik) — później, bez scrapowania

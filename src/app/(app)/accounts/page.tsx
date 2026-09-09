@@ -32,7 +32,7 @@ import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/format";
 import { isOnBudget } from "@/lib/budget";
-import { ACCOUNT_TYPE_META, computeNetWorth, isLiabilityType } from "@/lib/wealth";
+import { ACCOUNT_TYPE_META, computeNetWorth, displayBalance, isLiabilityType } from "@/lib/wealth";
 import type { Account, Transaction } from "@/lib/types";
 import { toast } from "sonner";
 import { TransactionList } from "@/components/transactions/TransactionList";
@@ -151,9 +151,9 @@ export default function AccountsPage() {
 
   const onBudgetAccounts = accounts?.filter(isOnBudget) ?? [];
   const trackingAccounts = accounts?.filter((a) => !isOnBudget(a)) ?? [];
-  const totalOnBudget = onBudgetAccounts.reduce((s, a) => s + Number(a.balance), 0);
-  const totalTracking = trackingAccounts.reduce((s, a) => s + Number(a.balance), 0);
   const wealth = computeNetWorth(accounts ?? []);
+  const onBudgetWealth = computeNetWorth(onBudgetAccounts);
+  const trackingWealth = computeNetWorth(trackingAccounts);
 
   const clearedByAccount = useMemo(() => {
     const map = new Map<string, number>();
@@ -198,7 +198,7 @@ export default function AccountsPage() {
             </button>
             <div className="flex items-center gap-3">
               <div className="text-right">
-                <p className="text-lg font-bold">{formatCurrency(Number(account.balance))}</p>
+                <p className="text-lg font-bold">{formatCurrency(displayBalance(account))}</p>
                 <p className="text-xs text-muted-foreground">
                   Uzgodnione {formatCurrency(cleared)}
                   {Math.abs(uncleared) > 0.001 ? ` · w drodze ${formatCurrency(uncleared)}` : ""}
@@ -248,7 +248,7 @@ export default function AccountsPage() {
             <CardTitle className="text-base">W budżecie</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold">{formatCurrency(totalOnBudget)}</p>
+            <p className="text-3xl font-bold">{formatCurrency(onBudgetWealth.netWorth)}</p>
             <p className="text-sm text-muted-foreground">To pieniądze, które rozdzielasz w kopertach.</p>
           </CardContent>
         </Card>
@@ -257,8 +257,8 @@ export default function AccountsPage() {
             <CardTitle className="text-base">Śledzone</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-3xl font-bold">{formatCurrency(totalTracking)}</p>
-            <p className="text-sm text-muted-foreground">Poza budżetem (np. inwestycje, mieszkanie).</p>
+            <p className="text-3xl font-bold">{formatCurrency(trackingWealth.netWorth)}</p>
+            <p className="text-sm text-muted-foreground">Poza budżetem (inwestycje, mieszkanie, kredyty).</p>
           </CardContent>
         </Card>
       </div>

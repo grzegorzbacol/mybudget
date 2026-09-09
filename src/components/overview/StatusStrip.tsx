@@ -1,31 +1,41 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { BudgetMonthData, CashflowData, CashflowSupervision, WealthSnapshot } from "@/lib/types";
+import { useCashflowOverview } from "@/hooks/use-cashflow";
 
-interface OverviewResponse {
-  budget: BudgetMonthData;
-  cashflow: CashflowData;
-  wealth: WealthSnapshot;
-  supervision: CashflowSupervision;
+function plusReason(input: {
+  inTheBlack: boolean;
+  unfundedTotal: number;
+  projectedNet: number;
+  readyToAssign: number;
+  paceProjectedNet: number;
+}) {
+  if (input.unfundedTotal > 0.005) {
+    return `Niezasilone koperty ${formatCurrency(input.unfundedTotal)}`;
+  }
+  if (input.readyToAssign < -0.005) {
+    return `Do rozdzielenia na minusie (${formatCurrency(input.readyToAssign)})`;
+  }
+  if (input.projectedNet < -0.005) {
+    return `Prognoza miesiąca ${formatCurrency(input.projectedNet)}`;
+  }
+  if (input.paceProjectedNet < -0.005) {
+    return `Przy obecnym tempie: ${formatCurrency(input.paceProjectedNet)}`;
+  }
+  if (input.readyToAssign > 0.005) {
+    return `Do rozdzielenia ${formatCurrency(input.readyToAssign)} — nadaj zadanie`;
+  }
+  return input.inTheBlack ? "Plan zasilony, miesiąc na plusie" : "Sprawdź przepływy";
 }
 
 export function StatusStrip() {
-  const { data } = useQuery<OverviewResponse>({
-    queryKey: ["cashflow", 60],
-    queryFn: async () => {
-      const res = await fetch("/api/cashflow?days=60");
-      if (!res.ok) throw new Error("Nie udało się pobrać pulpitu");
-      return res.json();
-    },
-  });
+  const { data } = useCashflowOverview(60, "week");
 
   if (!data?.supervision || !data.wealth) return null;
-  const { supervision, wealth, cashflow, budget } = data;
+  const { supervision, wealth } = data;
 
   return (
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -35,6 +45,9 @@ export function StatusStrip() {
         </CardHeader>
         <CardContent>
           <p className="text-xl font-bold">{formatCurrency(wealth.netWorth)}</p>
+          <p className="text-xs text-muted-foreground">
+            Aktywa {formatCurrency(wealth.assets)} · zobowiązania {formatCurrency(wealth.liabilities)}
+          </p>
           <Link href="/wealth" className="text-xs text-primary hover:underline">
             Majątek
           </Link>
@@ -51,6 +64,9 @@ export function StatusStrip() {
           <p className="text-xs text-muted-foreground">
             +{formatCurrency(supervision.actualIncome)} / −{formatCurrency(supervision.actualSpending)}
           </p>
+          <p className="text-xs text-muted-foreground">
+            Prognoza {formatCurrency(supervision.projectedNet)} · tempo {formatCurrency(supervision.spendPacePerDay)}/dzień
+          </p>
         </CardContent>
       </Card>
       <Card className={supervision.inTheBlack ? "" : "border-amber-500/40"}>
@@ -59,28 +75,23 @@ export function StatusStrip() {
         </CardHeader>
         <CardContent>
           <p className="text-xl font-bold">{supervision.inTheBlack ? "Tak" : "Nie do końca"}</p>
-          <p className="text-xs text-muted-foreground">
-            {cashflow.unfundedTotal > 0
-              ? `Niezasilone ${formatCurrency(cashflow.unfundedTotal)}`
-              : budget.readyToAssign > 0
-                ? `Do rozdzielenia ${formatCurrency(budget.readyToAssign)}`
-                : "Plan zasilony"}
-          </p>
+          <p className="text-xs text-muted-foreground">{plusReason(supervision)}</p>
         </CardContent>
       </Card>
-      <Card>
+      <Card className={supervision.tightOn ? "border-amber-500/40" : ""}>
         <CardHeader className="pb-2">
           <CardTitle className="text-sm text-muted-foreground">Kiedy ciasno?</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-xl font-bold">
-            {supervision.tightOn ? supervision.tightOn : "W horyzoncie OK"}
-          </p>
+          <p className="text-xl font-bold">{supervision.tightOn ? supervision.tightOn : "W horyzoncie OK"}</p>
           <p className="text-xs text-muted-foreground">
             {supervision.tightOn
-              ? `Saldo budżetu spadłoby poniżej zera przy: ${supervision.tightPayee}`
+              ? `Saldo w budżecie spadłoby poniżej zera przy: ${supervision.tightPayee}`
               : "Zaplanowane wpływy pokrywają wypływy"}
           </p>
+          <Link href="/cashflow" className="text-xs text-primary hover:underline">
+            Cashflow / Przepływy
+          </Link>
         </CardContent>
       </Card>
     </div>

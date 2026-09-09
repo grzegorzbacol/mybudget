@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -22,13 +23,14 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatCurrency } from "@/lib/format";
-import { ACCOUNT_TYPE_META, computeNetWorth, isLiabilityType } from "@/lib/wealth";
+import { ACCOUNT_TYPE_META, displayBalance, isLiabilityType, netWorthHistory, wealthLayers } from "@/lib/wealth";
+import { isOnBudget } from "@/lib/budget";
 import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import type { Account, Transaction } from "@/lib/types";
-import { netWorthHistory } from "@/lib/wealth";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { StatusStrip } from "@/components/overview/StatusStrip";
 
 export default function WealthPage() {
   const { data: familyData } = useFamily();
@@ -59,7 +61,7 @@ export default function WealthPage() {
     },
   });
 
-  const totals = computeNetWorth(accounts ?? []);
+  const totals = wealthLayers(accounts ?? []);
   const history = netWorthHistory(accounts ?? [], transactions ?? []);
   const assets = (accounts ?? []).filter((a) => !isLiabilityType(a.type));
   const debts = (accounts ?? []).filter((a) => isLiabilityType(a.type));
@@ -107,13 +109,47 @@ export default function WealthPage() {
         {account.name}
         <span className="ml-2 text-xs text-muted-foreground">
           {ACCOUNT_TYPE_META[account.type]?.label ?? account.type}
+          {isOnBudget(account) ? " · w budżecie" : " · śledzone"}
         </span>
       </span>
       <span className={cn("font-medium", liability && "text-red-500")}>
-        {formatCurrency(Math.abs(Number(account.balance)))}
+        {formatCurrency(Math.abs(displayBalance(account)))}
       </span>
     </button>
   );
+
+  const section = (title: string, list: Account[], liability: boolean) => {
+    const inBudget = list.filter(isOnBudget);
+    const tracking = list.filter((account) => !isOnBudget(account));
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{title}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {list.length === 0 && (
+            <p className="text-sm text-muted-foreground">
+              {liability
+                ? "Karty, kredyty i pożyczki wpisujesz jako saldo zadłużenia."
+                : "Dodaj konto, mieszkanie, auto albo inwestycje w Kontach."}
+            </p>
+          )}
+          {inBudget.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">W budżecie</p>
+              {inBudget.map((account) => renderRow(account, liability))}
+            </div>
+          )}
+          {tracking.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">Śledzone (poza budżetem)</p>
+              {tracking.map((account) => renderRow(account, liability))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -129,12 +165,19 @@ export default function WealthPage() {
         </Button>
       </div>
 
+      <StatusStrip />
+
       <div className="grid gap-3 sm:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-muted-foreground">Wartość netto</CardTitle>
           </CardHeader>
-          <CardContent className="text-2xl font-bold">{formatCurrency(totals.netWorth)}</CardContent>
+          <CardContent>
+            <p className="text-2xl font-bold">{formatCurrency(totals.netWorth)}</p>
+            <p className="text-xs text-muted-foreground">
+              W budżecie {formatCurrency(totals.onBudget.netWorth)} · śledzone {formatCurrency(totals.tracking.netWorth)}
+            </p>
+          </CardContent>
         </Card>
         <Card>
           <CardHeader className="pb-2">
@@ -150,18 +193,24 @@ export default function WealthPage() {
         </Card>
       </div>
 
-      {history.length > 1 && (
+      {history.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Wartość netto w czasie</CardTitle>
           </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
+            <p className="mb-3 text-sm text-muted-foreground">
+              Aktywa, zobowiązania i wartość netto — łącznie konta w budżecie i śledzone.
+            </p>
+            <ResponsiveContainer width="100%" height={240}>
               <LineChart data={history}>
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} />
                 <YAxis tick={{ fontSize: 10 }} />
                 <Tooltip formatter={(v) => formatCurrency(Number(v))} />
-                <Line type="monotone" dataKey="netWorth" stroke="#6366f1" strokeWidth={2} />
+                <Legend />
+                <Line type="monotone" dataKey="assets" stroke="#16a34a" strokeWidth={2} name="Aktywa" />
+                <Line type="monotone" dataKey="liabilities" stroke="#ef4444" strokeWidth={2} name="Zobowiązania" />
+                <Line type="monotone" dataKey="netWorth" stroke="#6366f1" strokeWidth={2} name="Wartość netto" />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -169,28 +218,8 @@ export default function WealthPage() {
       )}
 
       <div className="grid gap-4 md:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Aktywa</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {assets.length === 0 && (
-              <p className="text-sm text-muted-foreground">Dodaj konto, mieszkanie, auto albo inwestycje w Kontach.</p>
-            )}
-            {assets.map((account) => renderRow(account, false))}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Zobowiązania</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {debts.length === 0 && (
-              <p className="text-sm text-muted-foreground">Karty, kredyty i pożyczki wpisujesz jako saldo zadłużenia.</p>
-            )}
-            {debts.map((account) => renderRow(account, true))}
-          </CardContent>
-        </Card>
+        {section("Aktywa", assets, false)}
+        {section("Zobowiązania", debts, true)}
       </div>
 
       {(accounts?.length ?? 0) === 0 && (
