@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
-import { deleteAccountRow, isAccountId } from "@/lib/accounts";
+import { isAccountId } from "@/lib/account-delete-policy";
+import { deleteAccountRow } from "@/lib/accounts";
 
 async function readForceFlag(request: Request): Promise<boolean> {
   const url = new URL(request.url);

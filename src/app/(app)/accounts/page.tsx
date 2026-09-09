@@ -33,7 +33,7 @@ import { createClient } from "@/lib/supabase/client";
 import { formatCurrency } from "@/lib/format";
 import { isOnBudget } from "@/lib/budget";
 import { ACCOUNT_TYPE_META, computeNetWorth, displayBalance, isLiabilityType } from "@/lib/wealth";
-import { isQaLeftoverAccountName } from "@/lib/accounts";
+import { isQaLeftoverAccountName } from "@/lib/account-delete-policy";
 import type { Account, Transaction } from "@/lib/types";
 import { toast } from "sonner";
 import { TransactionList } from "@/components/transactions/TransactionList";
