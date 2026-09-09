@@ -79,7 +79,11 @@ Pierwszy build może trwać 5–10 min (Tesseract, PWA, Next.js).
 
 Coolify działa po **HTTP** (`http://51.38.132.184:8000`), więc natywne webhooki GitHuba (wymagają HTTPS) mogą nie działać. Zamiast tego repo ma workflow **`.github/workflows/coolify-deploy.yml`**, który po każdym pushu na `main` wywołuje API Coolify.
 
-### Jednorazowa konfiguracja
+**Stan po merge PR #2 (2026-09-09):** push na `main` uruchomił workflow, ale sekret GitHub **`COOLIFY_TOKEN` jest pusty**. Job kończy się sukcesem i **pomija deploy** (`COOLIFY_TOKEN secret is not configured — skipping Coolify deploy.`). Live (`zso000wkg0gokc8040cc8cw8.51.38.132.184.sslip.io`) **nie** zaktualizuje się sam.
+
+**Manualny deploy (potrzebny teraz):** Coolify → aplikacja MyBudget (`uuid zso000wkg0gokc8040cc8cw8`) → branch **`main`** → **Deploy**.
+
+### Jednorazowa konfiguracja auto-deploy
 
 1. W Coolify: **Keys & Tokens** → utwórz token API z uprawnieniem **deploy**
 2. Włącz API: **Settings → Advanced → API** (jeśli wyłączone)

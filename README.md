@@ -62,6 +62,8 @@ npm install
 
 Istniejąca baza: odpal `002`–`005` (są idempotentne) albo zredeployuj Docker/Coolify.
 
+Coolify: po pushu na `main` workflow **Deploy to Coolify** się uruchamia, ale sekret GitHub `COOLIFY_TOKEN` jest pusty — deploy jest pomijany. Live: panel Coolify → MyBudget → **Deploy** (branch `main`). Szczegóły: `docs/COOLIFY.md`.
+
 ### 3. Zmienne środowiskowe
 
 ```bash
