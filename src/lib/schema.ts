@@ -18,7 +18,7 @@ export function schemaLagMessage(raw?: string | null): string {
   );
 }
 
-/** Additive statements also applied on every Node boot when DATABASE_URL is set. */
+/** Additive statements applied by docker-entrypoint (ensure-schema.sql) and POST /api/setup/migrate. */
 export const ENSURE_SCHEMA_STATEMENTS = [
   `ALTER TABLE accounts ADD COLUMN IF NOT EXISTS on_budget boolean NOT NULL DEFAULT true`,
   `ALTER TABLE budget_categories ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'expense'`,
