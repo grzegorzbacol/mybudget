@@ -1,4 +1,4 @@
-import { isValidYearMonth, money, monthIndex, parseMonthKey, parseYearMonthFromDate } from "./money";
+import { isPlausibleBudgetYearMonth, isValidYearMonth, money, monthIndex, parseMonthKey, parseYearMonthFromDate } from "./money";
 import type {
   Account,
   BudgetAllocation,
@@ -70,7 +70,7 @@ export function activityByCategoryMonth(
     if (!tx.category_id || isTransferTx(tx)) continue;
     if (!isOnBudgetAccount(tx, accounts)) continue;
     const ym = parseYearMonthFromDate(tx.date);
-    if (!ym) continue;
+    if (!ym || !isPlausibleBudgetYearMonth(ym.year, ym.month)) continue;
     const { year, month } = ym;
     const key = monthKey(year, month);
     let byMonth = map.get(tx.category_id);
@@ -109,7 +109,7 @@ function allocationLookup(allocations: BudgetAllocation[]) {
   for (const allocation of allocations ?? []) {
     const y = Number(allocation.year);
     const m = Number(allocation.month);
-    if (!isValidYearMonth(y, m) || !allocation.category_id) continue;
+    if (!isPlausibleBudgetYearMonth(y, m) || !allocation.category_id) continue;
     map.set(`${allocation.category_id}:${y}-${m}`, allocation);
   }
   return map;
@@ -142,8 +142,6 @@ export function computeReadyToAssign(onBudget: number, expenseAvailable: number)
   return money(onBudget - expenseAvailable);
 }
 
-const MAX_ROLLOVER_MONTHS = 120;
-
 function zeroCategoryRow(
   category: BudgetCategory,
   year: number,
@@ -172,6 +170,15 @@ function zeroCategoryRow(
     available: 0,
     upcoming,
   };
+}
+
+/** When transfer columns are missing, do not treat unmarked rows as income/spend. */
+export function ledgerRowsForEnvelopeMath(
+  transactions: LedgerTransaction[] | null | undefined,
+  transferMarkersMissing: boolean
+): LedgerTransaction[] {
+  if (transferMarkersMissing) return [];
+  return Array.isArray(transactions) ? transactions : [];
 }
 
 export function envelopeRowsFromBudget(
@@ -203,18 +210,17 @@ export function buildBudgetMonthData(
   for (const allocation of allocations ?? []) {
     const y = Number(allocation?.year);
     const m = Number(allocation?.month);
-    if (!isValidYearMonth(y, m)) continue;
+    if (!isPlausibleBudgetYearMonth(y, m)) continue;
     earliest = Math.min(earliest, monthIndex(y, m));
   }
   for (const byMonth of Array.from(activityMap.values())) {
     for (const key of Array.from(byMonth.keys())) {
       const parsed = parseMonthKey(key);
-      if (!parsed) continue;
+      if (!parsed || !isPlausibleBudgetYearMonth(parsed.year, parsed.month)) continue;
       earliest = Math.min(earliest, monthIndex(parsed.year, parsed.month));
     }
   }
   if (!Number.isFinite(earliest)) earliest = targetIndex;
-  earliest = Math.max(earliest, targetIndex - MAX_ROLLOVER_MONTHS);
 
   const expenseCategories = (categories ?? []).filter(isExpenseCategory);
   const rowsById = new Map<string, BudgetCategoryRow>();

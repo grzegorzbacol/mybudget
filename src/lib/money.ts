@@ -9,6 +9,11 @@ export function isValidYearMonth(year: number, month: number): boolean {
   return Number.isInteger(year) && year >= 1 && year <= 9999 && Number.isInteger(month) && month >= 1 && month <= 12;
 }
 
+/** Reject year-1 / far-future garbage without dropping real 10+ year leftover. */
+export function isPlausibleBudgetYearMonth(year: number, month: number): boolean {
+  return isValidYearMonth(year, month) && year >= 1970 && year <= 2100;
+}
+
 /** Parse YYYY-M or YYYY-MM from a ledger date without throwing on null/garbage. */
 export function parseYearMonthFromDate(date: string | null | undefined): { year: number; month: number } | null {
   if (typeof date !== "string") return null;

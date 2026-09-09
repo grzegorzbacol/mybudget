@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   ENSURE_SCHEMA_STATEMENTS,
+  isMissingRelationError,
   isSchemaLagError,
   resolveDatabaseUrl,
   schemaLagMessage,
@@ -13,6 +14,8 @@ describe("schema lag helpers", () => {
       true
     );
     expect(isSchemaLagError("Unauthorized")).toBe(false);
+    expect(isMissingRelationError('relation "scheduled_transactions" does not exist')).toBe(true);
+    expect(isMissingRelationError("Unauthorized")).toBe(false);
   });
 
   it("explains that Coolify must run migrations on the PostgREST database", () => {

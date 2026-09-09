@@ -34,7 +34,9 @@ export async function GET(
 
     const { start, end } = monthRange(year, month);
     const monthEnd = addDays(end, -1);
-    const upcoming = upcomingByCategory(snapshot.scheduled, start, monthEnd);
+    const upcoming = snapshot.scheduledError
+      ? new Map<string, number>()
+      : upcomingByCategory(snapshot.scheduled, start, monthEnd);
 
     const data = buildBudgetMonthData(
       year,

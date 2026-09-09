@@ -3,6 +3,11 @@ export function isSchemaLagError(message?: string | null): boolean {
   return /column .+ does not exist|could not find the '.+' column|schema cache/i.test(message);
 }
 
+export function isMissingRelationError(message?: string | null): boolean {
+  if (!message) return false;
+  return /relation .+ does not exist|could not find the table|schema cache/i.test(message);
+}
+
 export function schemaLagMessage(raw?: string | null): string {
   const detail = raw?.trim() ? ` (${raw.trim()})` : "";
   return (

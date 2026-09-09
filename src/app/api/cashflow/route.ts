@@ -29,13 +29,24 @@ export async function GET(request: Request) {
 
   try {
     await ensureMonthAllocations(ctx.supabase, ctx.family.id, year, month);
-  const snapshot = await loadBudgetSnapshot(ctx.supabase, ctx.family.id);
-  if (snapshot.error) {
-    return NextResponse.json(
-      { error: snapshot.error, schemaLag: /transfer_account_id|schema/i.test(snapshot.error) },
-      { status: 500 }
-    );
-  }
+    const snapshot = await loadBudgetSnapshot(ctx.supabase, ctx.family.id);
+    if (snapshot.error) {
+      return NextResponse.json(
+        { error: snapshot.error, schemaLag: /transfer_account_id|schema/i.test(snapshot.error) },
+        { status: 500 }
+      );
+    }
+    if (snapshot.scheduledError) {
+      return NextResponse.json(
+        {
+          error:
+            "Nie udało się pobrać zaplanowanych płatności — przepływy nie są liczone z pustym harmonogramem.",
+          scheduledError: snapshot.scheduledError,
+          schemaLag: Boolean(snapshot.schemaLag),
+        },
+        { status: 500 }
+      );
+    }
 
   const { start, end } = monthRange(year, month);
   const monthEnd = addDays(end, -1);

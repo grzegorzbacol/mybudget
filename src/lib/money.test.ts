@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addDays,
+  isPlausibleBudgetYearMonth,
   isValidYearMonth,
   monthRange,
   parseMonthKey,
@@ -30,6 +31,8 @@ describe("date guards for budget month keys", () => {
     expect(isValidYearMonth(2026, 9)).toBe(true);
     expect(isValidYearMonth(Number.NaN, 9)).toBe(false);
     expect(isValidYearMonth(2026, 0)).toBe(false);
+    expect(isPlausibleBudgetYearMonth(2016, 1)).toBe(true);
+    expect(isPlausibleBudgetYearMonth(1, 1)).toBe(false);
     expect(monthRange(2026, 9)).toEqual({ start: "2026-09-01", end: "2026-10-01" });
   });
 });

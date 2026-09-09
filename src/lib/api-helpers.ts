@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
-import { isSchemaLagError, schemaLagMessage } from "@/lib/schema";
+import { isMissingRelationError, isSchemaLagError, schemaLagMessage } from "@/lib/schema";
+import { ledgerRowsForEnvelopeMath } from "@/lib/budget";
 import type {
   Account,
   BudgetAllocation,
@@ -112,21 +113,25 @@ export async function loadBudgetSnapshot(
   let transactions = (transactionsRes.data ?? []) as LedgerTransaction[];
   let transactionsError = transactionsRes.error?.message;
   let schemaLag: string | undefined;
+  let transferMarkersMissing = false;
   if (transactionsRes.error) {
-    const fallback = await supabase
-      .from("transactions")
-      .select("id, account_id, category_id, amount, date, cleared")
-      .eq("family_id", familyId);
-    transactions = (fallback.data ?? []) as LedgerTransaction[];
-    if (!fallback.error && isSchemaLagError(transactionsRes.error.message)) {
+    if (isSchemaLagError(transactionsRes.error.message)) {
+      transferMarkersMissing = true;
+      transactions = ledgerRowsForEnvelopeMath(undefined, true);
       schemaLag = schemaLagMessage(transactionsRes.error.message);
       transactionsError = undefined;
     } else {
-      transactionsError = fallback.error?.message || transactionsRes.error.message;
-      if (isSchemaLagError(transactionsError)) {
-        transactionsError = schemaLagMessage(transactionsError);
-      }
+      transactions = [];
+      transactionsError = transactionsRes.error.message;
     }
+  }
+
+  const scheduledError = scheduledRes.error?.message;
+  const scheduledMissing = Boolean(scheduledError && isMissingRelationError(scheduledError));
+  if (scheduledMissing) {
+    schemaLag = schemaLag
+      ? `${schemaLag} Brak scheduled_transactions.`
+      : `Brak tabeli scheduled_transactions — uruchom migracje na bazie PostgREST (${scheduledError}).`;
   }
 
   return {
@@ -136,6 +141,8 @@ export async function loadBudgetSnapshot(
     transactions,
     scheduled: (scheduledRes.data ?? []) as ScheduledTransaction[],
     schemaLag,
+    transferMarkersMissing,
+    scheduledError,
     error:
       categoriesRes.error?.message ||
       allocationsRes.error?.message ||

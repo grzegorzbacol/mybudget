@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, planFillEnvelopeGaps, uncategorizedExpenses } from "./budget";
+import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, uncategorizedExpenses } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -310,5 +310,50 @@ describe("YNAB envelope math", () => {
       })
     ).toEqual([]);
     expect(planFillEnvelopeGaps([undefined as never], 100)).toEqual([]);
+  });
+
+  it("ignores implausible year-1 leftover instead of walking millennia", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 1, 1, 500)],
+      [account("checking", 500)],
+      []
+    );
+    expect(data.groups[0].categories[0].available).toBe(0);
+    expect(data.readyToAssign).toBe(500);
+  });
+
+  it("carries leftover from allocations more than ten years back", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2016, 1, 500)],
+      [account("checking", 500)],
+      []
+    );
+    expect(data.groups[0].categories[0].leftover).toBe(500);
+    expect(data.groups[0].categories[0].available).toBe(500);
+    expect(data.readyToAssign).toBe(0);
+  });
+
+  it("does not treat markerless rows as income when transfer columns are missing", () => {
+    const transferLike = [
+      tx({ amount: 400, date: "2026-09-02" }),
+      tx({ amount: -400, date: "2026-09-02", account_id: "cash" }),
+    ];
+    expect(ledgerRowsForEnvelopeMath(transferLike, true)).toEqual([]);
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 0)],
+      [account("checking", 0), account("cash", 0)],
+      ledgerRowsForEnvelopeMath(transferLike, true)
+    );
+    expect(data.incomeThisMonth).toBe(0);
+    expect(data.uncategorizedCount).toBe(0);
   });
 });
