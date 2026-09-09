@@ -6,8 +6,10 @@ import {
   emptyRelatedCounts,
   isAccountId,
   isAccountTypeCheckError,
+  isMissingAccountDeleteRpcError,
   isQaLeftoverAccountName,
   loadAccountForLedger,
+  mapAccountDeleteRpc,
 } from "./accounts";
 
 describe("account create payload", () => {
@@ -421,5 +423,86 @@ describe("deleteAccountRow", () => {
     const result = await deleteAccountRow(supabase, { familyId, accountId });
     expect(result).toMatchObject({ ok: false, status: 404, reason: "not_found" });
     expect(supabase.store.accounts).toHaveLength(1);
+  });
+
+  it("deletes expense_splits for the removed ledger rows (Coolify tables have no FK)", async () => {
+    const supabase = createMemoryClient({
+      accounts: [{ id: accountId, family_id: familyId, name: "QA-CTO-Account-20260909-postdeploy" }],
+      transactions: [
+        { id: "tx1", family_id: familyId, account_id: accountId, transfer_id: "pair-1" },
+        { id: "tx2", family_id: familyId, account_id: "other", transfer_id: "pair-1" },
+      ],
+      expense_splits: [
+        { id: "s1", family_id: familyId, transaction_id: "tx1" },
+        { id: "s2", family_id: familyId, transaction_id: "tx2" },
+        { id: "keep", family_id: familyId, transaction_id: "unrelated" },
+      ],
+      scheduled_transactions: [],
+    });
+
+    const result = await deleteAccountRow(supabase, { familyId, accountId });
+    expect(result.ok).toBe(true);
+    expect(supabase.store.expense_splits.map((row) => row.id)).toEqual(["keep"]);
+    expect(supabase.store.transactions).toHaveLength(0);
+    expect(supabase.store.accounts).toHaveLength(0);
+  });
+
+  it("uses the atomic RPC when PostgREST exposes delete_household_account", async () => {
+    const rpc = vi.fn().mockResolvedValue({
+      data: {
+        ok: true,
+        mode: "cascade",
+        name: "QA-CTO-Account-20260909-postdeploy",
+        qaLeftover: true,
+        counts: { transactions: 2, scheduled: 0, transferPairs: 1 },
+      },
+      error: null,
+    });
+    const supabase = {
+      rpc,
+      from: () => {
+        throw new Error("fallback sequential delete must not run when RPC succeeds");
+      },
+    };
+
+    const result = await deleteAccountRow(supabase, { familyId, accountId, force: true });
+    expect(result).toMatchObject({
+      ok: true,
+      mode: "cascade",
+      qaLeftover: true,
+      account: { id: accountId, name: "QA-CTO-Account-20260909-postdeploy" },
+    });
+    expect(rpc).toHaveBeenCalledWith("delete_household_account", {
+      p_family_id: familyId,
+      p_account_id: accountId,
+      p_force: true,
+    });
+  });
+});
+
+describe("account delete RPC mapping", () => {
+  it("detects a missing PostgREST function so Coolify can repair then fall back", () => {
+    expect(
+      isMissingAccountDeleteRpcError(
+        "Could not find the function public.delete_household_account in the schema cache"
+      )
+    ).toBe(true);
+    expect(isMissingAccountDeleteRpcError("Could not find the 'on_budget' column")).toBe(false);
+  });
+
+  it("rewrites a 409 RPC payload with the same Polish blocked message", () => {
+    const mapped = mapAccountDeleteRpc(
+      {
+        ok: false,
+        status: 409,
+        reason: "has_related",
+        counts: { transactions: 1, scheduled: 0, transferPairs: 0 },
+      },
+      "acc-1"
+    );
+    expect(mapped?.ok).toBe(false);
+    if (!mapped || mapped.ok) return;
+    expect(mapped.status).toBe(409);
+    expect(mapped.error).toMatch(/1 transakcję/);
   });
 });

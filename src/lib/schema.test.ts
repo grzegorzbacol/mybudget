@@ -51,6 +51,8 @@ describe("schema lag helpers", () => {
     expect(joined).toContain("accounts_type_check");
     expect(joined).toContain("on_budget");
     expect(joined).toContain("NOTIFY pgrst");
+    expect(joined).toContain("delete_household_account");
+    expect(joined).toContain("expense_splits_transaction_id_fkey");
     for (const column of REQUIRED_SCHEMA_COLUMNS) {
       expect(joined).toContain(column.split(".")[1]);
     }
@@ -79,6 +81,14 @@ describe("schema lag helpers", () => {
       join(process.cwd(), "supabase/migrations/008_account_columns.sql"),
       "utf8"
     );
+    const deleteSql = readFileSync(
+      join(process.cwd(), "supabase/migrations/010_delete_household_account.sql"),
+      "utf8"
+    );
+    expect(ensureSql).toContain("CREATE OR REPLACE FUNCTION public.delete_household_account");
+    expect(deleteSql).toContain("CREATE OR REPLACE FUNCTION public.delete_household_account");
+    expect(deleteSql).toContain("DELETE FROM expense_splits");
+    expect(ensureSql).toContain("DELETE FROM expense_splits");
     for (const sql of [ensureSql, liveSql]) {
       expect(sql).toContain("ADD COLUMN IF NOT EXISTS paid_by");
       expect(sql).toContain("ADD COLUMN IF NOT EXISTS kind");
