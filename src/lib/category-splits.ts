@@ -43,3 +43,17 @@ export function categorySplitsValid(total: number, lines: CategorySplitInput[]):
   const sum = money(lines.reduce((acc, line) => acc + Math.abs(Number(line.amount) || 0), 0));
   return abs > 0 && Math.abs(abs - sum) < 0.02;
 }
+
+/** Collapse line items that share a koperta so envelope activity is not double-counted. */
+export function mergeCategorySplitLines(lines: CategorySplitInput[]): CategorySplitInput[] {
+  const order: string[] = [];
+  const byId = new Map<string, number>();
+  for (const line of lines) {
+    const categoryId = line.category_id?.trim();
+    const amount = money(Math.abs(Number(line.amount) || 0));
+    if (!categoryId || amount <= 0) continue;
+    if (!byId.has(categoryId)) order.push(categoryId);
+    byId.set(categoryId, money((byId.get(categoryId) ?? 0) + amount));
+  }
+  return order.map((category_id) => ({ category_id, amount: byId.get(category_id)! }));
+}

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { processReceiptImage } from "@/lib/ocr";
+import { RECEIPTS_BUCKET, receiptObjectPath, sniffReceiptImage } from "@/lib/receipts";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 90;
@@ -19,14 +20,20 @@ export async function POST(request: Request) {
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
+  const imageMime = sniffReceiptImage(buffer);
+  if (!imageMime) {
+    return NextResponse.json({ error: "Plik nie jest zdjęciem paragonu" }, { status: 400 });
+  }
 
-  // Upload to storage is best-effort — OCR runs regardless
+  // Upload to the private `receipts` bucket. Store the object key — not getPublicUrl(),
+  // which 404s in <img> because the bucket is not public. Only sniffed rasters
+  // are stored so /api/receipts never serves HTML/SVG from this origin.
   let receiptUrl: string | undefined;
   try {
-    const fileName = `${ctx.family.id}/${Date.now()}-${file.name}`;
+    const fileName = receiptObjectPath(ctx.family.id, file.name || "receipt.jpg", Date.now(), imageMime);
     const uploadPromise = ctx.supabase.storage
-      .from("receipts")
-      .upload(fileName, buffer, { contentType: file.type, upsert: false });
+      .from(RECEIPTS_BUCKET)
+      .upload(fileName, buffer, { contentType: imageMime, upsert: false });
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error("storage timeout")), 15_000)
     );
@@ -34,14 +41,13 @@ export async function POST(request: Request) {
       uploadPromise,
       timeoutPromise,
     ]);
-    if (!uploadError && uploadData) {
-      const { data: { publicUrl } } = ctx.supabase.storage
-        .from("receipts")
-        .getPublicUrl(uploadData.path);
-      receiptUrl = publicUrl;
+    if (uploadError) {
+      console.warn("[OCR] receipts upload failed:", uploadError.message);
+    } else if (uploadData?.path) {
+      receiptUrl = uploadData.path;
     }
-  } catch {
-    // Storage upload failed — proceed without receipt URL
+  } catch (err) {
+    console.warn("[OCR] receipts upload failed:", err instanceof Error ? err.message : err);
   }
 
   // Kategorie rodziny trafiają do promptu OCR, żeby AI wybierało z istniejącej listy
@@ -56,7 +62,7 @@ export async function POST(request: Request) {
     const result = await processReceiptImage(
       buffer,
       receiptUrl,
-      file.type || "image/jpeg",
+      imageMime,
       categoryNames
     );
     return NextResponse.json(result);
