@@ -3,6 +3,17 @@
 # Fail fast if Postgres is unreachable so Coolify healthchecks are not blocked.
 export PGCONNECT_TIMEOUT="${PGCONNECT_TIMEOUT:-10}"
 
+# GET /api/health.revision reads GIT_COMMIT first. Fall back to Coolify/build-time SHA.
+if [ -z "${GIT_COMMIT:-}" ]; then
+  if [ -n "${SOURCE_COMMIT:-}" ]; then
+    export GIT_COMMIT="$SOURCE_COMMIT"
+  elif [ -n "${COOLIFY_HASH:-}" ]; then
+    export GIT_COMMIT="$COOLIFY_HASH"
+  elif [ -n "${NEXT_PUBLIC_GIT_SHA:-}" ]; then
+    export GIT_COMMIT="$NEXT_PUBLIC_GIT_SHA"
+  fi
+fi
+
 dburl="${DATABASE_URL:-${POSTGRES_URL:-${SUPABASE_DB_URL:-${DIRECT_URL:-}}}}"
 
 if [ -n "$dburl" ]; then

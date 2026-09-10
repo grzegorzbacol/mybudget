@@ -66,7 +66,7 @@ npm install
 
 Istniejąca baza: odpal `002`–`009` (są idempotentne) albo zredeployuj Docker/Coolify z `DATABASE_URL` do bazy PostgREST. Kontener zawsze dopina `paid_by`, `kind`, kolumny transferu, `scheduled_transactions` i `accounts.on_budget` przez `scripts/ensure-schema.sql`.
 
-Coolify: po pushu na `main` workflow **Deploy to Coolify** się uruchamia, ale sekret GitHub `COOLIFY_TOKEN` jest pusty — deploy jest pomijany. Live: panel Coolify → MyBudget → **Deploy** (branch `main`). Szczegóły: `docs/COOLIFY.md`.
+Coolify: po pushu na `main` workflow **Deploy to Coolify** się uruchamia, ale sekret GitHub `COOLIFY_TOKEN` jest pusty — deploy jest pomijany. **Po każdym merge: Coolify → MyBudget (`zso000wkg0gokc8040cc8cw8`) → Redeploy.** Live SHA: `GET /api/health` → `revision` / `gitSha` (ustaw runtime `GIT_COMMIT`). Szczegóły: `docs/coolify-deploy.md`, `docs/COOLIFY.md`.
 
 ### 3. Zmienne środowiskowe
 

@@ -4,6 +4,7 @@ import { addDays, addMonths, monthRange, money } from "@/lib/money";
 import { getAuthContext } from "@/lib/api-helpers";
 import { budgetMonthFromCore, loadFamilyBudgetCore } from "@/lib/budget-read";
 import {
+  beginSqlPoolWarmup,
   monthAmount,
   queryCashflowDailyActualsSql,
   shouldSkipCashflowTimeline,
@@ -26,6 +27,9 @@ import type { Goal } from "@/lib/types";
 export async function GET(request: Request) {
   const started = Date.now();
   const deadlineAt = started + CASHFLOW_RESPONSE_BUDGET_MS;
+  // Boot /api/health already opened the process-wide pool. Kick warmup here too so a
+  // first authenticated GET overlaps TCP/pg with GoTrue instead of paying them serially.
+  void beginSqlPoolWarmup();
 
   const ctx = await withTimeout(getAuthContext(), CASHFLOW_AUTH_BUDGET_MS, null);
   if (!ctx) {
