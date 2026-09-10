@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { activityMapFromAggregates, assembleBudgetMonthData } from "./budget";
+import { activityMapFromAggregates, assembleBudgetMonthData, normalizeBudgetId } from "./budget";
 import {
   asBudgetCategories,
   budgetMonthFromCore,
+  coreFromSql,
   ensureFamilyCategories,
   fetchFamilyCategories,
   resetFamilyBudgetCache,
@@ -128,6 +129,140 @@ describe("budgetMonthFromCore", () => {
     expect(data.incomeThisMonth).toBe(8808);
     expect(data.groups.map((g) => g.groupName)).toEqual(["Żywność"]);
     expect(data.groups[0].categories[0].category.id).toBe("food");
+  });
+
+  it("shows non-zero Aktywność for a categorized expense from the SQL snapshot", () => {
+    const foodId = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+    const core = coreFromSql({
+      categories: [
+        {
+          id: foodId.toUpperCase(),
+          family_id: "FAM-1",
+          group_name: "Żywność",
+          name: "Zakupy spożywcze",
+          icon: "🛒",
+          color: "#f59e0b",
+          sort_order: 10,
+          kind: "expense",
+        },
+      ],
+      allocations: [
+        {
+          id: "a1",
+          family_id: "fam-1",
+          category_id: foodId,
+          year: 2026,
+          month: 9,
+          allocated: 900,
+          activity: 0,
+          available: 0,
+          rollover: true,
+          moved: 0,
+        },
+      ],
+      accounts: [account],
+      scheduled: [],
+      activity: [{ category_id: foodId, year: 2026, month: 9, activity: -327.4 }],
+      income: [{ year: 2026, month: 9, amount: 9800 }],
+      spending: [{ year: 2026, month: 9, amount: 327.4 }],
+      uncategorized: [],
+      splitLines: [],
+    });
+    const data = budgetMonthFromCore(core, 2026, 9);
+    expect(normalizeBudgetId(data.groups[0].categories[0].category.id)).toBe(foodId);
+    expect(data.groups[0].categories[0].activity).toBe(-327.4);
+    expect(data.groups[0].categories[0].assigned).toBe(900);
+    expect(data.groups[0].categories[0].available).toBe(572.6);
+  });
+
+  it("rolls SQL split lines into each envelope instead of leaving parent-only activity", () => {
+    const foodId = "11111111-1111-1111-1111-111111111111";
+    const funId = "22222222-2222-2222-2222-222222222222";
+    const core = coreFromSql({
+      categories: [
+        {
+          id: foodId,
+          family_id: "fam-1",
+          group_name: "Żywność",
+          name: "Zakupy spożywcze",
+          icon: "🛒",
+          color: "#f59e0b",
+          sort_order: 10,
+          kind: "expense",
+        },
+        {
+          id: funId,
+          family_id: "fam-1",
+          group_name: "Żywność",
+          name: "Restauracje",
+          icon: "🍽️",
+          color: "#d97706",
+          sort_order: 11,
+          kind: "expense",
+        },
+      ],
+      allocations: [
+        {
+          id: "a1",
+          family_id: "fam-1",
+          category_id: foodId,
+          year: 2026,
+          month: 9,
+          allocated: 200,
+          activity: 0,
+          available: 0,
+          rollover: true,
+          moved: 0,
+        },
+        {
+          id: "a2",
+          family_id: "fam-1",
+          category_id: funId,
+          year: 2026,
+          month: 9,
+          allocated: 50,
+          activity: 0,
+          available: 0,
+          rollover: true,
+          moved: 0,
+        },
+      ],
+      accounts: [account],
+      scheduled: [],
+      activity: [{ category_id: foodId, year: 2026, month: 9, activity: -100 }],
+      income: [],
+      spending: [{ year: 2026, month: 9, amount: 100 }],
+      uncategorized: [],
+      splitLines: [
+        {
+          transaction_id: "biedronka",
+          account_id: "checking",
+          parent_category_id: foodId,
+          year: 2026,
+          month: 9,
+          parent_amount: -100,
+          split_category_id: foodId,
+          split_activity: -70,
+        },
+        {
+          transaction_id: "biedronka",
+          account_id: "checking",
+          parent_category_id: foodId,
+          year: 2026,
+          month: 9,
+          parent_amount: -100,
+          split_category_id: funId,
+          split_activity: -30,
+        },
+      ],
+    });
+    const data = budgetMonthFromCore(core, 2026, 9);
+    const food = data.groups[0].categories.find((row) => row.category.id === foodId)!;
+    const fun = data.groups[0].categories.find((row) => row.category.id === funId)!;
+    expect(food.activity).toBe(-70);
+    expect(fun.activity).toBe(-30);
+    expect(food.available).toBe(130);
+    expect(fun.available).toBe(20);
   });
 });
 

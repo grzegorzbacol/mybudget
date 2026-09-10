@@ -36,7 +36,18 @@ export function getMonthLabel(year: number, month: number): string {
   }).format(date);
 }
 
-export function getCurrentYearMonth(): { year: number; month: number } {
-  const now = new Date();
-  return { year: now.getFullYear(), month: now.getMonth() + 1 };
+const BUDGET_TIMEZONE = "Europe/Warsaw";
+
+export function getCurrentYearMonth(now = new Date()): { year: number; month: number } {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: BUDGET_TIMEZONE,
+    year: "numeric",
+    month: "numeric",
+  }).formatToParts(now);
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  if (!Number.isInteger(year) || !Number.isInteger(month)) {
+    return { year: now.getFullYear(), month: now.getMonth() + 1 };
+  }
+  return { year, month };
 }

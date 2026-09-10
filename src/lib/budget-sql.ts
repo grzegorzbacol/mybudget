@@ -31,6 +31,25 @@ export type SqlQueryFn = (
   params?: unknown[]
 ) => Promise<{ rows: Array<Record<string, unknown>> }>;
 
+/** Ledger months follow the household calendar, not the Postgres session TZ (often UTC). */
+export const BUDGET_SQL_TIMEZONE = "Europe/Warsaw";
+
+function sqlWarsawTimestamp(alias = "t"): string {
+  return `timezone('${BUDGET_SQL_TIMEZONE}', ${alias}.date::timestamptz)`;
+}
+
+function sqlWarsawYear(alias = "t"): string {
+  return `EXTRACT(YEAR FROM ${sqlWarsawTimestamp(alias)})::int`;
+}
+
+function sqlWarsawMonth(alias = "t"): string {
+  return `EXTRACT(MONTH FROM ${sqlWarsawTimestamp(alias)})::int`;
+}
+
+function sqlWarsawDateText(alias = "t"): string {
+  return `(${sqlWarsawTimestamp(alias)})::date::text`;
+}
+
 export function familyIdMatch(mode: FamilyPred, qualifier?: string): string {
   const col = qualifier ? `${qualifier}.family_id` : "family_id";
   return mode === "uuid" ? `${col} = $1::uuid` : `${col}::text = $1::text`;
@@ -39,39 +58,43 @@ export function familyIdMatch(mode: FamilyPred, qualifier?: string): string {
 function snapshotSql(pred: FamilyPred, kind: SnapshotKind): string {
   const tFamily = familyIdMatch(pred, "t");
   const family = familyIdMatch(pred);
+  // LEFT JOIN + text id match: INNER JOIN dropped every expense when account_id/id
+  // types differed (uuid vs text). Missing account ⇒ on-budget, matching REST.
   const ledger =
     kind === "full"
       ? `SELECT t.category_id::text AS category_id,
-               EXTRACT(YEAR FROM t.date)::int AS year,
-               EXTRACT(MONTH FROM t.date)::int AS month,
+               ${sqlWarsawYear("t")} AS year,
+               ${sqlWarsawMonth("t")} AS month,
                t.amount::float8 AS amount
         FROM transactions t
-        JOIN accounts a ON a.id = t.account_id
+        LEFT JOIN accounts a ON a.id::text = t.account_id::text
         WHERE ${tFamily}
           AND t.transfer_account_id IS NULL
           AND t.transfer_id IS NULL
-          AND COALESCE(a.on_budget, true)`
+          AND a.on_budget IS DISTINCT FROM FALSE`
       : `SELECT t.category_id::text AS category_id,
-               EXTRACT(YEAR FROM t.date)::int AS year,
-               EXTRACT(MONTH FROM t.date)::int AS month,
+               ${sqlWarsawYear("t")} AS year,
+               ${sqlWarsawMonth("t")} AS month,
                t.amount::float8 AS amount
         FROM transactions t
         WHERE ${tFamily}`;
 
   const allocationSelect =
     kind === "full"
-      ? `SELECT id, family_id, category_id, year, month, allocated, activity, available, rollover,
+      ? `SELECT id::text AS id, family_id::text AS family_id, category_id::text AS category_id,
+                year, month, allocated, activity, available, rollover,
                 COALESCE(moved, 0) AS moved
          FROM budget_allocations WHERE ${family}`
-      : `SELECT id, family_id, category_id, year, month, allocated, activity, available, rollover
+      : `SELECT id::text AS id, family_id::text AS family_id, category_id::text AS category_id,
+                year, month, allocated, activity, available, rollover
          FROM budget_allocations WHERE ${family}`;
 
   const accountSelect =
     kind === "full"
-      ? `SELECT id, family_id, name, type, balance, currency, owner_user_id,
+      ? `SELECT id::text AS id, family_id::text AS family_id, name, type, balance, currency, owner_user_id,
                 COALESCE(on_budget, true) AS on_budget
          FROM accounts WHERE ${family}`
-      : `SELECT id, family_id, name, type, balance, currency, owner_user_id
+      : `SELECT id::text AS id, family_id::text AS family_id, name, type, balance, currency, owner_user_id
          FROM accounts WHERE ${family}`;
 
   const flags =
@@ -88,7 +111,7 @@ WITH ledger AS MATERIALIZED (
 SELECT json_build_object(
   'categories', COALESCE((
     SELECT json_agg(x) FROM (
-      SELECT id, family_id, group_name, name, icon, color, sort_order
+      SELECT id::text AS id, family_id::text AS family_id, group_name, name, icon, color, sort_order
       FROM budget_categories WHERE ${family} ORDER BY sort_order
     ) x
   ), '[]'::json),
@@ -135,7 +158,7 @@ SELECT json_build_object(
       GROUP BY 1, 2
     ) x
   ), '[]'::json)${flags}
-) AS payload
+)::jsonb AS payload
 `;
 }
 
@@ -157,8 +180,8 @@ function splitLinesSql(pred: FamilyPred, kind: SnapshotKind): string {
 SELECT t.id::text AS transaction_id,
        t.account_id::text AS account_id,
        t.category_id::text AS parent_category_id,
-       EXTRACT(YEAR FROM t.date)::int AS year,
-       EXTRACT(MONTH FROM t.date)::int AS month,
+       ${sqlWarsawYear("t")} AS year,
+       ${sqlWarsawMonth("t")} AS month,
        t.amount::float8 AS parent_amount,
        s.category_id::text AS split_category_id,
        (-ABS(s.amount))::float8 AS split_activity
@@ -176,35 +199,35 @@ function dailyActualsSql(pred: FamilyPred, kind: SnapshotKind): string {
   AND t.transfer_id IS NULL`
       : "";
   return `
-SELECT t.date::text AS date,
+SELECT ${sqlWarsawDateText("t")} AS date,
        SUM(CASE WHEN t.amount > 0 AND t.category_id IS NULL THEN t.amount ELSE 0 END)::float8 AS actual_in,
        SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END)::float8 AS actual_out
 FROM transactions t
 WHERE ${familyIdMatch(pred, "t")}
-  AND t.date >= $2::date
-  AND t.date < $3::date
+  AND (${sqlWarsawTimestamp("t")})::date >= $2::date
+  AND (${sqlWarsawTimestamp("t")})::date < $3::date
   ${transferFilter}
-GROUP BY t.date
+GROUP BY 1
 `;
 }
 
 function ledgerRangeSql(pred: FamilyPred, kind: SnapshotKind): string {
   if (kind === "full") {
     return `
-SELECT account_id, category_id, amount, date::text,
-       transfer_account_id, transfer_id
-FROM transactions
-WHERE ${familyIdMatch(pred)}
-  AND date >= $2::date
-  AND date < $3::date
+SELECT t.account_id::text AS account_id, t.category_id::text AS category_id, t.amount, ${sqlWarsawDateText("t")} AS date,
+       t.transfer_account_id, t.transfer_id
+FROM transactions t
+WHERE ${familyIdMatch(pred, "t")}
+  AND (${sqlWarsawTimestamp("t")})::date >= $2::date
+  AND (${sqlWarsawTimestamp("t")})::date < $3::date
 `;
   }
   return `
-SELECT account_id, category_id, amount, date::text
-FROM transactions
-WHERE ${familyIdMatch(pred)}
-  AND date >= $2::date
-  AND date < $3::date
+SELECT t.account_id::text AS account_id, t.category_id::text AS category_id, t.amount, ${sqlWarsawDateText("t")} AS date
+FROM transactions t
+WHERE ${familyIdMatch(pred, "t")}
+  AND (${sqlWarsawTimestamp("t")})::date >= $2::date
+  AND (${sqlWarsawTimestamp("t")})::date < $3::date
 `;
 }
 
@@ -456,24 +479,33 @@ async function withCheckedOutClient<T>(
   if (typeof pool.connect !== "function") {
     try {
       return await fn((sql, params) => pool.query(sql, params));
-    } catch {
+    } catch (error) {
+      console.error("[budget-sql] pool query failed", error instanceof Error ? error.message : error);
       return null;
     }
   }
   let client: PgPoolClient;
   try {
     client = await pool.connect();
-  } catch {
+  } catch (error) {
+    console.error("[budget-sql] pool connect failed", error instanceof Error ? error.message : error);
     return null;
   }
   try {
     try {
-      await client.query(`SET statement_timeout = ${SQL_STATEMENT_TIMEOUT_MS}`);
+      await client.query(
+        `SET statement_timeout = ${SQL_STATEMENT_TIMEOUT_MS}; SET TIME ZONE '${BUDGET_SQL_TIMEZONE}'`
+      );
     } catch {
-      /* transaction poolers may forbid SET; query_timeout still applies */
+      try {
+        await client.query(`SET statement_timeout = ${SQL_STATEMENT_TIMEOUT_MS}`);
+      } catch {
+        /* transaction poolers may forbid SET; query_timeout still applies */
+      }
     }
     return await fn((sql, params) => client.query(sql, params));
-  } catch {
+  } catch (error) {
+    console.error("[budget-sql] client query failed", error instanceof Error ? error.message : error);
     return null;
   } finally {
     client.release();
@@ -568,17 +600,15 @@ export async function queryFamilyBudgetWithClient(
   };
 
   const loadExtras = async (plan: SnapshotPlan) => {
+    // Splits correct Aktywność; never skip them. Scheduled is only upcoming bills.
+    const splitRes = await optional(splitLinesSql(plan.pred, plan.kind));
     if (options?.deadlineAt && Date.now() >= options.deadlineAt) {
       return {
         scheduledRes: { rows: [] as Array<Record<string, unknown>>, ok: false },
-        splitRes: { rows: [] as Array<Record<string, unknown>> },
+        splitRes,
       };
     }
     const scheduledRes = await optional(scheduledSql(plan.pred));
-    if (options?.deadlineAt && Date.now() >= options.deadlineAt) {
-      return { scheduledRes, splitRes: { rows: [] as Array<Record<string, unknown>> } };
-    }
-    const splitRes = await optional(splitLinesSql(plan.pred, plan.kind));
     return { scheduledRes, splitRes };
   };
 

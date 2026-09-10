@@ -204,7 +204,7 @@ async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<F
   return attachRestMonthTotals(core, transactions);
 }
 
-function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
+export function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
   const activityMap = applyCategorySplitAggregates(
     activityMapFromAggregates(payload.activity),
     payload.splitLines,

@@ -29,10 +29,18 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL).not.toContain("transaction_category_splits");
     expect(FAMILY_BUDGET_SQL).not.toContain("COALESCE(kind");
     expect(FAMILY_BUDGET_SQL).toContain("transfer_account_id IS NULL");
+    expect(FAMILY_BUDGET_SQL).toContain("LEFT JOIN accounts");
+    expect(FAMILY_BUDGET_SQL).toContain("a.id::text = t.account_id::text");
+    expect(FAMILY_BUDGET_SQL).toContain("on_budget IS DISTINCT FROM FALSE");
+    expect(FAMILY_BUDGET_SQL).toContain("Europe/Warsaw");
+    expect(FAMILY_BUDGET_SQL).toContain("id::text AS id");
+    expect(FAMILY_BUDGET_SQL).toContain("::jsonb AS payload");
+    expect(FAMILY_BUDGET_SQL).not.toContain("JOIN accounts a ON a.id = t.account_id");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("WITH ledger AS MATERIALIZED");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("amount > 0");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("family_id = $1::uuid");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("GROUP BY 1, 2, 3");
+    expect(FAMILY_BUDGET_SQL_SAFE).toContain("Europe/Warsaw");
   });
 
   it("parses a compact payload into month totals", () => {
@@ -172,7 +180,7 @@ describe("snapshot dialect cache", () => {
       return { rows: [] };
     };
     await queryFamilyBudgetWithClient("11111111-1111-1111-1111-111111111111", query);
-    expect(order).toEqual(["snapshot", "scheduled", "splits"]);
+    expect(order).toEqual(["snapshot", "splits", "scheduled"]);
   });
 });
 

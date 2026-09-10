@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, uncategorizedExpenses } from "./budget";
+import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, assembleBudgetMonthData, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, uncategorizedExpenses, normalizeBudgetId } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -121,6 +121,25 @@ describe("YNAB envelope math", () => {
     expect(data.groups[0].categories[0].activity).toBe(-40);
     expect(data.groups[0].categories[0].available).toBe(60);
     expect(data.incomeThisMonth).toBe(3253);
+  });
+
+  it("matches SQL uuid activity keys to envelope ids regardless of casing", () => {
+    expect(normalizeBudgetId("A0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A11")).toBe(
+      "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+    );
+    const id = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11";
+    const data = assembleBudgetMonthData({
+      year: 2026,
+      month: 9,
+      categories: [category(id.toUpperCase(), "Zakupy spożywcze", "Żywność")],
+      allocations: [alloc(id, 2026, 9, 400)],
+      accounts: [account("checking", 3000)],
+      activityMap: activityMapFromAggregates([{ category_id: id, year: 2026, month: 9, activity: -55 }]),
+      incomeThisMonth: 0,
+      uncategorizedCount: 0,
+    });
+    expect(data.groups[0].categories[0].activity).toBe(-55);
+    expect(data.groups[0].categories[0].assigned).toBe(400);
   });
 
   it("splits one shop trip across two envelopes", () => {
