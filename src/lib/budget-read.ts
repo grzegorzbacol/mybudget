@@ -51,11 +51,16 @@ export function resetFamilyBudgetCache() {
   coreCache.clear();
 }
 
-const CATEGORY_SELECTS = [
+/** Dynamic PostgREST column lists are typed as ParserError/GenericStringError. */
+export function asBudgetCategories(data: unknown): BudgetCategory[] {
+  return (Array.isArray(data) ? data : []) as BudgetCategory[];
+}
+
+const CATEGORY_SELECTS: string[] = [
   "id, family_id, group_name, name, icon, color, sort_order, kind",
   "id, family_id, group_name, name, icon, color, sort_order",
   "*",
-] as const;
+];
 
 /** PostgREST schema-cache miss on `kind` must not wipe envelopes. */
 export async function fetchFamilyCategories(
@@ -70,7 +75,7 @@ export async function fetchFamilyCategories(
       .eq("family_id", familyId)
       .order("sort_order");
     if (!res.error) {
-      return { data: (res.data ?? []) as BudgetCategory[] };
+      return { data: asBudgetCategories(res.data) };
     }
     lastError = res.error.message;
     if (!isSchemaLagError(lastError)) {
