@@ -28,7 +28,7 @@ interface BudgetTableProps {
 }
 
 export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
-  const { data, isPending, isError, error, refetch, isFetching } = useBudget(year, month);
+  const { data, isError, error, refetch, isFetching } = useBudget(year, month);
   const [selected, setSelected] = useState<BudgetCategoryRow | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [groupName, setGroupName] = useState("Życie codzienne");
@@ -50,8 +50,22 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
     onMonthChange(y, m);
   };
 
-  if (isPending && !data) {
-    return <div className="p-8 text-center text-muted-foreground">Ładowanie budżetu...</div>;
+  if (!data && !isError) {
+    return <BudgetSkeleton />;
+  }
+
+  if (!data && isError) {
+    return (
+      <div className="rounded-lg border border-amber-500/40 bg-background p-6 text-center">
+        <p className="font-medium">Nie udało się wczytać budżetu</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {error instanceof Error ? error.message : "Sprawdź połączenie i spróbuj ponownie."}
+        </p>
+        <Button className="mt-4" size="sm" variant="outline" disabled={isFetching} onClick={() => refetch()}>
+          {isFetching ? "Wczytywanie…" : "Spróbuj ponownie"}
+        </Button>
+      </div>
+    );
   }
 
   const groups = Array.isArray(data?.groups) ? data.groups : [];
@@ -70,7 +84,12 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
         <Button variant="ghost" size="icon" onClick={() => goMonth(-1)} aria-label="Poprzedni miesiąc">
           <ChevronLeft className="h-5 w-5" />
         </Button>
-        <h2 className="text-lg font-semibold capitalize">{getMonthLabel(year, month)}</h2>
+        <h2 className="text-lg font-semibold capitalize">
+          {getMonthLabel(year, month)}
+          {isFetching && data ? (
+            <span className="ml-2 text-xs font-normal text-muted-foreground">odświeżanie…</span>
+          ) : null}
+        </h2>
         <Button variant="ghost" size="icon" onClick={() => goMonth(1)} aria-label="Następny miesiąc">
           <ChevronRight className="h-5 w-5" />
         </Button>
@@ -345,6 +364,34 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function BudgetSkeleton() {
+  return (
+    <div className="space-y-4" role="status" aria-live="polite" aria-busy="true">
+      <div className="flex items-center justify-center py-2">
+        <div className="h-6 w-40 animate-pulse rounded bg-muted" />
+      </div>
+      <div className="rounded-lg border p-4">
+        <div className="h-4 w-28 animate-pulse rounded bg-muted" />
+        <div className="mt-2 h-8 w-36 animate-pulse rounded bg-muted" />
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className="h-10 animate-pulse rounded bg-muted" />
+          <div className="h-10 animate-pulse rounded bg-muted" />
+          <div className="hidden h-10 animate-pulse rounded bg-muted sm:block" />
+        </div>
+      </div>
+      <div className="overflow-hidden rounded-lg border">
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="flex items-center justify-between border-b px-4 py-3 last:border-b-0">
+            <div className="h-4 w-32 animate-pulse rounded bg-muted" />
+            <div className="h-4 w-16 animate-pulse rounded bg-muted" />
+          </div>
+        ))}
+      </div>
+      <p className="text-center text-sm text-muted-foreground">Ładowanie budżetu…</p>
     </div>
   );
 }

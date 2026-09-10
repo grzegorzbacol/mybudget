@@ -10,6 +10,7 @@ import { StatusStrip } from "@/components/overview/StatusStrip";
 import { SavingsStrip } from "@/components/overview/SavingsStrip";
 import { HouseholdStrip } from "@/components/overview/HouseholdStrip";
 import { SectionErrorBoundary } from "@/components/SectionErrorBoundary";
+import { useBudget } from "@/hooks/use-budget";
 import { getCurrentYearMonth } from "@/lib/format";
 
 export default function BudgetPage() {
@@ -38,16 +39,6 @@ export default function BudgetPage() {
         </div>
       </div>
 
-      <SectionErrorBoundary>
-        <StatusStrip />
-      </SectionErrorBoundary>
-      <SectionErrorBoundary>
-        <SavingsStrip />
-      </SectionErrorBoundary>
-      <SectionErrorBoundary>
-        <HouseholdStrip />
-      </SectionErrorBoundary>
-
       <SectionErrorBoundary fallbackTitle="Nie udało się pokazać kopert">
         <BudgetTable
           year={year}
@@ -59,8 +50,30 @@ export default function BudgetPage() {
         />
       </SectionErrorBoundary>
 
+      <BudgetSecondaryStrips year={year} month={month} />
+
       <ReceiptScanner open={scannerOpen} onOpenChange={setScannerOpen} />
       <TransactionForm open={formOpen} onOpenChange={setFormOpen} />
     </div>
+  );
+}
+
+/** Heavy /api/cashflow + settle must not compete with first envelope paint. */
+function BudgetSecondaryStrips({ year, month }: { year: number; month: number }) {
+  const { isFetched } = useBudget(year, month);
+  if (!isFetched) return null;
+
+  return (
+    <>
+      <SectionErrorBoundary>
+        <StatusStrip />
+      </SectionErrorBoundary>
+      <SectionErrorBoundary>
+        <SavingsStrip />
+      </SectionErrorBoundary>
+      <SectionErrorBoundary>
+        <HouseholdStrip />
+      </SectionErrorBoundary>
+    </>
   );
 }

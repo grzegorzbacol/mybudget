@@ -1,21 +1,18 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { fetchJson } from "@/lib/http";
 import type { BudgetMonthData } from "@/lib/types";
 import type { AllocateInput, MoveMoneyInput } from "@/lib/validators";
 
 export function useBudget(year: number, month: number) {
   return useQuery<BudgetMonthData>({
     queryKey: ["budget", year, month],
-    queryFn: async () => {
-      const res = await fetch(`/api/budget/${year}/${month}`);
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(typeof payload.error === "string" ? payload.error : "Nie udało się pobrać budżetu");
-      }
-      return payload;
-    },
+    queryFn: () => fetchJson<BudgetMonthData>(`/api/budget/${year}/${month}`),
+    retry: 1,
+    retryDelay: 400,
+    placeholderData: keepPreviousData,
   });
 }
 

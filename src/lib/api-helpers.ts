@@ -95,25 +95,38 @@ export async function ensureMonthAllocations(
   }
 }
 
+const CATEGORY_COLUMNS =
+  "id, family_id, group_name, name, icon, color, sort_order, kind";
+const ALLOCATION_COLUMNS =
+  "id, family_id, category_id, year, month, allocated, activity, available, rollover, moved";
+const ACCOUNT_COLUMNS = "id, family_id, name, type, balance, currency, owner_user_id, on_budget";
+const LEDGER_COLUMNS = "account_id, category_id, amount, date, transfer_account_id, transfer_id";
+const SCHEDULED_COLUMNS =
+  "id, family_id, account_id, transfer_account_id, category_id, amount, payee, next_date, frequency, end_date, enabled";
+
+function fetchBudgetSnapshotRows(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  familyId: string
+) {
+  return Promise.all([
+    supabase
+      .from("budget_categories")
+      .select(CATEGORY_COLUMNS)
+      .eq("family_id", familyId)
+      .order("sort_order"),
+    supabase.from("budget_allocations").select(ALLOCATION_COLUMNS).eq("family_id", familyId),
+    supabase.from("accounts").select(ACCOUNT_COLUMNS).eq("family_id", familyId),
+    supabase.from("transactions").select(LEDGER_COLUMNS).eq("family_id", familyId),
+    supabase.from("scheduled_transactions").select(SCHEDULED_COLUMNS).eq("family_id", familyId),
+  ]);
+}
+
 export async function loadBudgetSnapshot(
   supabase: Awaited<ReturnType<typeof createClient>>,
   familyId: string
 ) {
   const [categoriesRes, allocationsRes, accountsRes, transactionsRes, scheduledFirst] =
-    await Promise.all([
-      supabase
-        .from("budget_categories")
-        .select("*")
-        .eq("family_id", familyId)
-        .order("sort_order"),
-      supabase.from("budget_allocations").select("*").eq("family_id", familyId),
-      supabase.from("accounts").select("*").eq("family_id", familyId),
-      supabase
-        .from("transactions")
-        .select("id, account_id, category_id, amount, date, transfer_account_id, transfer_id, cleared")
-        .eq("family_id", familyId),
-      supabase.from("scheduled_transactions").select("*").eq("family_id", familyId),
-    ]);
+    await fetchBudgetSnapshotRows(supabase, familyId);
 
   let scheduledRes = scheduledFirst;
   let categoriesResFinal = categoriesRes;
@@ -129,23 +142,10 @@ export async function loadBudgetSnapshot(
     (accountsRes.error && isSchemaLagError(accountsRes.error.message));
 
   if (needsRepair) {
-    const { applyEnsureSchema } = await import("@/lib/ensure-schema");
-    const ensured = await applyEnsureSchema();
-    if (ensured.ok || (ensured.applied ?? 0) > 0) {
-      const retried = await Promise.all([
-        supabase
-          .from("budget_categories")
-          .select("*")
-          .eq("family_id", familyId)
-          .order("sort_order"),
-        supabase.from("budget_allocations").select("*").eq("family_id", familyId),
-        supabase.from("accounts").select("*").eq("family_id", familyId),
-        supabase
-          .from("transactions")
-          .select("id, account_id, category_id, amount, date, transfer_account_id, transfer_id, cleared")
-          .eq("family_id", familyId),
-        supabase.from("scheduled_transactions").select("*").eq("family_id", familyId),
-      ]);
+    const { applyEnsureSchemaForRead } = await import("@/lib/ensure-schema");
+    const ensured = await applyEnsureSchemaForRead();
+    if (ensured && (ensured.ok || (ensured.applied ?? 0) > 0) && !ensured.skipped) {
+      const retried = await fetchBudgetSnapshotRows(supabase, familyId);
       categoriesResFinal = retried[0];
       allocationsResFinal = retried[1];
       accountsResFinal = retried[2];

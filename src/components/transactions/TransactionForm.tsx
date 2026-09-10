@@ -111,7 +111,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
 
   const { data: accounts } = useQuery({
     queryKey: ["accounts", familyData?.family.id],
-    enabled: !!familyData?.family.id,
+    enabled: open && !!familyData?.family.id,
     queryFn: async () => {
       const { data } = await supabase
         .from("accounts")
@@ -123,7 +123,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
 
   const { data: payees } = useQuery({
     queryKey: ["payees", familyData?.family.id],
-    enabled: !!familyData?.family.id,
+    enabled: open && !!familyData?.family.id,
     queryFn: async () => {
       const { data } = await supabase
         .from("transactions")
@@ -138,7 +138,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
 
   const { data: categories } = useQuery({
     queryKey: ["categories", familyData?.family.id],
-    enabled: !!familyData?.family.id,
+    enabled: open && !!familyData?.family.id,
     queryFn: async () => {
       const { data } = await supabase
         .from("budget_categories")

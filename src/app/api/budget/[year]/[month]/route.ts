@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { buildBudgetMonthData } from "@/lib/budget";
 import { upcomingByCategory } from "@/lib/cashflow";
 import { addDays, isValidYearMonth, monthRange } from "@/lib/money";
-import { getAuthContext, ensureMonthAllocations, loadBudgetSnapshot } from "@/lib/api-helpers";
+import { getAuthContext, loadBudgetSnapshot } from "@/lib/api-helpers";
 
 export async function GET(
   _request: Request,
@@ -22,8 +22,8 @@ export async function GET(
   }
 
   try {
-    await ensureMonthAllocations(ctx.supabase, ctx.family.id, year, month);
-
+    // Skip ensureMonthAllocations on GET — zero rows are computed in memory.
+    // Persisting them is a write-on-read that races schema repair and delays first paint.
     const snapshot = await loadBudgetSnapshot(ctx.supabase, ctx.family.id);
     if (snapshot.error) {
       return NextResponse.json(

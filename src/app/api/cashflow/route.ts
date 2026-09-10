@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { buildBudgetMonthData } from "@/lib/budget";
 import { computeCashflow, upcomingByCategory, buildCashflowTimeline, nextPayday, outflowUntil, isLowBalance } from "@/lib/cashflow";
 import { addDays, addMonths, monthRange, money } from "@/lib/money";
-import { getAuthContext, ensureMonthAllocations, loadBudgetSnapshot } from "@/lib/api-helpers";
+import { getAuthContext, loadBudgetSnapshot } from "@/lib/api-helpers";
 import { getCurrentYearMonth } from "@/lib/format";
 import { computeRunway, monthCashActual, monthSpendPace, netWorthHistory, wealthLayers } from "@/lib/wealth";
 import {
@@ -28,7 +28,6 @@ export async function GET(request: Request) {
   const { year, month } = getCurrentYearMonth();
 
   try {
-    await ensureMonthAllocations(ctx.supabase, ctx.family.id, year, month);
     const snapshot = await loadBudgetSnapshot(ctx.supabase, ctx.family.id);
     if (snapshot.error) {
       return NextResponse.json(
@@ -114,20 +113,14 @@ export async function GET(request: Request) {
     } else {
       const { isSchemaLagError } = await import("@/lib/schema");
       if (isSchemaLagError(goalFull.error.message)) {
-        const { applyEnsureSchema } = await import("@/lib/ensure-schema");
-        await applyEnsureSchema();
-        const retried = await ctx.supabase
+        const fallback = await ctx.supabase
           .from("goals")
-          .select("id, category_id, target_amount, target_date, type, priority")
+          .select("id, category_id, target_amount, target_date, type")
           .eq("family_id", ctx.family.id);
-        if (!retried.error) {
-          goalRows = (retried.data ?? []) as Goal[];
-        } else {
-          const fallback = await ctx.supabase
-            .from("goals")
-            .select("id, category_id, target_amount, target_date, type")
-            .eq("family_id", ctx.family.id);
-          goalRows = (fallback.data ?? []) as Goal[];
+        goalRows = (fallback.data ?? []) as Goal[];
+        const { applyEnsureSchema, wasEnsureSchemaRecentlyApplied } = await import("@/lib/ensure-schema");
+        if (!wasEnsureSchemaRecentlyApplied()) {
+          void applyEnsureSchema();
         }
       }
     }
