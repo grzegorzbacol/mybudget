@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   FAMILY_BUDGET_SQL,
   FAMILY_BUDGET_SQL_SAFE,
+  isUsableSqlBudgetPayload,
   monthAmount,
   monthCount,
   parseFamilyBudgetPayload,
@@ -34,5 +35,36 @@ describe("budget SQL aggregates", () => {
     expect(monthAmount(parsed.spending, 2026, 9)).toBe(2100);
     expect(monthCount(parsed.uncategorized, 2026, 9)).toBe(2);
     expect(monthAmount(parsed.income, 2026, 8)).toBe(0);
+  });
+
+  it("parses node-pg json strings and nested json_agg strings", () => {
+    const parsed = parseFamilyBudgetPayload(
+      JSON.stringify({
+        categories: JSON.stringify([{ id: "c1", name: "Jedzenie" }]),
+        allocations: "[]",
+        accounts: '[{"id":"a1"}]',
+        scheduled: [],
+        activity: [],
+        income: JSON.stringify([{ year: 2026, month: 9, amount: 3253 }]),
+        spending: [],
+        uncategorized: [],
+      })
+    );
+    expect(parsed.categories).toEqual([{ id: "c1", name: "Jedzenie" }]);
+    expect(parsed.accounts).toHaveLength(1);
+    expect(monthAmount(parsed.income, 2026, 9)).toBe(3253);
+    expect(isUsableSqlBudgetPayload(parsed)).toBe(true);
+  });
+
+  it("does not treat an empty or unparsed payload as a successful SQL read", () => {
+    expect(isUsableSqlBudgetPayload(parseFamilyBudgetPayload("{}"))).toBe(false);
+    expect(isUsableSqlBudgetPayload(parseFamilyBudgetPayload("not-json"))).toBe(false);
+    expect(isUsableSqlBudgetPayload(parseFamilyBudgetPayload(undefined))).toBe(false);
+    expect(isUsableSqlBudgetPayload(parseFamilyBudgetPayload({ categories: [] }))).toBe(false);
+  });
+
+  it("asks Postgres for jsonb so node-pg deserializes the payload", () => {
+    expect(FAMILY_BUDGET_SQL).toContain(")::jsonb AS payload");
+    expect(FAMILY_BUDGET_SQL_SAFE).toContain(")::jsonb AS payload");
   });
 });

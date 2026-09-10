@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { activityMapFromAggregates, assembleBudgetMonthData } from "./budget";
+import { isUsableSqlBudgetPayload } from "./budget-sql";
 import { budgetMonthFromCore, resetFamilyBudgetCache, type FamilyBudgetCore } from "./budget-read";
 import type { Account, BudgetAllocation, BudgetCategory } from "./types";
 
@@ -84,5 +85,20 @@ describe("budgetMonthFromCore", () => {
       uncategorizedCount: 1,
     });
     expect(fromCore.groups).toEqual(assembled.groups);
+  });
+
+  it("falls back when SQL reports success but has no envelopes", () => {
+    expect(isUsableSqlBudgetPayload({
+      categories: [],
+      allocations: [],
+      accounts: [],
+      scheduled: [],
+      activity: [],
+      income: [],
+      spending: [],
+      uncategorized: [],
+    })).toBe(false);
+    const empty = budgetMonthFromCore(core({ categories: [] }), 2026, 9);
+    expect(empty.groups).toEqual([]);
   });
 });

@@ -9,6 +9,7 @@ import {
 } from "@/lib/budget";
 import { addDays, monthRange } from "@/lib/money";
 import {
+  isUsableSqlBudgetPayload,
   monthAmount,
   monthCount,
   queryFamilyBudgetSql,
@@ -146,7 +147,9 @@ function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
 
 async function loadCoreUncached(supabase: Supabase, familyId: string): Promise<FamilyBudgetCore> {
   const sql = await queryFamilyBudgetSql(familyId);
-  if (sql) return coreFromSql(sql);
+  // Do not treat a successful-but-empty SQL payload as truth: node-pg may hand
+  // back json as a string (parsed to {}), or DATABASE_URL may not be Supabase.
+  if (isUsableSqlBudgetPayload(sql)) return coreFromSql(sql);
   return loadCoreFromRest(supabase, familyId);
 }
 
