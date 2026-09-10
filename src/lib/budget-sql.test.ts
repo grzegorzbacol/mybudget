@@ -10,11 +10,13 @@ import {
   parseFamilyBudgetPayload,
   postgresPoolConfig,
   postgresClientAnswered,
+  queryCashflowDailyActualsWithClient,
   queryFamilyBudgetWithClient,
   remainingMs,
   resetBudgetSqlPlans,
   shouldSkipCashflowTimeline,
   snapshotAttempts,
+  SQL_DATE_RANGE_PREDICATE,
   SQL_POOL_MAX,
   SQL_STATEMENT_TIMEOUT_MS,
   sqlProbeFromClientResult,
@@ -244,6 +246,17 @@ describe("postgres pool hardening", () => {
     });
     expect(result).toBeNull();
     expect(snaps).toBe(0);
+  });
+
+  it("keeps cashflow date range predicates sargable on transactions.date", async () => {
+    let seen = "";
+    await queryCashflowDailyActualsWithClient("11111111-1111-1111-1111-111111111111", "2026-09-01", "2026-10-01", async (sql) => {
+      seen = sql;
+      return { rows: [] };
+    });
+    expect(seen).toContain(SQL_DATE_RANGE_PREDICATE);
+    expect(seen).not.toContain("timezone('Europe/Warsaw'");
+    expect(seen).not.toContain("t.date::timestamptz");
   });
 
   it("skips the cashflow timeline when the 8s response budget is almost gone", () => {

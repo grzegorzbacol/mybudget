@@ -46,9 +46,8 @@ function sqlWarsawMonth(alias = "t"): string {
   return `EXTRACT(MONTH FROM ${sqlWarsawTimestamp(alias)})::int`;
 }
 
-function sqlWarsawDateText(alias = "t"): string {
-  return `(${sqlWarsawTimestamp(alias)})::date::text`;
-}
+/** `transactions.date` is a timezone-free `date`. Keep range predicates sargable for (family_id, date). */
+export const SQL_DATE_RANGE_PREDICATE = "t.date >= $2::date AND t.date < $3::date";
 
 export function familyIdMatch(mode: FamilyPred, qualifier?: string): string {
   const col = qualifier ? `${qualifier}.family_id` : "family_id";
@@ -199,13 +198,12 @@ function dailyActualsSql(pred: FamilyPred, kind: SnapshotKind): string {
   AND t.transfer_id IS NULL`
       : "";
   return `
-SELECT ${sqlWarsawDateText("t")} AS date,
+SELECT t.date::text AS date,
        SUM(CASE WHEN t.amount > 0 AND t.category_id IS NULL THEN t.amount ELSE 0 END)::float8 AS actual_in,
        SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END)::float8 AS actual_out
 FROM transactions t
 WHERE ${familyIdMatch(pred, "t")}
-  AND (${sqlWarsawTimestamp("t")})::date >= $2::date
-  AND (${sqlWarsawTimestamp("t")})::date < $3::date
+  AND ${SQL_DATE_RANGE_PREDICATE}
   ${transferFilter}
 GROUP BY 1
 `;
@@ -214,20 +212,18 @@ GROUP BY 1
 function ledgerRangeSql(pred: FamilyPred, kind: SnapshotKind): string {
   if (kind === "full") {
     return `
-SELECT t.account_id::text AS account_id, t.category_id::text AS category_id, t.amount, ${sqlWarsawDateText("t")} AS date,
+SELECT t.account_id::text AS account_id, t.category_id::text AS category_id, t.amount, t.date::text AS date,
        t.transfer_account_id, t.transfer_id
 FROM transactions t
 WHERE ${familyIdMatch(pred, "t")}
-  AND (${sqlWarsawTimestamp("t")})::date >= $2::date
-  AND (${sqlWarsawTimestamp("t")})::date < $3::date
+  AND ${SQL_DATE_RANGE_PREDICATE}
 `;
   }
   return `
-SELECT t.account_id::text AS account_id, t.category_id::text AS category_id, t.amount, ${sqlWarsawDateText("t")} AS date
+SELECT t.account_id::text AS account_id, t.category_id::text AS category_id, t.amount, t.date::text AS date
 FROM transactions t
 WHERE ${familyIdMatch(pred, "t")}
-  AND (${sqlWarsawTimestamp("t")})::date >= $2::date
-  AND (${sqlWarsawTimestamp("t")})::date < $3::date
+  AND ${SQL_DATE_RANGE_PREDICATE}
 `;
 }
 
