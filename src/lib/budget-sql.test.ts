@@ -12,9 +12,12 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL).toContain("GROUP BY 1, 2, 3");
     expect(FAMILY_BUDGET_SQL).toContain("AND t.amount > 0");
     expect(FAMILY_BUDGET_SQL).toContain("AND t.amount < 0");
-    expect(FAMILY_BUDGET_SQL).toContain("transaction_category_splits");
+    expect(FAMILY_BUDGET_SQL).toContain("family_id::text = $1::text");
+    expect(FAMILY_BUDGET_SQL).not.toContain("transaction_category_splits");
+    expect(FAMILY_BUDGET_SQL).not.toContain("COALESCE(kind");
     expect(FAMILY_BUDGET_SQL).toContain("transfer_account_id IS NULL");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("AND t.amount > 0");
+    expect(FAMILY_BUDGET_SQL_SAFE).toContain("family_id::text = $1::text");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("GROUP BY 1, 2, 3");
   });
 
@@ -34,5 +37,16 @@ describe("budget SQL aggregates", () => {
     expect(monthAmount(parsed.spending, 2026, 9)).toBe(2100);
     expect(monthCount(parsed.uncategorized, 2026, 9)).toBe(2);
     expect(monthAmount(parsed.income, 2026, 8)).toBe(0);
+  });
+
+  it("parses a JSON string payload and nested string arrays from node-pg", () => {
+    const parsed = parseFamilyBudgetPayload(
+      JSON.stringify({
+        categories: JSON.stringify([{ id: "zyw", group_name: "Żywność", name: "Zakupy" }]),
+        income: JSON.stringify([{ year: 2026, month: 9, amount: 8808 }]),
+      })
+    );
+    expect(parsed.categories).toEqual([{ id: "zyw", group_name: "Żywność", name: "Zakupy" }]);
+    expect(monthAmount(parsed.income, 2026, 9)).toBe(8808);
   });
 });

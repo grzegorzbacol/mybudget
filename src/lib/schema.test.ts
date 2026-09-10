@@ -54,6 +54,7 @@ describe("schema lag helpers", () => {
     expect(joined).toContain("NOTIFY pgrst");
     expect(joined).toContain("idx_transactions_family_date");
     expect(joined).toContain("idx_allocations_family");
+    expect(joined).toContain("group_name IS DISTINCT FROM 'Przychody'");
     for (const column of REQUIRED_SCHEMA_COLUMNS) {
       expect(joined).toContain(column.split(".")[1]);
     }
@@ -94,6 +95,7 @@ describe("schema lag helpers", () => {
       expect(sql).toContain("NOTIFY pgrst");
       expect(sql).toContain("idx_transactions_family_date");
       expect(sql).toContain("idx_allocations_family");
+      expect(sql).toContain("group_name IS DISTINCT FROM 'Przychody'");
     }
     expect(scheduledSql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
     expect(accountSql).toContain("ADD COLUMN IF NOT EXISTS on_budget");

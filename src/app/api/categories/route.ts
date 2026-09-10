@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
+import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
 import { insertRowWithSchemaRepair } from "@/lib/schema-write";
 import { categorySchema } from "@/lib/validators";
 
@@ -41,6 +42,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: created.error }, { status: 500 });
   }
 
+  invalidateFamilyBudgetCache(ctx.family.id);
   return NextResponse.json(
     created.warning ? { ...(created.data as object), warning: created.warning } : created.data
   );

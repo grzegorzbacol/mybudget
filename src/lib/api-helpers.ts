@@ -22,6 +22,13 @@ export function resetAuthMembershipCache() {
   membershipCache.clear();
 }
 
+export function unwrapFamily(raw: unknown): Family | null {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (!value || typeof value !== "object") return null;
+  const id = (value as { id?: unknown }).id;
+  return typeof id === "string" && id ? (value as Family) : null;
+}
+
 export async function getAuthContext() {
   const supabase = await createClient();
   const {
@@ -53,8 +60,11 @@ export async function getAuthContext() {
     return { error: "Brak rodziny", status: 403 as const };
   }
 
-  const family = membership.family as unknown as Family;
+  const family = unwrapFamily(membership.family);
   const role = membership.role as string;
+  if (!family?.id) {
+    return { error: "Brak rodziny", status: 403 as const };
+  }
   membershipCache.set(user.id, { at: Date.now(), family, role });
 
   return {
@@ -118,6 +128,7 @@ export async function ensureMonthAllocations(
 
 const CATEGORY_COLUMNS =
   "id, family_id, group_name, name, icon, color, sort_order, kind";
+const CATEGORY_COLUMNS_SAFE = "id, family_id, group_name, name, icon, color, sort_order";
 const ALLOCATION_COLUMNS =
   "id, family_id, category_id, year, month, allocated, activity, available, rollover, moved";
 const ACCOUNT_COLUMNS = "id, family_id, name, type, balance, currency, owner_user_id, on_budget";
@@ -211,8 +222,22 @@ export async function loadBudgetSnapshot(
     schemaLag = schemaLag ? `${schemaLag} ${scheduledError}` : scheduledError;
   }
 
+  let categories = (categoriesRes.data ?? []) as BudgetCategory[];
+  let categoriesError = categoriesRes.error?.message;
+  if (categoriesRes.error && isSchemaLagError(categoriesRes.error.message)) {
+    const fallback = await supabase
+      .from("budget_categories")
+      .select(CATEGORY_COLUMNS_SAFE)
+      .eq("family_id", familyId)
+      .order("sort_order");
+    if (!fallback.error) {
+      categories = (fallback.data ?? []) as BudgetCategory[];
+      categoriesError = undefined;
+    }
+  }
+
   return {
-    categories: (categoriesRes.data ?? []) as BudgetCategory[],
+    categories,
     allocations: (allocationsRes.data ?? []) as BudgetAllocation[],
     accounts: (accountsRes.data ?? []) as Account[],
     transactions,
@@ -221,7 +246,7 @@ export async function loadBudgetSnapshot(
     transferMarkersMissing,
     scheduledError,
     error:
-      categoriesRes.error?.message ||
+      categoriesError ||
       allocationsRes.error?.message ||
       accountsRes.error?.message ||
       transactionsError,

@@ -75,6 +75,8 @@ EXCEPTION
   WHEN duplicate_object THEN NULL;
   WHEN check_violation THEN NULL;
 END $$`,
+  `UPDATE budget_categories SET kind = 'income' WHERE group_name = 'Przychody' AND kind IS DISTINCT FROM 'income'`,
+  `UPDATE budget_categories SET kind = 'expense' WHERE kind = 'income' AND group_name IS DISTINCT FROM 'Przychody'`,
   `ALTER TABLE budget_allocations ADD COLUMN IF NOT EXISTS moved numeric NOT NULL DEFAULT 0`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_id uuid`,

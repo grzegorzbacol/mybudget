@@ -38,8 +38,32 @@ export function isIncomeToReadyToAssign(tx: LedgerTransaction, accounts: Account
   return isOnBudgetAccount(tx, accounts);
 }
 
+const INCOME_GROUP_RE = /^(przychody|income|revenue)$/i;
+const INCOME_NAME_RE = /^(wynagrodzenie|inne przychody|salary|paycheck|income)$/i;
+
+/** Classic income group from the original seed (Przychody / Wynagrodzenie). */
+export function isIncomeGroupName(groupName?: string | null): boolean {
+  return INCOME_GROUP_RE.test(String(groupName ?? "").trim());
+}
+
+export function isIncomeCategoryName(name?: string | null): boolean {
+  return INCOME_NAME_RE.test(String(name ?? "").trim());
+}
+
+/**
+ * Envelopes shown on Budżet. Live DBs sometimes have kind='income' on every
+ * row (wrong DEFAULT when the column was added). Trust group/name first so
+ * Żywność / Transport / Dom still appear; only hide Przychody.
+ */
+export function isEnvelopeCategory(category: Pick<BudgetCategory, "kind" | "group_name" | "name">): boolean {
+  const group = String(category.group_name ?? "").trim();
+  const name = String(category.name ?? "").trim();
+  if (isIncomeGroupName(group) || isIncomeCategoryName(name)) return false;
+  return true;
+}
+
 export function isExpenseCategory(category: BudgetCategory): boolean {
-  return (category.kind ?? "expense") !== "income";
+  return isEnvelopeCategory(category);
 }
 
 export type CategorySplitLine = {
@@ -292,7 +316,7 @@ export function assembleBudgetMonthData(input: {
   }
   if (!Number.isFinite(earliest)) earliest = targetIndex;
 
-  const expenseCategories = (categories ?? []).filter(isExpenseCategory);
+  const expenseCategories = (categories ?? []).filter(isEnvelopeCategory);
   const rowsById = new Map<string, BudgetCategoryRow>();
 
   for (const category of expenseCategories) {
