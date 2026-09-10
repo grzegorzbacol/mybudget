@@ -44,10 +44,6 @@ function scoreDecodedText(text: string, encoding: BankCsvEncoding): number {
   return polish * 10 - controls * 8 + prefer;
 }
 
-function hasUtf8Bom(bytes: Uint8Array): boolean {
-  return bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
-}
-
 export function detectBankFileEncoding(bytes: Uint8Array): BankCsvEncoding {
   return decodeBankFile(bytes).encoding;
 }
@@ -58,12 +54,14 @@ export function decodeBankFileBytes(bytes: Uint8Array): string {
 
 export function decodeBankFile(bytes: Uint8Array): { text: string; encoding: BankCsvEncoding } {
   if (bytes.length === 0) return { text: "", encoding: "utf-8" };
-  if (hasUtf8Bom(bytes)) {
-    return { text: new TextDecoder("utf-8").decode(bytes), encoding: "utf-8" };
+
+  const utf8 = decodeLabel(bytes, "utf-8");
+  if (utf8 != null) {
+    return { text: utf8, encoding: "utf-8" };
   }
 
   let best: { text: string; encoding: BankCsvEncoding; score: number } | null = null;
-  for (const encoding of BANK_CSV_ENCODINGS) {
+  for (const encoding of ["windows-1250", "iso-8859-2"] as const) {
     const text = decodeLabel(bytes, encoding);
     if (text == null) continue;
     const score = scoreDecodedText(text, encoding);

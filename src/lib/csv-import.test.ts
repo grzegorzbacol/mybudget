@@ -170,4 +170,16 @@ describe("bank CSV import", () => {
     expect(detectBankFileEncoding(bom)).toBe("utf-8");
     expect(parseBankCsvBytes(bom)[0]?.payee).toBe("PRZELEW WEWNĘTRZNY PRZYCHODZĄCY");
   });
+
+  it("keeps a valid UTF-8 CSV with £ instead of scoring Windows-1250 mojibake", () => {
+    const csv = `#Data operacji;#Opis operacji;#Kwota
+2026-09-08;Tesco £12.50;-12,50
+`;
+    const bytes = new TextEncoder().encode(csv);
+    expect(detectBankFileEncoding(bytes)).toBe("utf-8");
+    expect(decodeBankFileBytes(bytes)).toContain("Tesco £12.50");
+    expect(parseBankCsvBytes(bytes)).toEqual([
+      { date: "2026-09-08", payee: "Tesco £12.50", amount: -12.5, memo: "Import mBank" },
+    ]);
+  });
 });
