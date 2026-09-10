@@ -71,4 +71,16 @@ describe("fetchJson", () => {
     await vi.advanceTimersByTimeAsync(30);
     await expectation;
   });
+
+  it("returns {} when the body is empty instead of throwing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () => "",
+      })
+    );
+
+    await expect(fetchJson("/api/transactions/1")).resolves.toEqual({});
+  });
 });

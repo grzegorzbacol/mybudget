@@ -60,7 +60,7 @@ export default function BudgetPage() {
 
 /** Heavy /api/cashflow + settle must not compete with first envelope paint. */
 function BudgetSecondaryStrips({ year, month }: { year: number; month: number }) {
-  const { isFetched } = useBudget(year, month);
+  const { data, isFetched } = useBudget(year, month);
   if (!isFetched) return null;
 
   return (
@@ -69,7 +69,7 @@ function BudgetSecondaryStrips({ year, month }: { year: number; month: number })
         <StatusStrip />
       </SectionErrorBoundary>
       <SectionErrorBoundary>
-        <SavingsStrip />
+        <SavingsStrip budget={data} />
       </SectionErrorBoundary>
       <SectionErrorBoundary>
         <HouseholdStrip />

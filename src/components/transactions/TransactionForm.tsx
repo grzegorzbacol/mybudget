@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { useCreateTransaction, useCreateTransfer, useUpdateTransaction } from "@/hooks/use-transactions";
 import type { Transaction } from "@/lib/types";
+import { todayIso } from "@/lib/format";
 import { categorySplitsValid } from "@/lib/category-splits";
 import { useFamily, useFamilyMembers } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
@@ -61,7 +62,7 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction }
   );
   const [payee, setPayee] = useState(prefill?.payee ?? "");
   const [amount, setAmount] = useState(prefill?.amount != null ? String(Math.abs(prefill.amount)) : "");
-  const [date, setDate] = useState(prefill?.date ?? new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(prefill?.date ?? todayIso());
   const [memo, setMemo] = useState("");
   const [accountId, setAccountId] = useState(prefill?.accountId ?? "");
   const [toAccountId, setToAccountId] = useState("");
@@ -96,7 +97,7 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction }
     setType(editTransaction && isTransferTx(editTransaction) ? "transfer" : isIncome ? "income" : "expense");
     setPayee(source?.payee ?? "");
     setAmount(source?.amount != null ? String(Math.abs(source.amount)) : "");
-    setDate(source?.date ?? new Date().toISOString().slice(0, 10));
+    setDate(source?.date ?? todayIso());
     setCategoryId(source?.categoryId ?? "");
     setAccountId(source?.accountId ?? "");
     setReceiptUrl(source?.receiptUrl ?? "");

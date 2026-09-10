@@ -9,13 +9,18 @@ import {
   monthCount,
   parseFamilyBudgetPayload,
   postgresPoolConfig,
+  postgresClientAnswered,
+  queryCashflowDailyActualsWithClient,
   queryFamilyBudgetWithClient,
   remainingMs,
   resetBudgetSqlPlans,
   shouldSkipCashflowTimeline,
   snapshotAttempts,
+  SQL_DATE_RANGE_PREDICATE,
   SQL_POOL_MAX,
   SQL_STATEMENT_TIMEOUT_MS,
+  sqlProbeFromClientResult,
+  unwrapPgResult,
   withTimeout,
 } from "./budget-sql";
 
@@ -29,10 +34,18 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL).not.toContain("transaction_category_splits");
     expect(FAMILY_BUDGET_SQL).not.toContain("COALESCE(kind");
     expect(FAMILY_BUDGET_SQL).toContain("transfer_account_id IS NULL");
+    expect(FAMILY_BUDGET_SQL).toContain("LEFT JOIN accounts");
+    expect(FAMILY_BUDGET_SQL).toContain("a.id::text = t.account_id::text");
+    expect(FAMILY_BUDGET_SQL).toContain("on_budget IS DISTINCT FROM FALSE");
+    expect(FAMILY_BUDGET_SQL).toContain("Europe/Warsaw");
+    expect(FAMILY_BUDGET_SQL).toContain("id::text AS id");
+    expect(FAMILY_BUDGET_SQL).toContain("::jsonb AS payload");
+    expect(FAMILY_BUDGET_SQL).not.toContain("JOIN accounts a ON a.id = t.account_id");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("WITH ledger AS MATERIALIZED");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("amount > 0");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("family_id = $1::uuid");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("GROUP BY 1, 2, 3");
+    expect(FAMILY_BUDGET_SQL_SAFE).toContain("Europe/Warsaw");
   });
 
   it("parses a compact payload into month totals", () => {
@@ -172,7 +185,21 @@ describe("snapshot dialect cache", () => {
       return { rows: [] };
     };
     await queryFamilyBudgetWithClient("11111111-1111-1111-1111-111111111111", query);
-    expect(order).toEqual(["snapshot", "scheduled", "splits"]);
+    expect(order).toEqual(["snapshot", "splits", "scheduled"]);
+  });
+
+  it("reads snapshot payload from a multi-statement result array", async () => {
+    const query = async (sql: string) => {
+      if (sql.includes("json_build_object")) {
+        return [
+          { command: "SET", rows: [] },
+          { rows: [{ payload: { categories: [{ id: "c1", group_name: "Żywność", name: "Zakupy" }] } }] },
+        ];
+      }
+      return { rows: [] };
+    };
+    const payload = await queryFamilyBudgetWithClient("11111111-1111-1111-1111-111111111111", query as never);
+    expect(payload?.categories[0]?.name).toBe("Zakupy");
   });
 });
 
@@ -221,6 +248,17 @@ describe("postgres pool hardening", () => {
     expect(snaps).toBe(0);
   });
 
+  it("keeps cashflow date range predicates sargable on transactions.date", async () => {
+    let seen = "";
+    await queryCashflowDailyActualsWithClient("11111111-1111-1111-1111-111111111111", "2026-09-01", "2026-10-01", async (sql) => {
+      seen = sql;
+      return { rows: [] };
+    });
+    expect(seen).toContain(SQL_DATE_RANGE_PREDICATE);
+    expect(seen).not.toContain("timezone('Europe/Warsaw'");
+    expect(seen).not.toContain("t.date::timestamptz");
+  });
+
   it("skips the cashflow timeline when the 8s response budget is almost gone", () => {
     expect(shouldSkipCashflowTimeline(0, 8_000, 1_500, 7_000)).toBe(true);
     expect(shouldSkipCashflowTimeline(0, 8_000, 1_500, 1_000)).toBe(false);
@@ -233,7 +271,31 @@ describe("postgres pool hardening", () => {
       status: 200,
       body: { ok: true, db: false, skipped: "DATABASE_URL not set" },
     });
-    expect(healthHttpFromProbe({ db: false, error: "SELECT 1 returned no rows" }).status).toBe(503);
-    expect(healthHttpFromProbe({ db: false, error: "SELECT 1 returned no rows" }).body.db).toBe(false);
+    expect(healthHttpFromProbe({ db: false, error: "probe timed out" }).status).toBe(503);
+    expect(healthHttpFromProbe({ db: false, error: "probe timed out" }).body.db).toBe(false);
+  });
+
+  it("treats every resolved SELECT 1 shape as db:true — never 'returned no rows'", () => {
+    expect(sqlProbeFromClientResult({ rows: [{ ok: 1 }] })).toEqual({ db: true });
+    expect(sqlProbeFromClientResult({ command: "SELECT", rowCount: 1 })).toEqual({ db: true });
+    expect(sqlProbeFromClientResult({ rows: [], command: "SELECT", rowCount: 1 })).toEqual({ db: true });
+    expect(sqlProbeFromClientResult({ command: "SELECT", rowCount: 1, fields: [{ name: "ok" }] })).toEqual({
+      db: true,
+    });
+    expect(sqlProbeFromClientResult([{ command: "SET", rows: [] }, { rows: [{ ok: 1 }] }])).toEqual({ db: true });
+    expect(postgresClientAnswered({ command: "SELECT", rowCount: 1 })).toBe(true);
+    expect(postgresClientAnswered({ rows: [] })).toBe(true);
+    expect(postgresClientAnswered(null)).toBe(false);
+    expect(sqlProbeFromClientResult(null).db).toBe(false);
+    expect(sqlProbeFromClientResult(null).error).not.toMatch(/no rows/i);
+    expect(JSON.stringify(sqlProbeFromClientResult({ rows: [] }))).not.toMatch(/no rows/i);
+  });
+
+  it("unwraps multi-statement node-pg arrays so snapshot payload is still found", () => {
+    const payload = { categories: [{ id: "c1" }], income: [{ year: 2026, month: 9, amount: 1 }] };
+    expect(unwrapPgResult([{ command: "SET", rows: [] }, { rows: [{ payload }] }]).rows[0]?.payload).toEqual(
+      payload
+    );
+    expect(unwrapPgResult({ command: "SELECT", rowCount: 1 }).rows).toEqual([]);
   });
 });

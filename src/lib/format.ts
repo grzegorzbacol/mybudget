@@ -36,7 +36,33 @@ export function getMonthLabel(year: number, month: number): string {
   }).format(date);
 }
 
-export function getCurrentYearMonth(): { year: number; month: number } {
-  const now = new Date();
-  return { year: now.getFullYear(), month: now.getMonth() + 1 };
+const BUDGET_TIMEZONE = "Europe/Warsaw";
+
+export function getCurrentYearMonth(now = new Date()): { year: number; month: number } {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: BUDGET_TIMEZONE,
+    year: "numeric",
+    month: "numeric",
+  }).formatToParts(now);
+  const year = Number(parts.find((part) => part.type === "year")?.value);
+  const month = Number(parts.find((part) => part.type === "month")?.value);
+  if (!Number.isInteger(year) || !Number.isInteger(month)) {
+    return { year: now.getFullYear(), month: now.getMonth() + 1 };
+  }
+  return { year, month };
+}
+
+/** Calendar date in Europe/Warsaw — do not use UTC ISO near midnight. */
+export function todayIso(now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: BUDGET_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  if (!year || !month || !day) return now.toISOString().slice(0, 10);
+  return `${year}-${month}-${day}`;
 }

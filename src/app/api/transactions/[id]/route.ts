@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { deleteFamilyTransaction } from "@/lib/transaction-delete";
 import { transactionPatchSchema } from "@/lib/validators";
 import { replaceCategorySplits } from "@/lib/category-splits";
 
@@ -123,37 +124,9 @@ export async function DELETE(
     return NextResponse.json({ error: "Nie znaleziono transakcji" }, { status: 404 });
   }
 
-  const withTransfer = await ctx.supabase
-    .from("transactions")
-    .select("id, transfer_id")
-    .eq("id", id)
-    .eq("family_id", ctx.family.id)
-    .maybeSingle();
-
-  const transferId = withTransfer.data?.transfer_id;
-  if (transferId) {
-    const { error } = await ctx.supabase
-      .from("transactions")
-      .delete()
-      .eq("transfer_id", transferId)
-      .eq("family_id", ctx.family.id);
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    invalidateFamilyBudgetCache(ctx.family.id);
-    return NextResponse.json({ ok: true });
-  }
-
-  await ctx.supabase.from("transaction_category_splits").delete().eq("transaction_id", id);
-  const { error, count } = await ctx.supabase
-    .from("transactions")
-    .delete({ count: "exact" })
-    .eq("id", id)
-    .eq("family_id", ctx.family.id);
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-  if (count === 0 && !withTransfer.data) {
-    return NextResponse.json({ error: "Nie znaleziono transakcji" }, { status: 404 });
+  const result = await deleteFamilyTransaction(ctx.supabase, ctx.family.id, id);
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
 
   invalidateFamilyBudgetCache(ctx.family.id);

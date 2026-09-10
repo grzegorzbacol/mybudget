@@ -191,7 +191,9 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
         <div className="hidden grid-cols-12 gap-2 border-b bg-muted/50 px-4 py-2 text-xs font-medium text-muted-foreground md:grid">
           <div className="col-span-4">Kategoria</div>
           <div className="col-span-2 text-right">Przydzielone</div>
-          <div className="col-span-3 text-right">Aktywność</div>
+          <div className="col-span-3 text-right" title="Suma wydatków w tym miesiącu, nie zaległości z koperty">
+            Aktywność
+          </div>
           <div className="col-span-3 text-right">Dostępne</div>
         </div>
 
@@ -266,7 +268,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                     onClick={() => setSelected(row)}
                     className="col-span-4 text-right text-sm md:col-span-3"
                   >
-                    <p className="mb-1 text-xs text-muted-foreground md:hidden">Aktywność</p>
+                    <p className="mb-1 text-xs text-muted-foreground md:hidden">Aktywność (ten miesiąc)</p>
                     <Money amount={row.activity} />
                   </button>
                   <button

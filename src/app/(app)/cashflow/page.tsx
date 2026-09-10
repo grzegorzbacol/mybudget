@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { formatCurrency, getCurrentYearMonth } from "@/lib/format";
+import { formatCurrency, getCurrentYearMonth, todayIso } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { isExpenseCategory, planFillEnvelopeGaps } from "@/lib/budget";
 import type { ScheduledTransaction } from "@/lib/types";
@@ -97,11 +97,11 @@ export default function CashflowPage() {
   const [accountId, setAccountId] = useState("");
   const [toAccountId, setToAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
-  const [nextDate, setNextDate] = useState(new Date().toISOString().slice(0, 10));
+  const [nextDate, setNextDate] = useState(todayIso());
   const [endDate, setEndDate] = useState("");
   const [frequency, setFrequency] = useState<ScheduledTransaction["frequency"]>("monthly");
 
-  const { data, isLoading } = useCashflowOverview(days, bucket);
+  const { data, isPending, isError, error, refetch, isFetching } = useCashflowOverview(days, bucket);
 
   const { data: accounts } = useQuery({
     queryKey: ["accounts", familyData?.family.id],
@@ -137,7 +137,7 @@ export default function CashflowPage() {
     setEndDate("");
     setKind("expense");
     setFrequency("monthly");
-    setNextDate(new Date().toISOString().slice(0, 10));
+    setNextDate(todayIso());
   };
 
   const openCreate = () => {
@@ -288,7 +288,20 @@ export default function CashflowPage() {
           </Card>
         )}
 
-      {isLoading && <p className="text-center text-muted-foreground">Ładowanie...</p>}
+      {isPending && !data && <p className="text-center text-muted-foreground">Ładowanie...</p>}
+
+      {isError && !data && (
+        <Card>
+          <CardContent className="py-8 text-center text-sm">
+            <p className="text-muted-foreground">
+              {error instanceof Error ? error.message : "Nie udało się wczytać przepływów."}
+            </p>
+            <Button className="mt-4" size="sm" variant="outline" disabled={isFetching} onClick={() => refetch()}>
+              {isFetching ? "Wczytywanie…" : "Spróbuj ponownie"}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       {data?.warning && (
         <Card className="border-amber-500/40">
@@ -298,7 +311,7 @@ export default function CashflowPage() {
         </Card>
       )}
 
-      {!isLoading && !cashflow && (
+      {!data && !isPending && !isError && (
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground">
             Nie udało się wczytać przepływów. Odśwież stronę albo wróć po zalogowaniu.

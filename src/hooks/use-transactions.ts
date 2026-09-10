@@ -188,18 +188,41 @@ export function useDeleteTransaction() {
   return useMutation({
     mutationFn: async (id: string) => {
       const res = await fetch(`/api/transactions/${id}`, { method: "DELETE" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Błąd usuwania");
+      const text = await res.text();
+      let data: { error?: string; ok?: boolean } = {};
+      if (text) {
+        try {
+          data = JSON.parse(text) as { error?: string; ok?: boolean };
+        } catch {
+          data = {};
+        }
+      }
+      if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "Błąd usuwania");
       return data;
+    },
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: ["transactions"] });
+      const previous = queryClient.getQueriesData<Transaction[]>({ queryKey: ["transactions"] });
+      queryClient.setQueriesData<Transaction[]>({ queryKey: ["transactions"] }, (current) =>
+        current ? current.filter((row) => row.id !== id) : current
+      );
+      return { previous };
+    },
+    onError: (err, _id, context) => {
+      for (const [key, data] of context?.previous ?? []) {
+        queryClient.setQueryData(key, data);
+      }
+      toast.error(err instanceof Error ? err.message : "Błąd usuwania");
     },
     onSuccess: () => {
       toast.success("Transakcja usunięta");
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["budget"] });
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["cashflow"] });
     },
-    onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd usuwania"),
   });
 }
 

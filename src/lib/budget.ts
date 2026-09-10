@@ -20,12 +20,26 @@ export function isOnBudget(account: Account): boolean {
   return account.on_budget !== false;
 }
 
+/** Lowercase trimmed id so SQL uuid::text and json uuid keys always match. */
+export function normalizeBudgetId(value: unknown): string {
+  if (typeof value === "string") return value.trim().toLowerCase();
+  if (value == null) return "";
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (typeof value === "object") {
+    const record = value as { id?: unknown; value?: unknown };
+    if (record.id != null && record.id !== value) return normalizeBudgetId(record.id);
+    if (record.value != null && record.value !== value) return normalizeBudgetId(record.value);
+  }
+  return String(value).trim().toLowerCase();
+}
+
 export function isOnBudgetAccount(
   tx: Pick<LedgerTransaction, "account_id">,
   accounts: Account[] = []
 ): boolean {
   if (!accounts.length) return true;
-  const account = accounts.find((a) => a.id === tx.account_id);
+  const txId = normalizeBudgetId(tx.account_id);
+  const account = accounts.find((a) => normalizeBudgetId(a.id) === txId);
   return !account || isOnBudget(account);
 }
 
@@ -133,17 +147,18 @@ export function activityByCategoryMonth(
 ): Map<string, Map<MonthKey, number>> {
   const map = new Map<string, Map<MonthKey, number>>();
   for (const tx of transactions) {
-    if (!tx.category_id || isTransferTx(tx)) continue;
+    const categoryId = normalizeBudgetId(tx.category_id);
+    if (!categoryId || isTransferTx(tx)) continue;
     if (Number(tx.amount) >= 0) continue;
     if (!isOnBudgetAccount(tx, accounts)) continue;
     const ym = parseYearMonthFromDate(tx.date);
     if (!ym || !isPlausibleBudgetYearMonth(ym.year, ym.month)) continue;
     const { year, month } = ym;
     const key = monthKey(year, month);
-    let byMonth = map.get(tx.category_id);
+    let byMonth = map.get(categoryId);
     if (!byMonth) {
       byMonth = new Map();
-      map.set(tx.category_id, byMonth);
+      map.set(categoryId, byMonth);
     }
     byMonth.set(key, money((byMonth.get(key) ?? 0) + Number(tx.amount)));
   }
@@ -176,8 +191,9 @@ function allocationLookup(allocations: BudgetAllocation[]) {
   for (const allocation of allocations ?? []) {
     const y = Number(allocation.year);
     const m = Number(allocation.month);
-    if (!isPlausibleBudgetYearMonth(y, m) || !allocation.category_id) continue;
-    map.set(`${allocation.category_id}:${y}-${m}`, allocation);
+    const categoryId = normalizeBudgetId(allocation.category_id);
+    if (!isPlausibleBudgetYearMonth(y, m) || !categoryId) continue;
+    map.set(`${categoryId}:${y}-${m}`, allocation);
   }
   return map;
 }
@@ -283,13 +299,14 @@ function addActivityDelta(
   month: number,
   delta: number
 ) {
-  if (!categoryId || !delta) return;
+  const id = normalizeBudgetId(categoryId);
+  if (!id || !delta) return;
   if (!isPlausibleBudgetYearMonth(year, month)) return;
   const key = monthKey(year, month);
-  let byMonth = map.get(categoryId);
+  let byMonth = map.get(id);
   if (!byMonth) {
     byMonth = new Map();
-    map.set(categoryId, byMonth);
+    map.set(id, byMonth);
   }
   byMonth.set(key, money((byMonth.get(key) ?? 0) + delta));
 }
@@ -336,14 +353,18 @@ export function activityMapFromAggregates(
 ): Map<string, Map<MonthKey, number>> {
   const map = new Map<string, Map<MonthKey, number>>();
   for (const row of rows ?? []) {
-    if (!row?.category_id || !isPlausibleBudgetYearMonth(Number(row.year), Number(row.month))) continue;
-    const key = monthKey(Number(row.year), Number(row.month));
-    let byMonth = map.get(row.category_id);
+    const categoryId = normalizeBudgetId(row?.category_id);
+    const year = Number(row?.year);
+    const month = Number(row?.month);
+    if (!categoryId || !isPlausibleBudgetYearMonth(year, month)) continue;
+    const activity = Number(row.activity);
+    const key = monthKey(year, month);
+    let byMonth = map.get(categoryId);
     if (!byMonth) {
       byMonth = new Map();
-      map.set(row.category_id, byMonth);
+      map.set(categoryId, byMonth);
     }
-    byMonth.set(key, money(Number(row.activity) || 0));
+    byMonth.set(key, money((byMonth.get(key) ?? 0) + (Number.isFinite(activity) ? activity : 0)));
   }
   return map;
 }
@@ -388,11 +409,12 @@ export function assembleBudgetMonthData(input: {
 
   for (const category of expenseCategories) {
     let leftover = 0;
-    const catActivity = activityMap.get(category.id);
+    const categoryId = normalizeBudgetId(category.id);
+    const catActivity = activityMap.get(categoryId);
     for (let idx = earliest; idx <= targetIndex; idx++) {
       const y = Math.floor(idx / 12);
       const m = ((((idx % 12) + 12) % 12) + 1);
-      const allocation = allocMap.get(`${category.id}:${y}-${m}`);
+      const allocation = allocMap.get(`${categoryId}:${y}-${m}`);
       const computed = computeCategoryMonth({
         leftover,
         assigned: Number(allocation?.allocated ?? 0),
