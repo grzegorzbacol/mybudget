@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
+import { todayIso } from "@/lib/format";
 import { computeMemberNets, pairwiseDebts } from "@/lib/splits";
 import { z } from "zod";
 
@@ -84,7 +85,7 @@ export async function POST(request: Request) {
       from_user_id: parsed.data.from_user_id,
       to_user_id: parsed.data.to_user_id,
       amount: parsed.data.amount,
-      date: parsed.data.date ?? new Date().toISOString().slice(0, 10),
+      date: parsed.data.date ?? todayIso(),
       memo: parsed.data.memo ?? "Rozliczenie",
     })
     .select()

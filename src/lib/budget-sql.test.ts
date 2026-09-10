@@ -268,6 +268,9 @@ describe("postgres pool hardening", () => {
     expect(seen).toContain(SQL_DATE_RANGE_PREDICATE);
     expect(seen).not.toContain("timezone('Europe/Warsaw'");
     expect(seen).not.toContain("t.date::timestamptz");
+    expect(seen).toContain("on_budget IS DISTINCT FROM FALSE");
+    expect(seen).toContain("LEFT JOIN accounts");
+    expect(seen).not.toContain("t.amount > 0 AND t.category_id IS NULL");
   });
 
   it("skips the cashflow timeline when the 8s response budget is almost gone", () => {

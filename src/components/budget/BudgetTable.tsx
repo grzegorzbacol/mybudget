@@ -117,7 +117,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             <p className="font-medium">{formatCurrency(data?.totalAllocated ?? 0)}</p>
           </div>
           <div>
-            <p className="text-muted-foreground">Saldo w budżecie</p>
+            <p className="text-muted-foreground">Saldo kont w budżecie</p>
             <p className="font-medium">{formatCurrency(data?.onBudgetBalance ?? 0)}</p>
           </div>
         </div>

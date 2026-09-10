@@ -10,6 +10,7 @@ describe("degradedCashflowOverview", () => {
     expect(payload.budget.groups).toEqual([]);
     expect(payload.supervision.runway).toEqual([]);
     expect(payload.wealth.netWorth).toBe(0);
+    expect(payload.degraded).toBe(true);
   });
 });
 

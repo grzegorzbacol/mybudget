@@ -82,6 +82,11 @@ export async function GET(request: Request) {
       return res;
     }
     const [core, goalFull] = loaded;
+    if (core.schemaLag && !core.accounts.length && !core.categories.length) {
+      const res = NextResponse.json(degradedCashflowOverview(core.schemaLag), { status: 200 });
+      res.headers.set("Server-Timing", `total;dur=${Date.now() - started};desc="empty-core"`);
+      return res;
+    }
     const scheduled = core.scheduled;
     const { start, end } = monthRange(year, month);
     const budget = budgetMonthFromCore(core, year, month);

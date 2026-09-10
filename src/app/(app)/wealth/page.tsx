@@ -22,7 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, todayIso } from "@/lib/format";
 import { ACCOUNT_TYPE_META, displayBalance, isLiabilityType, netWorthHistory, wealthLayers } from "@/lib/wealth";
 import { isOnBudget } from "@/lib/budget";
 import { useFamily } from "@/hooks/use-family";
@@ -78,7 +78,7 @@ export default function WealthPage() {
         amount: diff,
         payee: "Aktualizacja wartości",
         memo: "Wealth adjustment",
-        date: new Date().toISOString().slice(0, 10),
+        date: todayIso(),
         source: "manual",
         cleared: true,
       });

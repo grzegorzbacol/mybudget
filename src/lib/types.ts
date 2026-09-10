@@ -258,6 +258,8 @@ export interface CashflowOverview {
   cashflow: CashflowData;
   scheduled: ScheduledTransaction[];
   warning?: string;
+  /** True when totals are placeholders (SQL/auth miss) — do not treat zeros as household truth. */
+  degraded?: boolean;
   wealth: WealthSnapshot;
   supervision: CashflowSupervision;
 }

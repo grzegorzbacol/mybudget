@@ -43,6 +43,15 @@ export function StatusStrip({
   const data = overview ?? fetched.data;
 
   if (!data?.supervision || !data.wealth) return null;
+  if (data.degraded) {
+    return (
+      <Card className="border-amber-500/40">
+        <CardContent className="py-3 text-sm text-amber-800">
+          {data.warning || "Przepływy nie zdążyły się policzyć — nie pokazuję zer zamiast sald gospodarstwa."}
+        </CardContent>
+      </Card>
+    );
+  }
   const { supervision, wealth } = data;
 
   return (
@@ -54,7 +63,8 @@ export function StatusStrip({
         <CardContent>
           <p className="text-xl font-bold">{formatCurrency(wealth.netWorth)}</p>
           <p className="text-xs text-muted-foreground">
-            Aktywa {formatCurrency(wealth.assets)} · zobowiązania {formatCurrency(wealth.liabilities)}
+            Cały majątek · w budżecie {formatCurrency(wealth.onBudget.netWorth)} · śledzone{" "}
+            {formatCurrency(wealth.tracking.netWorth)}
           </p>
           <Link href="/wealth" className="text-xs text-primary hover:underline">
             Majątek
@@ -63,14 +73,17 @@ export function StatusStrip({
       </Card>
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-sm text-muted-foreground">Ten miesiąc</CardTitle>
+          <CardTitle className="text-sm text-muted-foreground">Ten miesiąc (konta w budżecie)</CardTitle>
         </CardHeader>
         <CardContent>
           <p className={cn("text-xl font-bold", supervision.monthNet >= 0 ? "text-green-600" : "text-red-500")}>
             {formatCurrency(supervision.monthNet)}
           </p>
           <p className="text-xs text-muted-foreground">
-            +{formatCurrency(supervision.actualIncome)} / −{formatCurrency(supervision.actualSpending)}
+            Wpływy {formatCurrency(supervision.actualIncome)} · wydatki {formatCurrency(supervision.actualSpending)}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            To nie jest saldo kont — tylko ruchy w tym miesiącu, bez transferów i kont śledzonych.
           </p>
           <p className="text-xs text-muted-foreground">
             Prognoza {formatCurrency(supervision.projectedNet)} · tempo {formatCurrency(supervision.spendPacePerDay)}/dzień

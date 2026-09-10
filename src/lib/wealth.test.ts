@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeNetWorth, computeRunway, monthSpendPace, netWorthContribution, netWorthHistory, wealthLayers } from "./wealth";
+import { computeNetWorth, computeRunway, monthCashActual, monthSpendPace, netWorthContribution, netWorthHistory, wealthLayers } from "./wealth";
 import type { Account, ScheduledTransaction } from "./types";
 
 function account(partial: Partial<Account> & Pick<Account, "id" | "type" | "balance">): Account {
@@ -59,6 +59,32 @@ describe("net worth", () => {
 
   it("treats a positive liability balance as debt", () => {
     expect(netWorthContribution(account({ id: "loan", type: "loan", balance: 5000 }))).toBe(-5000);
+  });
+
+  it("counts categorized on-budget inflows as month income, not only uncategorized", () => {
+    const checking = account({ id: "checking", type: "checking", balance: 3253, on_budget: true });
+    const actual = monthCashActual(
+      [{ account_id: "checking", category_id: "salary", amount: 3253, date: "2026-09-10" }],
+      [checking],
+      2026,
+      9
+    );
+    expect(actual.income).toBe(3253);
+  });
+
+  it("excludes tracking-account adjustments from month cash actuals", () => {
+    const checking = account({ id: "checking", type: "checking", balance: 1000, on_budget: true });
+    const flat = account({ id: "flat", type: "property", balance: 450000, on_budget: false });
+    const actual = monthCashActual(
+      [
+        { account_id: "checking", category_id: null, amount: 9800, date: "2026-09-01" },
+        { account_id: "flat", category_id: null, amount: 50000, date: "2026-09-01" },
+      ],
+      [checking, flat],
+      2026,
+      9
+    );
+    expect(actual.income).toBe(9800);
   });
 });
 

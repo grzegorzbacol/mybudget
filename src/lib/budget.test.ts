@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, assembleBudgetMonthData, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, uncategorizedExpenses, normalizeBudgetId } from "./budget";
+import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, assembleBudgetMonthData, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, isOnBudgetCashTx, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, signedAccountBalance, uncategorizedExpenses, normalizeBudgetId } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -299,6 +299,47 @@ describe("YNAB envelope math", () => {
     );
     expect(data.onBudgetBalance).toBe(500);
     expect(data.readyToAssign).toBe(500);
+  });
+
+  it("treats a positive credit-card balance as debt in Saldo w budżecie", () => {
+    expect(signedAccountBalance({ type: "credit", balance: 2400 })).toBe(-2400);
+    expect(signedAccountBalance({ type: "credit", balance: -2400 })).toBe(-2400);
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 0)],
+      [
+        { ...account("checking", 12000), type: "checking" },
+        { ...account("cc", 2400), type: "credit" },
+      ],
+      []
+    );
+    expect(data.onBudgetBalance).toBe(9600);
+    expect(data.readyToAssign).toBe(9600);
+  });
+
+  it("does not treat transfers or tracking rows as on-budget cash", () => {
+    const checking = account("checking", 1000, true);
+    const broker = account("broker", 8000, false);
+    expect(
+      isOnBudgetCashTx(
+        { account_id: "checking", category_id: null, amount: -100, date: "2026-09-01", transfer_id: "tr1" },
+        [checking, broker]
+      )
+    ).toBe(false);
+    expect(
+      isOnBudgetCashTx(
+        { account_id: "broker", category_id: "groceries", amount: -50, date: "2026-09-01" },
+        [checking, broker]
+      )
+    ).toBe(false);
+    expect(
+      isOnBudgetCashTx(
+        { account_id: "checking", category_id: "groceries", amount: -50, date: "2026-09-01" },
+        [checking, broker]
+      )
+    ).toBe(true);
   });
 
   it("does not let a tracking-account expense change envelope available", () => {
