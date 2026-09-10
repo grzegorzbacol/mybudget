@@ -35,13 +35,12 @@ function decodeLabel(bytes: Uint8Array, encoding: BankCsvEncoding): string | nul
   }
 }
 
-function scoreDecodedText(text: string, encoding: BankCsvEncoding): number {
+function scoreDecodedText(text: string, encoding: Exclude<BankCsvEncoding, "utf-8">): number {
   const replacements = text.match(REPLACEMENT)?.length ?? 0;
   if (replacements > 0) return -1_000_000 - replacements * 100;
   const polish = text.match(POLISH_DIACRITICS)?.length ?? 0;
   const controls = text.match(C1_CONTROLS)?.length ?? 0;
-  const prefer = encoding === "utf-8" ? 3 : encoding === "windows-1250" ? 2 : 1;
-  return polish * 10 - controls * 8 + prefer;
+  return polish * 10 - controls * 8 + (encoding === "windows-1250" ? 2 : 1);
 }
 
 export function detectBankFileEncoding(bytes: Uint8Array): BankCsvEncoding {
