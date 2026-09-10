@@ -29,6 +29,8 @@ import { toast } from "sonner";
 import { isExpenseCategory, isOnBudget, isTransferTx } from "@/lib/budget";
 import { customSplits, equalSplits, splitsMatchTotal } from "@/lib/splits";
 import { buildPayeeCategoryRules, suggestCategoryForPayee } from "@/lib/categorize";
+import { RECEIPTS_BUCKET, receiptObjectPath } from "@/lib/receipts";
+import { ReceiptPhoto } from "@/components/ReceiptPhoto";
 import { cn } from "@/lib/utils";
 
 interface TransactionFormProps {
@@ -236,15 +238,12 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction }
     setReceiptPreview(URL.createObjectURL(file));
     try {
       const buffer = await file.arrayBuffer();
-      const fileName = `${familyData.family.id}/${Date.now()}-${file.name}`;
+      const fileName = receiptObjectPath(familyData.family.id, file.name);
       const { data, error } = await supabase.storage
-        .from("receipts")
+        .from(RECEIPTS_BUCKET)
         .upload(fileName, buffer, { contentType: file.type, upsert: false });
       if (error) throw error;
-      const {
-        data: { publicUrl },
-      } = supabase.storage.from("receipts").getPublicUrl(data.path);
-      setReceiptUrl(publicUrl);
+      setReceiptUrl(data.path);
     } catch {
       toast.error("Nie udało się przesłać zdjęcia");
       setReceiptPreview(null);
@@ -671,6 +670,20 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction }
                     alt="Paragon"
                     className="max-h-32 w-full rounded-lg border object-contain"
                   />
+                  <button
+                    type="button"
+                    className="absolute right-1 top-1 rounded-full bg-background/80 p-0.5"
+                    onClick={() => {
+                      setReceiptPreview(null);
+                      setReceiptUrl("");
+                    }}
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : receiptUrl ? (
+                <div className="relative mt-1">
+                  <ReceiptPhoto url={receiptUrl} className="max-h-32 w-full rounded-lg border object-contain" maxHeight={128} />
                   <button
                     type="button"
                     className="absolute right-1 top-1 rounded-full bg-background/80 p-0.5"

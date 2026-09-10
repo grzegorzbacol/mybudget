@@ -21,6 +21,7 @@ import { isExpenseCategory, isTransferTx } from "@/lib/budget";
 import type { Transaction } from "@/lib/types";
 import { useDeleteTransaction, useUpdateTransaction } from "@/hooks/use-transactions";
 import { TransactionForm } from "./TransactionForm";
+import { ReceiptPhoto } from "@/components/ReceiptPhoto";
 import { useState } from "react";
 import { useFamily, useFamilyMembers } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
@@ -64,6 +65,18 @@ export function TransactionDetail({ transaction, onOpenChange }: TransactionDeta
     },
   });
 
+  const { data: categorySplits } = useQuery({
+    queryKey: ["transaction-category-splits", transaction?.id],
+    enabled: !!transaction?.id,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("transaction_category_splits")
+        .select("category_id, amount")
+        .eq("transaction_id", transaction!.id);
+      return data ?? [];
+    },
+  });
+
   if (!transaction) return null;
 
   const transfer = isTransferTx(transaction);
@@ -101,7 +114,22 @@ export function TransactionDetail({ transaction, onOpenChange }: TransactionDeta
                 <span className="font-medium">Do rozdzielenia</span>
               </div>
             )}
-            {isExpense && (
+            {isExpense && (categorySplits?.length ?? 0) > 1 ? (
+              <div className="space-y-1">
+                <span className="text-muted-foreground">Kategoria (podział)</span>
+                {categorySplits!.map((line, index) => {
+                  const cat = (categories ?? []).find((c) => c.id === line.category_id);
+                  return (
+                    <div key={`${line.category_id}-${index}`} className="flex justify-between text-sm">
+                      <span className="font-medium">
+                        {cat ? `${cat.icon} ${cat.name}` : "Koperta"}
+                      </span>
+                      <span>{formatCurrency(Number(line.amount))}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : isExpense ? (
               <div className="space-y-1">
                 <span className="text-muted-foreground">Kategoria</span>
                 <Select
@@ -120,7 +148,7 @@ export function TransactionDetail({ transaction, onOpenChange }: TransactionDeta
                   </SelectContent>
                 </Select>
               </div>
-            )}
+            ) : null}
             {transaction.account && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Konto</span>
@@ -194,13 +222,7 @@ export function TransactionDetail({ transaction, onOpenChange }: TransactionDeta
           {transaction.receipt_url && (
             <div className="space-y-2">
               <p className="text-sm font-medium">Zdjęcie paragonu</p>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={transaction.receipt_url}
-                alt="Paragon"
-                className="w-full rounded-lg border object-contain"
-                style={{ maxHeight: 400 }}
-              />
+              <ReceiptPhoto url={transaction.receipt_url} />
             </div>
           )}
 

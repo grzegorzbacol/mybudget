@@ -24,6 +24,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import type { OcrReceiptResult } from "@/lib/types";
 import { formatCurrency } from "@/lib/format";
+import { buildReceiptTransaction } from "@/lib/receipt-transaction";
 import { toast } from "sonner";
 
 interface ReceiptScannerProps {
@@ -192,40 +193,25 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
     if (!preview || !accountId || !familyData?.family.id) return;
 
     const items = preview.items ?? [];
+    const payload = buildReceiptTransaction({
+      storeName: preview.store_name,
+      date: preview.date,
+      total: preview.total,
+      receiptUrl: preview.receipt_url ?? null,
+      accountId,
+      items: items.map((item, i) => ({
+        name: itemNames[i] ?? item.name,
+        amount: parseFloat(itemAmounts[i] ?? "") || item.amount,
+        category_id: itemCategories[i] || "",
+      })),
+    });
 
-    if (items.length === 0) {
-      // No items — save as single transaction with total
-      await createTransaction.mutateAsync({
-        account_id: accountId,
-        category_id: itemCategories[0] || null,
-        amount: -Math.abs(preview.total),
-        payee: preview.store_name,
-        memo: "Paragon OCR",
-        date: preview.date,
-        source: "ocr",
-        receipt_url: preview.receipt_url ?? null,
-      });
-    } else {
-      // Save one transaction per item
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        const name = itemNames[i] ?? item.name;
-        const amount = parseFloat(itemAmounts[i] ?? "") || item.amount;
-        await createTransaction.mutateAsync({
-          account_id: accountId,
-          category_id: itemCategories[i] || null,
-          amount: -Math.abs(amount),
-          payee: preview.store_name,
-          memo: name,
-          date: preview.date,
-          source: "ocr",
-          receipt_url: i === 0 ? (preview.receipt_url ?? null) : null,
-        });
-      }
+    try {
+      await createTransaction.mutateAsync(payload);
+      handleClose();
+    } catch {
+      /* toast from hook */
     }
-
-    toast.success(`Zapisano ${items.length || 1} transakcji z paragonu`);
-    handleClose();
   };
 
   const handleClose = () => {
@@ -446,7 +432,7 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
                   ))}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Każda pozycja zostanie zapisana jako osobna transakcja.
+                  Pozycje zostaną zapisane jako jedna transakcja z podziałem na koperty.
                 </p>
               </div>
             ) : (
@@ -477,7 +463,7 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
                 disabled={createTransaction.isPending || !accountId}
               >
                 <Check className="mr-2 h-4 w-4" />
-                Zapisz ({preview.items?.length || 1})
+                Zapisz
               </Button>
             </div>
           </div>
