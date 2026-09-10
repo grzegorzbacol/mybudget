@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { Camera, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Camera, ChevronRight, Trash2 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,13 @@ import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useFamily } from "@/hooks/use-family";
 import { useQuery } from "@tanstack/react-query";
+import {
+  readTransactionQueryId,
+  setTransactionQueryPath,
+  showEnvelopeSplitList,
+  transactionRowAriaLabel,
+  visibleCategorySplits,
+} from "@/lib/transaction-detail";
 import { TransactionDetail } from "./TransactionDetail";
 import type { Transaction } from "@/lib/types";
 
@@ -47,6 +54,8 @@ interface TransactionListProps {
 
 export function TransactionList({ year, month, accountId, categoryId }: TransactionListProps) {
   const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
   const { data: transactions, isLoading } = useTransactions({
     year,
     month,
@@ -56,6 +65,7 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkCategory, setBulkCategory] = useState("");
   const [detail, setDetail] = useState<Transaction | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(() => readTransactionQueryId(searchParams));
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState(searchParams.get("filter") ?? "all");
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -137,6 +147,30 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
   const allVisibleSelected = visible.length > 0 && visible.every((t) => selected.has(t.id));
   const someVisibleSelected = visible.some((t) => selected.has(t.id));
 
+  const openDetail = (t: Transaction) => {
+    setDetail(t);
+    setDetailId(t.id);
+    router.replace(setTransactionQueryPath(pathname, searchParams.toString(), t.id), { scroll: false });
+  };
+
+  const closeDetail = () => {
+    setDetail(null);
+    setDetailId(null);
+    router.replace(setTransactionQueryPath(pathname, searchParams.toString(), null), { scroll: false });
+  };
+
+  useEffect(() => {
+    const fromUrl = readTransactionQueryId(new URLSearchParams(searchParams.toString()));
+    setDetailId(fromUrl);
+    if (!fromUrl) setDetail(null);
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!detailId) return;
+    const match = (transactions ?? []).find((t) => t.id === detailId);
+    if (match) setDetail(match);
+  }, [detailId, transactions]);
+
   const toggleSelectAll = (checked: boolean | "indeterminate") => {
     if (checked) {
       const next = new Set(selected);
@@ -150,7 +184,18 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
   };
 
   if (isLoading) {
-    return <p className="p-4 text-center text-muted-foreground">Ładowanie...</p>;
+    return (
+      <>
+        <p className="p-4 text-center text-muted-foreground">Ładowanie...</p>
+        {detailId ? (
+          <TransactionDetail
+            transaction={detail}
+            transactionId={detailId}
+            onOpenChange={(open) => !open && closeDetail()}
+          />
+        ) : null}
+      </>
+    );
   }
 
   return (
@@ -236,13 +281,14 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
       <div className="space-y-2">
         {visible.map((t) => {
           const title = displayPayee(t.payee, t.memo);
+          const envelopeSplits = visibleCategorySplits(t.category_splits);
           return (
           <div
             key={t.id}
-            className="flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 transition-colors hover:bg-muted/30"
-            onClick={() => setDetail(t)}
+            className="flex items-stretch gap-2 rounded-lg border transition-colors hover:bg-muted/30"
           >
             <div
+              className="flex items-center pl-3"
               onClick={(e) => e.stopPropagation()}
               onPointerDown={(e) => e.stopPropagation()}
             >
@@ -253,11 +299,6 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
                 aria-label={`Zaznacz ${title}`}
               />
             </div>
-            <Avatar className="h-8 w-8 shrink-0">
-              <AvatarFallback className="text-xs">
-                {t.profile?.display_name?.slice(0, 2).toUpperCase() ?? "??"}
-              </AvatarFallback>
-            </Avatar>
             <button
               type="button"
               title={t.cleared ? "Uzgodniona — kliknij, aby cofnąć" : "Nieuzgodniona — kliknij, aby uzgodnić"}
@@ -266,7 +307,7 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
                 updateTx.mutate({ id: t.id, cleared: !t.cleared });
               }}
               className={cn(
-                "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold",
+                "my-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold",
                 t.cleared
                   ? "border-green-600 bg-green-600 text-white"
                   : "border-muted-foreground/40 text-muted-foreground"
@@ -274,37 +315,52 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
             >
               {t.cleared ? "C" : "U"}
             </button>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5">
-                <p className="truncate font-medium">{title}</p>
-                {t.receipt_url && (
-                  <Camera className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                {t.date}
-                {isTransferTx(t)
-                  ? " · Transfer"
-                  : t.amount > 0
-                    ? " · Do rozdzielenia"
-                    : t.category
-                      ? ` · ${t.category.icon} ${t.category.name}`
-                      : " · Bez kategorii"}
-                {t.account && ` · ${t.account.type === "cash" ? "💵 " : "🏦 "}${t.account.name}`}
-              </p>
-            </div>
-            <span
-              className={cn(
-                "shrink-0 font-semibold",
-                isTransferTx(t)
-                  ? "text-muted-foreground"
-                  : t.amount < 0
-                    ? "text-red-500"
-                    : "text-green-600"
-              )}
+            <button
+              type="button"
+              onClick={() => openDetail(t)}
+              aria-label={transactionRowAriaLabel(title)}
+              className="flex min-h-[52px] min-w-0 flex-1 items-center gap-3 py-3 pr-3 text-left"
             >
-              {formatCurrency(t.amount)}
-            </span>
+              <Avatar className="h-8 w-8 shrink-0">
+                <AvatarFallback className="text-xs">
+                  {t.profile?.display_name?.slice(0, 2).toUpperCase() ?? "??"}
+                </AvatarFallback>
+              </Avatar>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <p className="truncate font-medium">{title}</p>
+                  {t.receipt_url && (
+                    <Camera className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="Paragon" />
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {t.date}
+                  {isTransferTx(t)
+                    ? " · Transfer"
+                    : t.amount > 0
+                      ? " · Do rozdzielenia"
+                      : showEnvelopeSplitList(envelopeSplits)
+                        ? ` · Podział (${envelopeSplits.length})`
+                        : t.category
+                          ? ` · ${t.category.icon} ${t.category.name}`
+                          : " · Bez kategorii"}
+                  {t.account && ` · ${t.account.type === "cash" ? "💵 " : "🏦 "}${t.account.name}`}
+                </p>
+              </div>
+              <span
+                className={cn(
+                  "shrink-0 font-semibold",
+                  isTransferTx(t)
+                    ? "text-muted-foreground"
+                    : t.amount < 0
+                      ? "text-red-500"
+                      : "text-green-600"
+                )}
+              >
+                {formatCurrency(t.amount)}
+              </span>
+              <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+            </button>
           </div>
           );
         })}
@@ -332,7 +388,11 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
         )}
       </div>
 
-      <TransactionDetail transaction={detail} onOpenChange={(open) => !open && setDetail(null)} />
+      <TransactionDetail
+        transaction={detail}
+        transactionId={detailId}
+        onOpenChange={(open) => !open && closeDetail()}
+      />
 
       <Dialog
         open={confirmOpen}

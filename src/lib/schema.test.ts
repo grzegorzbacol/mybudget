@@ -49,6 +49,7 @@ describe("schema lag helpers", () => {
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS expense_splits");
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS settlements");
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS transaction_category_splits");
+    expect(joined).toContain("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.transaction_category_splits");
     expect(joined).toContain("accounts_type_check");
     expect(joined).toContain("on_budget");
     expect(joined).toContain("NOTIFY pgrst");
@@ -94,6 +95,7 @@ describe("schema lag helpers", () => {
       expect(sql).toContain("CREATE TABLE IF NOT EXISTS expense_splits");
       expect(sql).toContain("CREATE TABLE IF NOT EXISTS settlements");
       expect(sql).toContain("CREATE TABLE IF NOT EXISTS transaction_category_splits");
+      expect(sql).toContain("GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.transaction_category_splits");
       expect(sql).toContain("NOTIFY pgrst");
       expect(sql).toContain("idx_transactions_family_date");
       expect(sql).toContain("idx_transactions_family_nontransfer_date");

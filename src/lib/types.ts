@@ -100,6 +100,11 @@ export interface Transaction {
   transfer_account?: Account;
   category?: BudgetCategory;
   profile?: Profile;
+  category_splits?: Array<{
+    category_id: string;
+    amount: number;
+    category?: Pick<BudgetCategory, "id" | "name" | "icon"> | null;
+  }>;
 }
 
 export interface ScheduledTransaction {

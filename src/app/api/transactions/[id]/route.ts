@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { loadFamilyTransactionDetail, type TransactionDetailClient } from "@/lib/transaction-detail";
 import { deleteFamilyTransaction } from "@/lib/transaction-delete";
 import { transactionPatchSchema } from "@/lib/validators";
 import { replaceCategorySplits } from "@/lib/category-splits";
@@ -11,6 +12,31 @@ async function routeId(
   const resolved = await Promise.resolve(params);
   const raw = Array.isArray(resolved.id) ? resolved.id[0] : resolved.id;
   return decodeURIComponent(String(raw ?? "")).trim();
+}
+
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> | { id: string } }
+) {
+  const ctx = await getAuthContext();
+  if ("error" in ctx) {
+    return NextResponse.json({ error: ctx.error }, { status: ctx.status });
+  }
+
+  const id = await routeId(params);
+  if (!id) {
+    return NextResponse.json({ error: "Nie znaleziono transakcji" }, { status: 404 });
+  }
+
+  const result = await loadFamilyTransactionDetail(
+    ctx.supabase as unknown as TransactionDetailClient,
+    ctx.family.id,
+    id
+  );
+  if ("error" in result) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
+  }
+  return NextResponse.json(result.data);
 }
 
 export async function PATCH(
