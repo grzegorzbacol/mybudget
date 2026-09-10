@@ -36,6 +36,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useFamily } from "@/hooks/use-family";
 import { useQuery } from "@tanstack/react-query";
 import {
+  TRANSACTION_QUERY_PARAM,
   readTransactionQueryId,
   setTransactionQueryPath,
   showEnvelopeSplitList,
@@ -64,6 +65,7 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
   });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkCategory, setBulkCategory] = useState("");
+  const txParam = searchParams.get(TRANSACTION_QUERY_PARAM);
   const [detail, setDetail] = useState<Transaction | null>(null);
   const [detailId, setDetailId] = useState<string | null>(() => readTransactionQueryId(searchParams));
   const [query, setQuery] = useState("");
@@ -160,10 +162,10 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
   };
 
   useEffect(() => {
-    const fromUrl = readTransactionQueryId(new URLSearchParams(searchParams.toString()));
+    const fromUrl = txParam?.trim() || null;
     setDetailId(fromUrl);
     if (!fromUrl) setDetail(null);
-  }, [searchParams]);
+  }, [txParam]);
 
   useEffect(() => {
     if (!detailId) return;
