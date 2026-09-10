@@ -1,3 +1,5 @@
+import { decodeBankFileBytes } from "./csv-encoding";
+
 export interface CsvRow {
   date: string;
   payee: string;
@@ -66,6 +68,10 @@ function col(headers: string[], ...needles: string[]): number {
     const value = header.toLowerCase();
     return needles.some((needle) => value.includes(needle));
   });
+}
+
+export function parseBankCsvBytes(bytes: Uint8Array): CsvRow[] {
+  return parseBankCsv(decodeBankFileBytes(bytes));
 }
 
 export function parseBankCsv(content: string): CsvRow[] {
