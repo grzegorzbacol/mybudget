@@ -48,9 +48,12 @@ describe("schema lag helpers", () => {
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS expense_splits");
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS settlements");
+    expect(joined).toContain("CREATE TABLE IF NOT EXISTS transaction_category_splits");
     expect(joined).toContain("accounts_type_check");
     expect(joined).toContain("on_budget");
     expect(joined).toContain("NOTIFY pgrst");
+    expect(joined).toContain("idx_transactions_family_date");
+    expect(joined).toContain("idx_allocations_family");
     for (const column of REQUIRED_SCHEMA_COLUMNS) {
       expect(joined).toContain(column.split(".")[1]);
     }
@@ -87,7 +90,10 @@ describe("schema lag helpers", () => {
       expect(sql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
       expect(sql).toContain("CREATE TABLE IF NOT EXISTS expense_splits");
       expect(sql).toContain("CREATE TABLE IF NOT EXISTS settlements");
+      expect(sql).toContain("CREATE TABLE IF NOT EXISTS transaction_category_splits");
       expect(sql).toContain("NOTIFY pgrst");
+      expect(sql).toContain("idx_transactions_family_date");
+      expect(sql).toContain("idx_allocations_family");
     }
     expect(scheduledSql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
     expect(accountSql).toContain("ADD COLUMN IF NOT EXISTS on_budget");

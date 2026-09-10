@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { buildBudgetMonthData } from "@/lib/budget";
-import { computeCashflow, upcomingByCategory, buildCashflowTimeline, nextPayday, outflowUntil, isLowBalance } from "@/lib/cashflow";
+import { computeCashflow, buildCashflowTimeline, nextPayday, outflowUntil, isLowBalance } from "@/lib/cashflow";
 import { addDays, addMonths, monthRange, money } from "@/lib/money";
-import { getAuthContext, loadBudgetSnapshot } from "@/lib/api-helpers";
+import { getAuthContext } from "@/lib/api-helpers";
+import { budgetMonthFromCore, loadFamilyBudgetCore, loadLedgerRange } from "@/lib/budget-read";
+import { monthAmount } from "@/lib/budget-sql";
 import { getCurrentYearMonth } from "@/lib/format";
-import { computeRunway, monthCashActual, monthSpendPace, netWorthHistory, wealthLayers } from "@/lib/wealth";
+import { computeRunway, monthSpendPace, wealthLayers } from "@/lib/wealth";
 import {
   contributionThisMonth,
   isBehindSchedule,
@@ -15,12 +16,14 @@ import {
 import type { Goal } from "@/lib/types";
 
 export async function GET(request: Request) {
+  const started = Date.now();
   const ctx = await getAuthContext();
   if ("error" in ctx) {
     return NextResponse.json({ error: ctx.error }, { status: ctx.status });
   }
 
   const { searchParams } = new URL(request.url);
+  const lite = searchParams.get("lite") === "1";
   const days = Math.min(180, Math.max(7, parseInt(searchParams.get("days") ?? "60", 10)));
   const bucket = searchParams.get("bucket") === "month" ? "month" : "week";
   const today = new Date().toISOString().slice(0, 10);
@@ -28,70 +31,64 @@ export async function GET(request: Request) {
   const { year, month } = getCurrentYearMonth();
 
   try {
-    const snapshot = await loadBudgetSnapshot(ctx.supabase, ctx.family.id);
-    if (snapshot.error) {
-      return NextResponse.json(
-        { error: snapshot.error, schemaLag: /transfer_account_id|schema|scheduled_transactions/i.test(snapshot.error) },
-        { status: 500 }
-      );
-    }
-
-    // Missing scheduled_transactions is schema lag, not a hard cashflow failure.
-    // Budget already continues with an empty calendar; StatusStrip and /cashflow
-    // must do the same so /budget stays usable while Coolify ensure-schema runs.
-    const scheduled = snapshot.scheduledError ? [] : snapshot.scheduled;
-
+    const [core, goalFull] = await Promise.all([
+      loadFamilyBudgetCore(ctx.supabase, ctx.family.id),
+      ctx.supabase
+        .from("goals")
+        .select("id, category_id, target_amount, target_date, type, priority")
+        .eq("family_id", ctx.family.id),
+    ]);
+    const scheduled = core.scheduled;
     const { start, end } = monthRange(year, month);
-    const monthEnd = addDays(end, -1);
-    const budget = buildBudgetMonthData(
-      year,
-      month,
-      snapshot.categories,
-      snapshot.allocations,
-      snapshot.accounts,
-      snapshot.transactions,
-      upcomingByCategory(scheduled, start, monthEnd)
-    );
+    const budget = budgetMonthFromCore(core, year, month);
     const rows = budget.groups.flatMap((group) => group.categories);
     const cashflow = computeCashflow({
       from: today,
       to,
       scheduled,
-      categories: snapshot.categories,
-      accounts: snapshot.accounts,
+      categories: core.categories,
+      accounts: core.accounts,
       rows,
     });
+
     const lookback = addMonths(year, month, -5);
     const timelineFrom =
       bucket === "month"
         ? `${lookback.year}-${String(lookback.month).padStart(2, "0")}-01`
         : addDays(today, -28);
-    cashflow.timeline = buildCashflowTimeline({
-      from: timelineFrom,
-      to,
-      transactions: snapshot.transactions,
-      accounts: snapshot.accounts,
-      scheduled,
-      bucket,
-    });
-    const actual = monthCashActual(snapshot.transactions, snapshot.accounts, year, month);
+
+    if (!lite) {
+      const rangeTxs = await loadLedgerRange(ctx.family.id, timelineFrom, to);
+      cashflow.timeline = buildCashflowTimeline({
+        from: timelineFrom,
+        to,
+        transactions: rangeTxs,
+        accounts: core.accounts,
+        scheduled,
+        bucket,
+      });
+    }
+
+    const actualIncome = monthAmount(core.income, year, month);
+    const actualSpending = monthAmount(core.spending, year, month);
+    const actualNet = money(actualIncome - actualSpending);
     const remainingIncome = cashflow.items
       .filter((item) => item.kind === "income" && item.date >= start && item.date < end)
       .reduce((sum, item) => sum + item.amount, 0);
     const remainingSpend = cashflow.items
       .filter((item) => item.kind === "expense" && item.date >= start && item.date < end)
       .reduce((sum, item) => sum + Math.abs(item.amount), 0);
-    const projectedNet = actual.net + remainingIncome - remainingSpend;
-    const pace = monthSpendPace(actual.spending, today, year, month);
-    const paceProjectedNet = money(actual.income + remainingIncome - pace.projectedSpend);
+    const projectedNet = actualNet + remainingIncome - remainingSpend;
+    const pace = monthSpendPace(actualSpending, today, year, month);
+    const paceProjectedNet = money(actualIncome + remainingIncome - pace.projectedSpend);
     const runway = computeRunway({
       onBudgetBalance: budget.onBudgetBalance,
-      accounts: snapshot.accounts,
+      accounts: core.accounts,
       scheduled,
       from: today,
       to,
     });
-    const totals = wealthLayers(snapshot.accounts);
+    const totals = wealthLayers(core.accounts);
     const payday = nextPayday(cashflow.items, today);
     const untilPaydayOut = outflowUntil(cashflow.items, today, payday);
     const lowBalance = isLowBalance(budget.onBudgetBalance, untilPaydayOut);
@@ -104,10 +101,6 @@ export async function GET(request: Request) {
       }));
 
     let goalRows: Goal[] = [];
-    const goalFull = await ctx.supabase
-      .from("goals")
-      .select("id, category_id, target_amount, target_date, type, priority")
-      .eq("family_id", ctx.family.id);
     if (!goalFull.error) {
       goalRows = (goalFull.data ?? []) as Goal[];
     } else {
@@ -118,12 +111,9 @@ export async function GET(request: Request) {
           .select("id, category_id, target_amount, target_date, type")
           .eq("family_id", ctx.family.id);
         goalRows = (fallback.data ?? []) as Goal[];
-        const { applyEnsureSchema, wasEnsureSchemaRecentlyApplied } = await import("@/lib/ensure-schema");
-        if (!wasEnsureSchemaRecentlyApplied()) {
-          void applyEnsureSchema();
-        }
       }
     }
+
     const typicalSpend = Math.abs(budget.totalActivity);
     const threatenedGoals = savingsThreatenedByCashflow({
       goals: ((goalRows ?? []) as Goal[]).map((goal) => {
@@ -151,19 +141,19 @@ export async function GET(request: Request) {
       lowBalance,
     });
 
-    return NextResponse.json({
-      budget,
-      cashflow,
-      scheduled,
-      warning: snapshot.schemaLag,
+    const res = NextResponse.json({
+      budget: lite ? { ...budget, groups: [] } : budget,
+      cashflow: lite ? { ...cashflow, items: [], timeline: [], byCategory: [] } : cashflow,
+      scheduled: lite ? [] : scheduled,
+      warning: core.schemaLag,
       wealth: {
         ...totals,
-        history: netWorthHistory(snapshot.accounts, snapshot.transactions, today),
+        history: [],
       },
       supervision: {
-        actualIncome: actual.income,
-        actualSpending: actual.spending,
-        monthNet: actual.net,
+        actualIncome,
+        actualSpending,
+        monthNet: actualNet,
         projectedNet,
         paceProjectedNet,
         spendPacePerDay: pace.perDay,
@@ -172,13 +162,18 @@ export async function GET(request: Request) {
         inTheBlack: projectedNet >= 0 && cashflow.unfundedTotal <= 0.005 && budget.readyToAssign >= 0,
         tightOn: runway.tightOn,
         tightPayee: runway.tightPayee,
-        runway: runway.points,
+        runway: lite ? [] : runway.points,
         nextPayday: payday,
         lowBalance,
         overspentEnvelopes,
         threatenedGoals,
       },
     });
+    res.headers.set(
+      "Server-Timing",
+      `total;dur=${Date.now() - started};desc="${lite ? "lite" : "full"},${core.source}"`
+    );
+    return res;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nie udało się pobrać przepływów";
     return NextResponse.json({ error: message }, { status: 500 });

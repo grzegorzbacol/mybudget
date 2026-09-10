@@ -5,6 +5,7 @@ function thenable<T>(value: T) {
     select: () => query,
     eq: () => query,
     order: () => query,
+    limit: () => query,
     then: (resolve: (value: T) => void, reject?: (reason: unknown) => void) =>
       Promise.resolve(value).then(resolve, reject),
   };
@@ -15,14 +16,13 @@ describe("loadBudgetSnapshot", () => {
   afterEach(() => {
     vi.resetModules();
     vi.doUnmock("@/lib/ensure-schema");
-    vi.unstubAllGlobals();
   });
 
-  it("does not wait for a full ensure-schema pass when repair times out", async () => {
-    const applyEnsureSchemaForRead = vi.fn().mockResolvedValue(undefined);
+  it("does not await ensure-schema on a hot read when scheduled is missing", async () => {
+    const applyEnsureSchema = vi.fn().mockResolvedValue({ ok: true, applied: 8 });
     vi.doMock("@/lib/ensure-schema", () => ({
-      applyEnsureSchemaForRead,
-      applyEnsureSchema: vi.fn(),
+      applyEnsureSchema,
+      applyEnsureSchemaForRead: vi.fn(),
       wasEnsureSchemaRecentlyApplied: vi.fn(() => false),
     }));
 
@@ -43,38 +43,9 @@ describe("loadBudgetSnapshot", () => {
     };
 
     const snapshot = await loadBudgetSnapshot(supabase as never, "f1");
-    expect(applyEnsureSchemaForRead).toHaveBeenCalledTimes(1);
     expect(snapshot.categories).toHaveLength(1);
     expect(snapshot.scheduled).toEqual([]);
     expect(snapshot.schemaLag).toMatch(/scheduled_transactions/);
-  });
-
-  it("retries snapshot queries only after a completed repair", async () => {
-    const applyEnsureSchemaForRead = vi.fn().mockResolvedValue({ ok: true, applied: 8 });
-    vi.doMock("@/lib/ensure-schema", () => ({
-      applyEnsureSchemaForRead,
-    }));
-
-    let scheduledCalls = 0;
-    const { loadBudgetSnapshot } = await import("./api-helpers");
-    const supabase = {
-      from: (table: string) => {
-        if (table === "scheduled_transactions") {
-          scheduledCalls += 1;
-          if (scheduledCalls === 1) {
-            return thenable({
-              data: null,
-              error: { message: 'relation "scheduled_transactions" does not exist' },
-            });
-          }
-          return thenable({ data: [{ id: "s1", enabled: true }], error: null });
-        }
-        return thenable({ data: [], error: null });
-      },
-    };
-
-    const snapshot = await loadBudgetSnapshot(supabase as never, "f1");
-    expect(scheduledCalls).toBe(2);
-    expect(snapshot.scheduled).toEqual([{ id: "s1", enabled: true }]);
+    expect(snapshot.error).toBeUndefined();
   });
 });

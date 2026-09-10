@@ -85,7 +85,7 @@ export async function applyEnsureSchema(
   }
 
   const pending = runStatements(env).then((result) => {
-    if (result.ok || (result.applied ?? 0) > 0) {
+    if (result.ok) {
       lastSuccessAt = Date.now();
     }
     return result;

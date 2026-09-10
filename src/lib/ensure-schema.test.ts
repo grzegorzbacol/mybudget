@@ -34,6 +34,12 @@ describe("applyEnsureSchema cache", () => {
     expect(runs).toBe(1);
   });
 
+  it("does not cache a partial DDL pass as success", async () => {
+    resetEnsureSchemaState(async () => ({ ok: false, applied: 4, error: "column missing" }));
+    await applyEnsureSchema();
+    expect(wasEnsureSchemaRecentlyApplied()).toBe(false);
+  });
+
   it("force bypasses the recent-success cache", async () => {
     let runs = 0;
     resetEnsureSchemaState(async () => {

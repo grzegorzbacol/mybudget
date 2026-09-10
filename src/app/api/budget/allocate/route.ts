@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext, getOrCreateAllocation } from "@/lib/api-helpers";
+import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
 import { allocateSchema } from "@/lib/validators";
 import { money } from "@/lib/money";
 
@@ -39,5 +40,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
+  invalidateFamilyBudgetCache(ctx.family.id);
   return NextResponse.json(data);
 }

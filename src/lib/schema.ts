@@ -82,6 +82,9 @@ END $$`,
   `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS paid_by uuid`,
   `CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON transactions(transfer_id)`,
   `CREATE INDEX IF NOT EXISTS idx_transactions_cleared ON transactions(account_id, cleared)`,
+  `CREATE INDEX IF NOT EXISTS idx_transactions_family_date ON transactions(family_id, date)`,
+  `CREATE INDEX IF NOT EXISTS idx_transactions_family_category ON transactions(family_id, category_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_allocations_family ON budget_allocations(family_id)`,
   `ALTER TABLE goals ADD COLUMN IF NOT EXISTS priority integer NOT NULL DEFAULT 3`,
   `ALTER TABLE goals DROP CONSTRAINT IF EXISTS goals_type_check`,
   `DO $$
@@ -214,6 +217,15 @@ EXCEPTION
   WHEN insufficient_privilege THEN NULL;
   WHEN others THEN NULL;
 END $$`,
+  `CREATE TABLE IF NOT EXISTS transaction_category_splits (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  family_id uuid NOT NULL,
+  transaction_id uuid NOT NULL,
+  category_id uuid NOT NULL,
+  amount numeric NOT NULL
+)`,
+  `CREATE INDEX IF NOT EXISTS idx_tx_category_splits_tx ON transaction_category_splits(transaction_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_tx_category_splits_family ON transaction_category_splits(family_id)`,
   `NOTIFY pgrst, 'reload schema'`,
 ] as const;
 

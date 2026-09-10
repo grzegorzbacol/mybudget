@@ -29,13 +29,55 @@ export function isOnBudgetAccount(
   return !account || isOnBudget(account);
 }
 
+/**
+ * On-budget inflows always feed Ready to Assign / Przychody w miesiącu.
+ * A category (income envelope or mistaken expense envelope) is not a transfer.
+ */
 export function isIncomeToReadyToAssign(tx: LedgerTransaction, accounts: Account[] = []): boolean {
-  if (Number(tx.amount) <= 0 || tx.category_id || isTransferTx(tx)) return false;
+  if (Number(tx.amount) <= 0 || isTransferTx(tx)) return false;
   return isOnBudgetAccount(tx, accounts);
 }
 
 export function isExpenseCategory(category: BudgetCategory): boolean {
   return (category.kind ?? "expense") !== "income";
+}
+
+export type CategorySplitLine = {
+  transaction_id?: string;
+  category_id: string;
+  amount: number;
+};
+
+/** Replace a parent expense with per-envelope lines so Aktywność hits each koperta. */
+export function expandCategorySplits(
+  transactions: LedgerTransaction[],
+  splits: CategorySplitLine[] = []
+): LedgerTransaction[] {
+  if (!splits.length) return transactions;
+  const byTx = new Map<string, CategorySplitLine[]>();
+  for (const line of splits) {
+    if (!line.transaction_id || !line.category_id) continue;
+    const list = byTx.get(line.transaction_id) ?? [];
+    list.push(line);
+    byTx.set(line.transaction_id, list);
+  }
+  if (!byTx.size) return transactions;
+  const out: LedgerTransaction[] = [];
+  for (const tx of transactions) {
+    const lines = tx.id ? byTx.get(tx.id) : undefined;
+    if (!lines?.length) {
+      out.push(tx);
+      continue;
+    }
+    for (const line of lines) {
+      out.push({
+        ...tx,
+        category_id: line.category_id,
+        amount: -Math.abs(Number(line.amount) || 0),
+      });
+    }
+  }
+  return out;
 }
 
 export function uncategorizedExpenses(
@@ -68,6 +110,7 @@ export function activityByCategoryMonth(
   const map = new Map<string, Map<MonthKey, number>>();
   for (const tx of transactions) {
     if (!tx.category_id || isTransferTx(tx)) continue;
+    if (Number(tx.amount) >= 0) continue;
     if (!isOnBudgetAccount(tx, accounts)) continue;
     const ym = parseYearMonthFromDate(tx.date);
     if (!ym || !isPlausibleBudgetYearMonth(ym.year, ym.month)) continue;
@@ -190,20 +233,47 @@ export function envelopeRowsFromBudget(
   );
 }
 
-export function buildBudgetMonthData(
-  year: number,
-  month: number,
-  categories: BudgetCategory[],
-  allocations: BudgetAllocation[],
-  accounts: Account[],
-  transactions: LedgerTransaction[] = [],
-  upcomingByCategory: Map<string, number> = new Map()
-): BudgetMonthData {
-  const activityMap = activityByCategoryMonth(transactions ?? [], accounts ?? []);
+export type ActivityAggregate = {
+  category_id: string;
+  year: number;
+  month: number;
+  activity: number;
+};
+
+export function activityMapFromAggregates(
+  rows: ActivityAggregate[] | null | undefined
+): Map<string, Map<MonthKey, number>> {
+  const map = new Map<string, Map<MonthKey, number>>();
+  for (const row of rows ?? []) {
+    if (!row?.category_id || !isPlausibleBudgetYearMonth(Number(row.year), Number(row.month))) continue;
+    const key = monthKey(Number(row.year), Number(row.month));
+    let byMonth = map.get(row.category_id);
+    if (!byMonth) {
+      byMonth = new Map();
+      map.set(row.category_id, byMonth);
+    }
+    byMonth.set(key, money(Number(row.activity) || 0));
+  }
+  return map;
+}
+
+export function assembleBudgetMonthData(input: {
+  year: number;
+  month: number;
+  categories: BudgetCategory[];
+  allocations: BudgetAllocation[];
+  accounts: Account[];
+  activityMap: Map<string, Map<string, number>>;
+  incomeThisMonth: number;
+  uncategorizedCount: number;
+  upcomingByCategory?: Map<string, number>;
+}): BudgetMonthData {
+  const { categories, allocations, accounts } = input;
+  const activityMap = input.activityMap ?? new Map();
   const allocMap = allocationLookup(allocations ?? []);
-  const upcomingMap = upcomingByCategory ?? new Map();
-  const safeYear = Number.isInteger(year) ? year : new Date().getFullYear();
-  const safeMonth = isValidYearMonth(safeYear, month) ? month : 1;
+  const upcomingMap = input.upcomingByCategory ?? new Map();
+  const safeYear = Number.isInteger(input.year) ? input.year : new Date().getFullYear();
+  const safeMonth = isValidYearMonth(safeYear, input.month) ? input.month : 1;
   const targetIndex = monthIndex(safeYear, safeMonth);
 
   let earliest = targetIndex;
@@ -316,15 +386,37 @@ export function buildBudgetMonthData(
     year: safeYear,
     month: safeMonth,
     readyToAssign: computeReadyToAssign(balance, totalAvailable),
-    incomeThisMonth: incomeInMonth(transactions, safeYear, safeMonth, accounts),
+    incomeThisMonth: money(input.incomeThisMonth),
     totalAllocated,
     totalMoved,
     totalActivity,
     totalAvailable,
     onBudgetBalance: balance,
-    uncategorizedCount: uncategorizedExpenses(transactions, safeYear, safeMonth, accounts).length,
+    uncategorizedCount: Math.max(0, Math.trunc(Number(input.uncategorizedCount) || 0)),
     groups,
   };
+}
+
+export function buildBudgetMonthData(
+  year: number,
+  month: number,
+  categories: BudgetCategory[],
+  allocations: BudgetAllocation[],
+  accounts: Account[],
+  transactions: LedgerTransaction[] = [],
+  upcomingByCategory: Map<string, number> = new Map()
+): BudgetMonthData {
+  return assembleBudgetMonthData({
+    year,
+    month,
+    categories,
+    allocations,
+    accounts,
+    activityMap: activityByCategoryMonth(transactions ?? [], accounts ?? []),
+    incomeThisMonth: incomeInMonth(transactions, year, month, accounts),
+    uncategorizedCount: uncategorizedExpenses(transactions, year, month, accounts).length,
+    upcomingByCategory,
+  });
 }
 
 export function envelopeGap(available: number, upcoming = 0): number {

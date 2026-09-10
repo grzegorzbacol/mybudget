@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
-import { buildBudgetMonthData } from "@/lib/budget";
-import { upcomingByCategory } from "@/lib/cashflow";
-import { addDays, isValidYearMonth, monthRange } from "@/lib/money";
-import { getAuthContext, loadBudgetSnapshot } from "@/lib/api-helpers";
+import { isValidYearMonth } from "@/lib/money";
+import { getAuthContext } from "@/lib/api-helpers";
+import { budgetMonthFromCore, loadFamilyBudgetCore } from "@/lib/budget-read";
 
 export async function GET(
   _request: Request,
   { params }: { params: Promise<{ year: string; month: string }> | { year: string; month: string } }
 ) {
+  const started = Date.now();
   const ctx = await getAuthContext();
   if ("error" in ctx) {
     return NextResponse.json({ error: ctx.error }, { status: ctx.status });
@@ -22,35 +22,12 @@ export async function GET(
   }
 
   try {
-    // Skip ensureMonthAllocations on GET — zero rows are computed in memory.
-    // Persisting them is a write-on-read that races schema repair and delays first paint.
-    const snapshot = await loadBudgetSnapshot(ctx.supabase, ctx.family.id);
-    if (snapshot.error) {
-      return NextResponse.json(
-        { error: snapshot.error, schemaLag: /transfer_account_id|schema/i.test(snapshot.error) },
-        { status: 500 }
-      );
-    }
-
-    const { start, end } = monthRange(year, month);
-    const monthEnd = addDays(end, -1);
-    const upcoming = snapshot.scheduledError
-      ? new Map<string, number>()
-      : upcomingByCategory(snapshot.scheduled, start, monthEnd);
-
-    const data = buildBudgetMonthData(
-      year,
-      month,
-      snapshot.categories,
-      snapshot.allocations,
-      snapshot.accounts,
-      snapshot.transactions,
-      upcoming
-    );
-
-    return NextResponse.json(
-      snapshot.schemaLag ? { ...data, warning: snapshot.schemaLag } : data
-    );
+    const core = await loadFamilyBudgetCore(ctx.supabase, ctx.family.id);
+    const data = budgetMonthFromCore(core, year, month);
+    const body = core.schemaLag ? { ...data, warning: core.schemaLag } : data;
+    const res = NextResponse.json(body);
+    res.headers.set("Server-Timing", `total;dur=${Date.now() - started};desc="${core.source}"`);
+    return res;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nie udało się obliczyć budżetu";
     return NextResponse.json({ error: message }, { status: 500 });

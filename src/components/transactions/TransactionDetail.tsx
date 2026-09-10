@@ -1,6 +1,6 @@
 "use client";
 
-import { Receipt, Trash2, X } from "lucide-react";
+import { Pencil, Receipt, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -20,6 +20,8 @@ import { cn } from "@/lib/utils";
 import { isExpenseCategory, isTransferTx } from "@/lib/budget";
 import type { Transaction } from "@/lib/types";
 import { useDeleteTransaction, useUpdateTransaction } from "@/hooks/use-transactions";
+import { TransactionForm } from "./TransactionForm";
+import { useState } from "react";
 import { useFamily, useFamilyMembers } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { useQuery } from "@tanstack/react-query";
@@ -32,6 +34,7 @@ interface TransactionDetailProps {
 export function TransactionDetail({ transaction, onOpenChange }: TransactionDetailProps) {
   const updateTx = useUpdateTransaction();
   const deleteTx = useDeleteTransaction();
+  const [editing, setEditing] = useState(false);
   const { data: familyData } = useFamily();
   const { data: members } = useFamilyMembers();
   const supabase = createClient();
@@ -206,18 +209,35 @@ export function TransactionDetail({ transaction, onOpenChange }: TransactionDeta
               <X className="mr-2 h-4 w-4" />
               Zamknij
             </Button>
+            <Button variant="outline" onClick={() => setEditing(true)}>
+              <Pencil className="mr-2 h-4 w-4" />
+              Edytuj
+            </Button>
             <Button
               variant="destructive"
+              disabled={deleteTx.isPending}
               onClick={async () => {
-                await deleteTx.mutateAsync(transaction.id);
-                onOpenChange(false);
+                try {
+                  await deleteTx.mutateAsync(transaction.id);
+                  onOpenChange(false);
+                } catch {
+                  /* toast from hook */
+                }
               }}
             >
               <Trash2 className="mr-2 h-4 w-4" />
-              Usuń
+              {deleteTx.isPending ? "Usuwanie…" : "Usuń"}
             </Button>
           </div>
         </div>
+        <TransactionForm
+          open={editing}
+          onOpenChange={(next) => {
+            setEditing(next);
+            if (!next) onOpenChange(false);
+          }}
+          editTransaction={transaction}
+        />
       </DialogContent>
     </Dialog>
   );

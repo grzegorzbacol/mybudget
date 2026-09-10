@@ -50,11 +50,13 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
     onMonthChange(y, m);
   };
 
-  if (!data && !isError) {
+  const monthMatches = Boolean(data && data.year === year && data.month === month);
+
+  if (!monthMatches && !isError) {
     return <BudgetSkeleton />;
   }
 
-  if (!data && isError) {
+  if (!monthMatches && isError) {
     return (
       <div className="rounded-lg border border-amber-500/40 bg-background p-6 text-center">
         <p className="font-medium">Nie udało się wczytać budżetu</p>
