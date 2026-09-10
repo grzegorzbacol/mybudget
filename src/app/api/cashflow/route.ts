@@ -3,7 +3,7 @@ import { computeCashflow, buildCashflowTimeline, nextPayday, outflowUntil, isLow
 import { addDays, addMonths, monthRange, money } from "@/lib/money";
 import { getAuthContext } from "@/lib/api-helpers";
 import { budgetMonthFromCore, loadFamilyBudgetCore } from "@/lib/budget-read";
-import { monthAmount, queryCashflowDailyActualsSql } from "@/lib/budget-sql";
+import { monthAmount, queryCashflowDailyActualsSql, shouldSkipCashflowTimeline, CASHFLOW_RESPONSE_BUDGET_MS } from "@/lib/budget-sql";
 import { getCurrentYearMonth } from "@/lib/format";
 import { computeRunway, monthSpendPace, wealthLayers } from "@/lib/wealth";
 import {
@@ -31,6 +31,7 @@ export async function GET(request: Request) {
   const { year, month } = getCurrentYearMonth();
 
   try {
+    const deadlineAt = started + CASHFLOW_RESPONSE_BUDGET_MS;
     const lookback = addMonths(year, month, -5);
     const timelineFrom =
       bucket === "month"
@@ -38,7 +39,7 @@ export async function GET(request: Request) {
         : addDays(today, -28);
 
     const [core, goalFull] = await Promise.all([
-      loadFamilyBudgetCore(ctx.supabase, ctx.family.id),
+      loadFamilyBudgetCore(ctx.supabase, ctx.family.id, { allowRest: false, deadlineAt }),
       ctx.supabase
         .from("goals")
         .select("id, category_id, target_amount, target_date, type, priority")
@@ -58,12 +59,23 @@ export async function GET(request: Request) {
     });
 
     let dailyActuals: Awaited<ReturnType<typeof queryCashflowDailyActualsSql>> = null;
-    if (!lite) {
-      dailyActuals = await queryCashflowDailyActualsSql(ctx.family.id, timelineFrom, to);
+    if (!lite && !shouldSkipCashflowTimeline(started)) {
+      dailyActuals = await queryCashflowDailyActualsSql(ctx.family.id, timelineFrom, to, process.env, {
+        deadlineAt,
+      });
       cashflow.timeline = buildCashflowTimeline({
         from: timelineFrom,
         to,
         dailyActuals: dailyActuals ?? [],
+        accounts: core.accounts,
+        scheduled,
+        bucket,
+      });
+    } else if (!lite) {
+      cashflow.timeline = buildCashflowTimeline({
+        from: timelineFrom,
+        to,
+        dailyActuals: [],
         accounts: core.accounts,
         scheduled,
         bucket,

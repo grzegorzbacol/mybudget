@@ -221,6 +221,34 @@ describe("ensureFamilyCategories", () => {
   });
 });
 
+describe("loadFamilyBudgetCore cashflow path", () => {
+  afterEach(() => {
+    resetFamilyBudgetCache();
+    vi.resetModules();
+    vi.doUnmock("./budget-sql");
+  });
+
+  it("does not download REST ledger rows when SQL misses", async () => {
+    vi.resetModules();
+    vi.doMock("./budget-sql", async () => {
+      const actual = await vi.importActual<typeof import("./budget-sql")>("./budget-sql");
+      return {
+        ...actual,
+        queryFamilyBudgetSql: vi.fn().mockResolvedValue(null),
+        queryLedgerRangeSql: vi.fn(),
+      };
+    });
+    const { loadFamilyBudgetCore, resetFamilyBudgetCache: reset } = await import("./budget-read");
+    reset();
+    const from = vi.fn();
+    const core = await loadFamilyBudgetCore({ from } as never, "fam-1", { allowRest: false });
+    expect(from).not.toHaveBeenCalled();
+    expect(core.categories).toEqual([]);
+    expect(core.source).toBe("sql");
+    expect(core.schemaLag).toMatch(/snapshot/i);
+  });
+});
+
 describe("unwrapFamily", () => {
   it("reads family id from a PostgREST embed array", () => {
     expect(unwrapFamily([{ id: "fam-1", name: "Dom" }])?.id).toBe("fam-1");

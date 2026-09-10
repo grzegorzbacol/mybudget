@@ -33,6 +33,24 @@ describe("fetchJson", () => {
     await expect(fetchJson("/api/budget/2026/9")).rejects.toThrow("Brak rodziny");
   });
 
+  it("sends expired sessions to login instead of leaving a broken shell", async () => {
+    const replace = vi.fn();
+    vi.stubGlobal("window", {
+      location: { pathname: "/budget", search: "", replace },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: "Unauthorized" }),
+      })
+    );
+
+    await expect(fetchJson("/api/budget/2026/9")).rejects.toThrow("Unauthorized");
+    expect(replace).toHaveBeenCalledWith("/login?next=%2Fbudget");
+  });
+
   it("times out instead of hanging forever", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(

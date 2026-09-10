@@ -3,12 +3,18 @@ import {
   FAMILY_BUDGET_SQL,
   FAMILY_BUDGET_SQL_SAFE,
   getSnapshotPlan,
+  isStatementTimeoutError,
   monthAmount,
   monthCount,
   parseFamilyBudgetPayload,
+  postgresPoolConfig,
   queryFamilyBudgetWithClient,
+  remainingMs,
   resetBudgetSqlPlans,
+  shouldSkipCashflowTimeline,
   snapshotAttempts,
+  SQL_POOL_MAX,
+  SQL_STATEMENT_TIMEOUT_MS,
   withTimeout,
 } from "./budget-sql";
 
@@ -165,8 +171,7 @@ describe("snapshot dialect cache", () => {
       return { rows: [] };
     };
     await queryFamilyBudgetWithClient("11111111-1111-1111-1111-111111111111", query);
-    expect(order[0]).toBe("snapshot");
-    expect(order.slice(1).sort()).toEqual(["scheduled", "splits"].sort());
+    expect(order).toEqual(["snapshot", "scheduled", "splits"]);
   });
 });
 
@@ -174,5 +179,51 @@ describe("withTimeout", () => {
   it("returns the fallback when the query never resolves", async () => {
     const hung = new Promise<string>(() => undefined);
     await expect(withTimeout(hung, 20, "fallback")).resolves.toBe("fallback");
+  });
+});
+
+describe("postgres pool hardening", () => {
+  it("applies statement_timeout at connect and keeps max under 4", () => {
+    const config = postgresPoolConfig("postgres://localhost/db");
+    expect(config.max).toBe(SQL_POOL_MAX);
+    expect(config.max).toBeLessThan(4);
+    expect(config.options).toContain(`statement_timeout=${SQL_STATEMENT_TIMEOUT_MS}`);
+    expect(config.statement_timeout).toBe(SQL_STATEMENT_TIMEOUT_MS);
+    expect(config.query_timeout).toBe(SQL_STATEMENT_TIMEOUT_MS);
+    expect(config.connectionTimeoutMillis).toBeLessThanOrEqual(2_000);
+  });
+
+  it("does not treat a statement timeout as a dialect miss", async () => {
+    let snaps = 0;
+    const query = async (sql: string) => {
+      if (sql.includes("json_build_object")) {
+        snaps += 1;
+        throw new Error("canceling statement due to statement timeout");
+      }
+      return { rows: [] };
+    };
+    const result = await queryFamilyBudgetWithClient("11111111-1111-1111-1111-111111111111", query);
+    expect(result).toBeNull();
+    expect(snaps).toBe(1);
+    expect(isStatementTimeoutError(new Error("canceling statement due to statement timeout"))).toBe(true);
+  });
+
+  it("stops dialect probing when the deadline has passed", async () => {
+    let snaps = 0;
+    const query = async () => {
+      snaps += 1;
+      throw new Error("column t.transfer_account_id does not exist");
+    };
+    const result = await queryFamilyBudgetWithClient("11111111-1111-1111-1111-111111111111", query, {
+      deadlineAt: Date.now() - 1,
+    });
+    expect(result).toBeNull();
+    expect(snaps).toBe(0);
+  });
+
+  it("skips the cashflow timeline when the 8s response budget is almost gone", () => {
+    expect(shouldSkipCashflowTimeline(0, 8_000, 1_500, 7_000)).toBe(true);
+    expect(shouldSkipCashflowTimeline(0, 8_000, 1_500, 1_000)).toBe(false);
+    expect(remainingMs(0, 8_000, 3_000)).toBe(5_000);
   });
 });

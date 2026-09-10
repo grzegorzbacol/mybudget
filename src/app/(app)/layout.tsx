@@ -1,6 +1,6 @@
 import { AppShell } from "@/components/AppShell";
 
-export const dynamic = "force-dynamic";
+/** No force-dynamic: the shell does not read cookies. Middleware gates auth; /api/* loads data. */
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   return <AppShell>{children}</AppShell>;

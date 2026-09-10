@@ -306,17 +306,47 @@ export function monthCount(
   return 0;
 }
 
+type PgPoolClient = {
+  query: SqlQueryFn;
+  release: () => void;
+};
+
 type PgPool = {
-  query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
+  query: SqlQueryFn;
+  connect?: () => Promise<PgPoolClient>;
   on?: (event: string, listener: (client: { query: (sql: string) => unknown }) => void) => void;
 };
 
 let poolPromise: Promise<PgPool | null> | null = null;
 
-/** Bound hung queries so /api/cashflow cannot sit until the 12s browser abort. */
+/**
+ * Bound hung queries so /api/cashflow cannot sit until the 12s browser abort.
+ * max is 3 (not 4) so one request cannot occupy every slot; each GET checks out
+ * a single client for snapshot + extras instead of running them in parallel.
+ * statement_timeout is a startup option — a fire-and-forget SET on 'connect'
+ * races the first query and can leave a client executing with no timeout.
+ */
+export const SQL_POOL_MAX = 3;
 export const SQL_STATEMENT_TIMEOUT_MS = 4_000;
-export const SQL_CONNECTION_TIMEOUT_MS = 4_000;
-export const CASHFLOW_TIMELINE_BUDGET_MS = 3_000;
+export const SQL_CONNECTION_TIMEOUT_MS = 2_000;
+export const SQL_IDLE_TIMEOUT_MS = 5 * 60_000;
+export const FAMILY_BUDGET_SQL_BUDGET_MS = 6_000;
+export const CASHFLOW_TIMELINE_BUDGET_MS = 2_500;
+export const CASHFLOW_RESPONSE_BUDGET_MS = 8_000;
+
+export function postgresPoolConfig(connectionString: string) {
+  return {
+    connectionString,
+    max: SQL_POOL_MAX,
+    idleTimeoutMillis: SQL_IDLE_TIMEOUT_MS,
+    connectionTimeoutMillis: SQL_CONNECTION_TIMEOUT_MS,
+    allowExitOnIdle: false,
+    application_name: "mybudget",
+    statement_timeout: SQL_STATEMENT_TIMEOUT_MS,
+    query_timeout: SQL_STATEMENT_TIMEOUT_MS,
+    options: `-c statement_timeout=${SQL_STATEMENT_TIMEOUT_MS}`,
+  };
+}
 
 async function getPool(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
@@ -325,37 +355,82 @@ async function getPool(
   const databaseUrl = resolveDatabaseUrl(env);
   if (!databaseUrl) return null;
   poolPromise = import("pg")
-    .then(({ Pool }) => {
-      const pool = new Pool({
-        connectionString: databaseUrl,
-        max: 4,
-        idleTimeoutMillis: 15_000,
-        connectionTimeoutMillis: SQL_CONNECTION_TIMEOUT_MS,
-      }) as unknown as PgPool;
-      pool.on?.("connect", (client) => {
-        void client.query(`SET statement_timeout = ${SQL_STATEMENT_TIMEOUT_MS}`);
-      });
-      return pool;
-    })
+    .then(({ Pool }) => new Pool(postgresPoolConfig(databaseUrl)) as unknown as PgPool)
     .catch(() => null);
   return poolPromise;
 }
 
+export async function warmupBudgetSqlPool(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): Promise<boolean> {
+  const pool = await getPool(env);
+  if (!pool) return false;
+  try {
+    const result = await withTimeout(pool.query("SELECT 1"), SQL_CONNECTION_TIMEOUT_MS + 500, null);
+    return Boolean(result);
+  } catch {
+    return false;
+  }
+}
+
 export function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
   return new Promise<T>((resolve, reject) => {
-    timer = setTimeout(() => resolve(fallback), ms);
+    timer = setTimeout(() => {
+      settled = true;
+      resolve(fallback);
+    }, ms);
     promise.then(
       (value) => {
         if (timer) clearTimeout(timer);
-        resolve(value);
+        if (!settled) resolve(value);
       },
       (error) => {
         if (timer) clearTimeout(timer);
-        reject(error);
+        if (!settled) reject(error);
       }
     );
   });
+}
+
+export function remainingMs(started: number, budgetMs: number, now = Date.now()): number {
+  return Math.max(0, started + budgetMs - now);
+}
+
+export function shouldSkipCashflowTimeline(
+  started: number,
+  budgetMs = CASHFLOW_RESPONSE_BUDGET_MS,
+  reserveMs = 1_500,
+  now = Date.now()
+): boolean {
+  return remainingMs(started, budgetMs, now) < reserveMs;
+}
+
+async function withCheckedOutClient<T>(
+  pool: PgPool,
+  fn: (query: SqlQueryFn) => Promise<T>
+): Promise<T | null> {
+  if (typeof pool.connect !== "function") {
+    try {
+      return await fn((sql, params) => pool.query(sql, params));
+    } catch {
+      return null;
+    }
+  }
+  let client: PgPoolClient;
+  try {
+    client = await pool.connect();
+  } catch {
+    return null;
+  }
+  try {
+    return await fn((sql, params) => client.query(sql, params));
+  } catch {
+    return null;
+  } finally {
+    client.release();
+  }
 }
 
 export function isUndefinedObject(error: unknown): boolean {
@@ -368,7 +443,15 @@ export function isFamilyIdTypeError(error: unknown): boolean {
   return /invalid input syntax for type uuid|22P02|operator does not exist|42883/i.test(message);
 }
 
+export function isStatementTimeoutError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /statement timeout|57014|canceling statement due to statement timeout|timeout exceeded when trying to connect|Query read timeout/i.test(
+    message
+  );
+}
+
 function isRetryableSqlError(error: unknown): boolean {
+  if (isStatementTimeoutError(error)) return false;
   return isUndefinedObject(error) || isFamilyIdTypeError(error);
 }
 
@@ -395,7 +478,8 @@ function parseSplitLines(rows: Array<Record<string, unknown>>): SplitActivityLin
 
 export async function queryFamilyBudgetWithClient(
   familyId: string,
-  query: SqlQueryFn
+  query: SqlQueryFn,
+  options?: { deadlineAt?: number }
 ): Promise<FamilyBudgetSqlPayload | null> {
   let roundTrips = 0;
   const run: SqlQueryFn = async (sql, params) => {
@@ -437,13 +521,25 @@ export async function queryFamilyBudgetWithClient(
   };
 
   const loadExtras = async (plan: SnapshotPlan) => {
+    if (options?.deadlineAt && Date.now() >= options.deadlineAt) {
+      return {
+        scheduledRes: { rows: [] as Array<Record<string, unknown>>, ok: false },
+        splitRes: { rows: [] as Array<Record<string, unknown>> },
+      };
+    }
     const scheduledRes = await optional(scheduledSql(plan.pred));
+    if (options?.deadlineAt && Date.now() >= options.deadlineAt) {
+      return { scheduledRes, splitRes: { rows: [] as Array<Record<string, unknown>> } };
+    }
     const splitRes = await optional(splitLinesSql(plan.pred, plan.kind));
     return { scheduledRes, splitRes };
   };
 
   const plans = snapshotAttempts();
   for (const plan of plans) {
+    if (options?.deadlineAt && Date.now() >= options.deadlineAt) {
+      return null;
+    }
     try {
       const payload = await snapshot(plan);
       const { scheduledRes, splitRes } = await loadExtras(plan);
@@ -460,11 +556,16 @@ export async function queryFamilyBudgetWithClient(
 
 export async function queryFamilyBudgetSql(
   familyId: string,
-  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+  options?: { deadlineAt?: number }
 ): Promise<FamilyBudgetSqlPayload | null> {
   const pool = await getPool(env);
   if (!pool) return null;
-  return queryFamilyBudgetWithClient(familyId, (sql, params) => pool.query(sql, params));
+  const deadlineAt = options?.deadlineAt ?? Date.now() + FAMILY_BUDGET_SQL_BUDGET_MS;
+  if (Date.now() >= deadlineAt) return null;
+  return withCheckedOutClient(pool, (query) =>
+    queryFamilyBudgetWithClient(familyId, query, { deadlineAt })
+  );
 }
 
 export async function queryCashflowDailyActualsWithClient(
@@ -495,14 +596,15 @@ export async function queryCashflowDailyActualsSql(
   familyId: string,
   from: string,
   to: string,
-  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+  options?: { deadlineAt?: number }
 ): Promise<DailyCashflowActual[] | null> {
   const pool = await getPool(env);
   if (!pool) return null;
-  const pending = queryCashflowDailyActualsWithClient(familyId, from, to, (sql, params) =>
-    pool.query(sql, params)
-  ).catch(() => null);
-  return withTimeout(pending, CASHFLOW_TIMELINE_BUDGET_MS, null);
+  if (options?.deadlineAt && Date.now() >= options.deadlineAt) return null;
+  return withCheckedOutClient(pool, (query) =>
+    queryCashflowDailyActualsWithClient(familyId, from, to, query)
+  );
 }
 
 export async function queryLedgerRangeSql(

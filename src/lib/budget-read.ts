@@ -221,11 +221,35 @@ function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
   };
 }
 
-async function loadCoreUncached(supabase: Supabase, familyId: string): Promise<FamilyBudgetCore> {
-  const sql = await queryFamilyBudgetSql(familyId);
-  const core = sql ? coreFromSql(sql) : await loadCoreFromRest(supabase, familyId);
+async function loadCoreUncached(
+  supabase: Supabase,
+  familyId: string,
+  options?: { allowRest?: boolean; deadlineAt?: number }
+): Promise<FamilyBudgetCore> {
+  const sql = await queryFamilyBudgetSql(familyId, process.env, { deadlineAt: options?.deadlineAt });
+  if (sql) {
+    const core = coreFromSql(sql);
+    if (core.categories.length) return core;
+    const recovered = await fetchFamilyCategories(supabase, familyId);
+    const categories = await ensureFamilyCategories(supabase, familyId, recovered.data);
+    return { ...core, categories };
+  }
+  if (options?.allowRest === false) {
+    return {
+      categories: [],
+      allocations: [],
+      accounts: [],
+      scheduled: [],
+      activityMap: new Map(),
+      income: [],
+      spending: [],
+      uncategorized: [],
+      schemaLag: "Postgres snapshot niedostępny — spróbuj ponownie za chwilę.",
+      source: "sql",
+    };
+  }
+  const core = await loadCoreFromRest(supabase, familyId);
   if (core.categories.length) return core;
-
   const recovered = await fetchFamilyCategories(supabase, familyId);
   const categories = await ensureFamilyCategories(supabase, familyId, recovered.data);
   return { ...core, categories };
@@ -233,7 +257,8 @@ async function loadCoreUncached(supabase: Supabase, familyId: string): Promise<F
 
 export async function loadFamilyBudgetCore(
   supabase: Supabase,
-  familyId: string
+  familyId: string,
+  options?: { allowRest?: boolean; deadlineAt?: number }
 ): Promise<FamilyBudgetCore> {
   const now = Date.now();
   const entry = coreCache.get(familyId);
@@ -244,7 +269,17 @@ export async function loadFamilyBudgetCore(
     return entry.inflight;
   }
 
-  const inflight = loadCoreUncached(supabase, familyId).then((value) => {
+  // Cashflow first-hit must not register inflight: a SQL miss returns empty and
+  // must not become the /api/budget result (which still uses the REST fallback).
+  if (options?.allowRest === false) {
+    const value = await loadCoreUncached(supabase, familyId, options);
+    if (value.categories.length) {
+      coreCache.set(familyId, { at: Date.now(), value });
+    }
+    return value;
+  }
+
+  const inflight = loadCoreUncached(supabase, familyId, options).then((value) => {
     coreCache.set(familyId, { at: Date.now(), value });
     return value;
   });
