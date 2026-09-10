@@ -132,7 +132,7 @@ SELECT json_build_object(
       GROUP BY 1, 2
     ) x
   ), '[]'::json)
-) AS payload
+)::jsonb AS payload
 `;
 
 /** Schema-lag fallback: no transfer markers, kind, moved, on_budget, or scheduled table. */
@@ -202,7 +202,7 @@ SELECT json_build_object(
   ), '[]'::json),
   'transferMarkersMissing', true,
   'scheduledMissing', true
-) AS payload
+)::jsonb AS payload
 `;
 
 export const LEDGER_RANGE_SQL = `
@@ -222,12 +222,31 @@ WHERE family_id = $1::uuid
   AND date < $3::date
 `;
 
+/** node-pg often leaves `json` (not jsonb) as a string; nested json_agg can too. */
+export function parseJsonValue(raw: unknown): unknown {
+  let current = raw;
+  for (let i = 0; i < 3 && typeof current === "string"; i++) {
+    const trimmed = current.trim();
+    if (!trimmed || (trimmed[0] !== "{" && trimmed[0] !== "[")) break;
+    try {
+      current = JSON.parse(trimmed) as unknown;
+    } catch {
+      break;
+    }
+  }
+  return current;
+}
+
 function asArray<T>(value: unknown): T[] {
-  return Array.isArray(value) ? (value as T[]) : [];
+  const parsed = parseJsonValue(value);
+  return Array.isArray(parsed) ? (parsed as T[]) : [];
 }
 
 export function parseFamilyBudgetPayload(raw: unknown): FamilyBudgetSqlPayload {
-  const data = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const parsed = parseJsonValue(raw);
+  const data = (
+    parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {}
+  ) as Record<string, unknown>;
   return {
     categories: asArray<BudgetCategory>(data.categories),
     allocations: asArray<BudgetAllocation>(data.allocations),
@@ -240,6 +259,13 @@ export function parseFamilyBudgetPayload(raw: unknown): FamilyBudgetSqlPayload {
     transferMarkersMissing: Boolean(data.transferMarkersMissing),
     scheduledMissing: Boolean(data.scheduledMissing),
   };
+}
+
+/** Empty categories means parse failed or DATABASE_URL is not the app database. */
+export function isUsableSqlBudgetPayload(
+  payload: FamilyBudgetSqlPayload | null | undefined
+): payload is FamilyBudgetSqlPayload {
+  return Boolean(payload && payload.categories.length > 0);
 }
 
 export function monthAmount(
@@ -304,7 +330,8 @@ export async function queryFamilyBudgetSql(
 
   try {
     const result = await pool.query(FAMILY_BUDGET_SQL, [familyId]);
-    return parseFamilyBudgetPayload(result.rows[0]?.payload);
+    const parsed = parseFamilyBudgetPayload(result.rows[0]?.payload);
+    return isUsableSqlBudgetPayload(parsed) ? parsed : null;
   } catch (error) {
     if (!isUndefinedObject(error)) {
       console.error("[budget-sql]", error instanceof Error ? error.message : error);
@@ -312,7 +339,8 @@ export async function queryFamilyBudgetSql(
     }
     try {
       const fallback = await pool.query(FAMILY_BUDGET_SQL_SAFE, [familyId]);
-      return parseFamilyBudgetPayload(fallback.rows[0]?.payload);
+      const parsed = parseFamilyBudgetPayload(fallback.rows[0]?.payload);
+      return isUsableSqlBudgetPayload(parsed) ? parsed : null;
     } catch (safeError) {
       console.error("[budget-sql]", safeError instanceof Error ? safeError.message : safeError);
       return null;

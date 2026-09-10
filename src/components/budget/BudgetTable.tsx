@@ -50,7 +50,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
     onMonthChange(y, m);
   };
 
-  const monthMatches = Boolean(data && data.year === year && data.month === month);
+  const monthMatches = Boolean(data && Number(data.year) === year && Number(data.month) === month);
 
   if (!monthMatches && !isError) {
     return <BudgetSkeleton />;
