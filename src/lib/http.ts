@@ -25,6 +25,12 @@ export async function fetchJson<T>(
     const res = await fetch(url, { ...init, signal: controller.signal });
     const payload = (await res.json().catch(() => ({}))) as { error?: unknown };
     if (!res.ok) {
+      if (res.status === 401 && typeof window !== "undefined") {
+        const next = `${window.location.pathname}${window.location.search}`;
+        if (!window.location.pathname.startsWith("/login")) {
+          window.location.replace(`/login?next=${encodeURIComponent(next)}`);
+        }
+      }
       throw new Error(typeof payload.error === "string" ? payload.error : "Nie udało się pobrać danych");
     }
     return payload as T;
