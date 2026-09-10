@@ -36,6 +36,10 @@ export const transactionPatchSchema = transactionSchema.partial().extend({
   id: z.string().uuid().optional(),
 });
 
+export const transactionBulkDeleteSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1, "Nie wybrano transakcji").max(200),
+});
+
 export const transferSchema = z.object({
   from_account_id: z.string().uuid(),
   to_account_id: z.string().uuid(),
