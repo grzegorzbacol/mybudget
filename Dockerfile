@@ -37,6 +37,7 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --chown=nextjs:nodejs supabase/migrations ./supabase/migrations
 COPY --chown=nextjs:nodejs scripts/docker-entrypoint.sh ./docker-entrypoint.sh
+COPY --chown=nextjs:nodejs scripts/wait-for-sql-pool.cjs ./wait-for-sql-pool.cjs
 COPY --chown=nextjs:nodejs scripts/ensure-schema.sql ./scripts/ensure-schema.sql
 RUN chmod +x ./docker-entrypoint.sh
 

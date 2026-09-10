@@ -247,6 +247,35 @@ describe("loadFamilyBudgetCore cashflow path", () => {
     expect(core.source).toBe("sql");
     expect(core.schemaLag).toMatch(/snapshot/i);
   });
+
+  it("does not wait for a REST inflight when allowRest is false", async () => {
+    vi.resetModules();
+    vi.doMock("./budget-sql", async () => {
+      const actual = await vi.importActual<typeof import("./budget-sql")>("./budget-sql");
+      return {
+        ...actual,
+        queryFamilyBudgetSql: vi.fn().mockResolvedValue(null),
+        queryLedgerRangeSql: vi.fn(),
+      };
+    });
+    const { loadFamilyBudgetCore, resetFamilyBudgetCache: reset } = await import("./budget-read");
+    reset();
+    const hang = {
+      select: () => hang,
+      eq: () => hang,
+      order: () => hang,
+      limit: () => hang,
+      then: () => new Promise(() => undefined),
+    };
+    const supabase = { from: () => hang };
+    const rest = loadFamilyBudgetCore(supabase as never, "fam-1");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const started = Date.now();
+    const fast = await loadFamilyBudgetCore(supabase as never, "fam-1", { allowRest: false });
+    expect(Date.now() - started).toBeLessThan(200);
+    expect(fast.categories).toEqual([]);
+    rest.then(() => undefined, () => undefined);
+  });
 });
 
 describe("unwrapFamily", () => {

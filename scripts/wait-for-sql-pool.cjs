@@ -1,0 +1,34 @@
+/**
+ * Poll GET /api/health until the Node pg pool has opened a connection.
+ * Used by docker-entrypoint so Coolify does not send the first user to a cold pool.
+ */
+const port = process.env.PORT || "3000";
+const deadline = Date.now() + 45_000;
+
+async function once() {
+  const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+  return res.json();
+}
+
+(async () => {
+  while (Date.now() < deadline) {
+    try {
+      const json = await once();
+      if (json && json.db === true) {
+        console.log("SQL pool ready", JSON.stringify(json));
+        process.exit(0);
+      }
+      if (json && json.skipped) {
+        console.log("SQL pool skipped", JSON.stringify(json));
+        process.exit(0);
+      }
+      console.log("waiting for SQL pool", JSON.stringify(json));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.log("waiting for listen", message);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
+  console.log("WARNING: SQL pool did not report db:true before timeout");
+  process.exit(0);
+})();

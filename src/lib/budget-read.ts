@@ -40,7 +40,12 @@ export type FamilyBudgetCore = {
 const CORE_TTL_MS = 8_000;
 const coreCache = new Map<
   string,
-  { at: number; value?: FamilyBudgetCore; inflight?: Promise<FamilyBudgetCore> }
+  {
+    at: number;
+    value?: FamilyBudgetCore;
+    inflight?: Promise<FamilyBudgetCore>;
+    inflightAllowRest?: boolean;
+  }
 >();
 let cachedCategorySelect: string | null = null;
 
@@ -261,29 +266,29 @@ export async function loadFamilyBudgetCore(
   options?: { allowRest?: boolean; deadlineAt?: number }
 ): Promise<FamilyBudgetCore> {
   const now = Date.now();
+  const allowRest = options?.allowRest !== false;
   const entry = coreCache.get(familyId);
   if (entry?.value && now - entry.at < CORE_TTL_MS) {
     return entry.value;
   }
-  if (entry?.inflight) {
+  // Only join an in-flight load with the same REST policy. Cashflow (allowRest:
+  // false) must not wait for /api/budget's 20k-row PostgREST fallback.
+  if (entry?.inflight && entry.inflightAllowRest === allowRest) {
     return entry.inflight;
   }
 
-  // Cashflow first-hit must not register inflight: a SQL miss returns empty and
-  // must not become the /api/budget result (which still uses the REST fallback).
-  if (options?.allowRest === false) {
-    const value = await loadCoreUncached(supabase, familyId, options);
-    if (value.categories.length) {
+  const inflight = loadCoreUncached(supabase, familyId, options).then((value) => {
+    if (allowRest || value.categories.length) {
       coreCache.set(familyId, { at: Date.now(), value });
     }
     return value;
-  }
-
-  const inflight = loadCoreUncached(supabase, familyId, options).then((value) => {
-    coreCache.set(familyId, { at: Date.now(), value });
-    return value;
   });
-  coreCache.set(familyId, { at: entry?.at ?? 0, value: entry?.value, inflight });
+  coreCache.set(familyId, {
+    at: entry?.at ?? 0,
+    value: entry?.value,
+    inflight,
+    inflightAllowRest: allowRest,
+  });
   try {
     return await inflight;
   } finally {

@@ -328,11 +328,19 @@ let poolPromise: Promise<PgPool | null> | null = null;
  */
 export const SQL_POOL_MAX = 3;
 export const SQL_STATEMENT_TIMEOUT_MS = 4_000;
-export const SQL_CONNECTION_TIMEOUT_MS = 2_000;
+/** First TCP/TLS to Postgres after deploy can exceed 2s; health waits this long for a real SELECT 1. */
+export const SQL_CONNECTION_TIMEOUT_MS = 8_000;
 export const SQL_IDLE_TIMEOUT_MS = 5 * 60_000;
 export const FAMILY_BUDGET_SQL_BUDGET_MS = 6_000;
 export const CASHFLOW_TIMELINE_BUDGET_MS = 2_500;
 export const CASHFLOW_RESPONSE_BUDGET_MS = 8_000;
+export const CASHFLOW_AUTH_BUDGET_MS = 3_000;
+
+export type SqlPoolProbe = {
+  db: boolean;
+  skipped?: string;
+  error?: string;
+};
 
 export function postgresPoolConfig(connectionString: string) {
   return {
@@ -341,10 +349,8 @@ export function postgresPoolConfig(connectionString: string) {
     idleTimeoutMillis: SQL_IDLE_TIMEOUT_MS,
     connectionTimeoutMillis: SQL_CONNECTION_TIMEOUT_MS,
     allowExitOnIdle: false,
-    application_name: "mybudget",
-    statement_timeout: SQL_STATEMENT_TIMEOUT_MS,
+    /** Client-side cap so a hung backend cannot occupy a slot past the cashflow budget. */
     query_timeout: SQL_STATEMENT_TIMEOUT_MS,
-    options: `-c statement_timeout=${SQL_STATEMENT_TIMEOUT_MS}`,
   };
 }
 
@@ -356,21 +362,57 @@ async function getPool(
   if (!databaseUrl) return null;
   poolPromise = import("pg")
     .then(({ Pool }) => new Pool(postgresPoolConfig(databaseUrl)) as unknown as PgPool)
-    .catch(() => null);
+    .catch((error) => {
+      console.error("[budget-sql] pool init failed", error instanceof Error ? error.message : error);
+      poolPromise = null;
+      return null;
+    });
   return poolPromise;
 }
 
+export async function probeSqlPool(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): Promise<SqlPoolProbe> {
+  if (!resolveDatabaseUrl(env)) {
+    return { db: false, skipped: "DATABASE_URL not set" };
+  }
+  const pool = await getPool(env);
+  if (!pool) {
+    return { db: false, error: "pg pool failed to initialize" };
+  }
+  try {
+    const result = await withCheckedOutClient(pool, (query) => query("SELECT 1 AS ok"));
+    if (result?.rows?.length) {
+      return { db: true };
+    }
+    return { db: false, error: "SELECT 1 returned no rows" };
+  } catch (error) {
+    return { db: false, error: error instanceof Error ? error.message : "probe failed" };
+  }
+}
+
+/** @deprecated use probeSqlPool — kept so older imports keep compiling during rollout */
 export async function warmupBudgetSqlPool(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
 ): Promise<boolean> {
-  const pool = await getPool(env);
-  if (!pool) return false;
-  try {
-    const result = await withTimeout(pool.query("SELECT 1"), SQL_CONNECTION_TIMEOUT_MS + 500, null);
-    return Boolean(result);
-  } catch {
-    return false;
+  const probe = await probeSqlPool(env);
+  return probe.db;
+}
+
+export function healthHttpFromProbe(probe: SqlPoolProbe): {
+  status: number;
+  body: { ok: boolean; db: boolean; skipped?: string; error?: string };
+} {
+  if (probe.skipped) {
+    return { status: 200, body: { ok: true, db: false, skipped: probe.skipped } };
   }
+  if (probe.db) {
+    return { status: 200, body: { ok: true, db: true } };
+  }
+  return {
+    status: 503,
+    body: { ok: false, db: false, error: probe.error ?? "database unreachable" },
+  };
 }
 
 export function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
@@ -425,6 +467,11 @@ async function withCheckedOutClient<T>(
     return null;
   }
   try {
+    try {
+      await client.query(`SET statement_timeout = ${SQL_STATEMENT_TIMEOUT_MS}`);
+    } catch {
+      /* transaction poolers may forbid SET; query_timeout still applies */
+    }
     return await fn((sql, params) => client.query(sql, params));
   } catch {
     return null;
