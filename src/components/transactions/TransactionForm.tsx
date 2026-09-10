@@ -29,7 +29,7 @@ import { toast } from "sonner";
 import { isExpenseCategory, isOnBudget, isTransferTx } from "@/lib/budget";
 import { customSplits, equalSplits, splitsMatchTotal } from "@/lib/splits";
 import { buildPayeeCategoryRules, suggestCategoryForPayee } from "@/lib/categorize";
-import { RECEIPTS_BUCKET, receiptObjectPath } from "@/lib/receipts";
+import { RECEIPTS_BUCKET, receiptObjectPath, sniffReceiptImage } from "@/lib/receipts";
 import { ReceiptPhoto } from "@/components/ReceiptPhoto";
 import { cn } from "@/lib/utils";
 
@@ -238,10 +238,12 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction }
     setReceiptPreview(URL.createObjectURL(file));
     try {
       const buffer = await file.arrayBuffer();
-      const fileName = receiptObjectPath(familyData.family.id, file.name);
+      const imageMime = sniffReceiptImage(buffer);
+      if (!imageMime) throw new Error("not a raster image");
+      const fileName = receiptObjectPath(familyData.family.id, file.name, Date.now(), imageMime);
       const { data, error } = await supabase.storage
         .from(RECEIPTS_BUCKET)
-        .upload(fileName, buffer, { contentType: file.type, upsert: false });
+        .upload(fileName, buffer, { contentType: imageMime, upsert: false });
       if (error) throw error;
       setReceiptUrl(data.path);
     } catch {

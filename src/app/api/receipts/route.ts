@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
-import { isFamilyReceiptPath, RECEIPTS_BUCKET, receiptStoragePath } from "@/lib/receipts";
+import {
+  isFamilyReceiptPath,
+  RECEIPTS_BUCKET,
+  receiptFileHeaders,
+  receiptStoragePath,
+  sniffReceiptImage,
+} from "@/lib/receipts";
 
 export const dynamic = "force-dynamic";
 
@@ -23,10 +29,12 @@ export async function GET(request: Request) {
   }
 
   const bytes = new Uint8Array(await data.arrayBuffer());
+  const mime = sniffReceiptImage(bytes);
+  if (!mime) {
+    return NextResponse.json({ error: "Nie znaleziono paragonu" }, { status: 404 });
+  }
+
   return new NextResponse(bytes, {
-    headers: {
-      "Content-Type": data.type || "image/jpeg",
-      "Cache-Control": "private, max-age=3600",
-    },
+    headers: receiptFileHeaders(mime),
   });
 }

@@ -63,7 +63,8 @@ export function buildReceiptTransaction(draft: ReceiptTransactionDraft): Transac
 
   return {
     account_id: draft.accountId,
-    category_id: merged[0]?.category_id ?? categorized[0]?.category_id ?? null,
+    // Incomplete matching must not dump the whole receipt into the first koperta.
+    category_id: allCategorized ? (merged[0]?.category_id ?? null) : null,
     amount: -amountAbs,
     payee: draft.storeName.trim() || "Paragon",
     memo,

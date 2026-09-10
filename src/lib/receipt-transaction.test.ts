@@ -85,6 +85,23 @@ describe("buildReceiptTransaction", () => {
     expect(tx.memo).toBe("Lody Gałka");
   });
 
+  it("leaves mixed-category receipts unassigned instead of dumping the total into the first koperta", () => {
+    const tx = buildReceiptTransaction({
+      storeName: "Sklep",
+      date: "2026-09-08",
+      total: 7,
+      receiptUrl: null,
+      accountId: ACCOUNT,
+      items: [
+        { name: "Lody Gałka", amount: 5, category_id: FOOD },
+        { name: "Wafel", amount: 2, category_id: "" },
+      ],
+    });
+    expect(tx.amount).toBe(-7);
+    expect(tx.category_id).toBeNull();
+    expect(tx.category_splits).toBeUndefined();
+  });
+
   it("saves a total-only receipt as a single transaction", () => {
     const tx = buildReceiptTransaction({
       storeName: "Sklep",
@@ -96,6 +113,7 @@ describe("buildReceiptTransaction", () => {
     });
     expect(tx.amount).toBe(-7);
     expect(tx.memo).toBe("Paragon OCR");
+    expect(tx.category_id).toBeNull();
     expect(tx.category_splits).toBeUndefined();
     expect(tx.source).toBe("ocr");
   });
