@@ -70,7 +70,7 @@ export async function fetchFamilyCategories(
       .eq("family_id", familyId)
       .order("sort_order");
     if (!res.error) {
-      return { data: (res.data ?? []) as BudgetCategory[] };
+      return { data: (res.data ?? []) as unknown as BudgetCategory[] };
     }
     lastError = res.error.message;
     if (!isSchemaLagError(lastError)) {
