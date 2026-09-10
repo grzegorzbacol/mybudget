@@ -14,6 +14,7 @@ import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { decodeBankFileBytes } from "@/lib/csv-encoding";
 
 export function CsvImport() {
   const { data: familyData } = useFamily();
@@ -43,7 +44,8 @@ export function CsvImport() {
 
     setImporting(true);
     try {
-      const content = await file.text();
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const content = decodeBankFileBytes(bytes);
       const res = await fetch("/api/import/csv", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

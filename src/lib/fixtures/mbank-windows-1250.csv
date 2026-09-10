@@ -1,0 +1,9 @@
+#Klient;Jan Kowalski
+#Waluta;PLN
+
+#Data operacji;#Opis operacji;#Rachunek;#Kategoria;#Kwota
+2026-09-08;PRZELEW WEWNÊTRZNY PRZYCHODZ¥CY;eKonto;Przychód;1500,00
+2026-09-08;PRZELEW W£ASNY;eKonto;Przelewy;-20,00
+2026-09-08;ZAKUP PRZY U¯YCIU KARTY;eKonto;Zakupy;-45,50
+2026-09-08;BLIK ZAKUP E-COMMERCE;eKonto;Zakupy;-12,00
+2026-09-08;¹ê³óŸñæ test;eKonto;Test;-1,00

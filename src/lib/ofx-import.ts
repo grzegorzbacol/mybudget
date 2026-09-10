@@ -1,3 +1,4 @@
+import { decodeBankFileBytes } from "./csv-encoding";
 import { parseBankCsv, type CsvRow } from "./csv-import";
 
 function ofxDate(value: string): string {
@@ -31,4 +32,8 @@ export function parseBankFile(content: string): CsvRow[] {
     return parseOfx(content);
   }
   return parseBankCsv(content);
+}
+
+export function parseBankFileBytes(bytes: Uint8Array): CsvRow[] {
+  return parseBankFile(decodeBankFileBytes(bytes));
 }
