@@ -1,5 +1,7 @@
+import { parseBankDescription } from "./display-payee";
+
 export function normalizePayee(payee: string): string {
-  return payee
+  return parseBankDescription(payee)
     .toLowerCase()
     .replace(/[^a-z0-9ąćęłńóśźż ]+/gi, " ")
     .replace(/\b\d+\b/g, " ")

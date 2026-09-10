@@ -1,5 +1,6 @@
 import { decodeBankFileBytes } from "./csv-encoding";
 import { parseBankCsv, type CsvRow } from "./csv-import";
+import { importPayeeFields } from "./display-payee";
 
 function ofxDate(value: string): string {
   const digits = value.replace(/\D/g, "").slice(0, 8);
@@ -17,11 +18,14 @@ export function parseOfx(content: string): CsvRow[] {
     const memoMatch = block.match(/<MEMO>([^<]+)/i);
     if (!amountMatch) continue;
     const amount = parseFloat(amountMatch[1].replace(",", ".")) || 0;
+    const rawName = (nameMatch?.[1] ?? "Import OFX").trim();
+    const memoFromOfx = memoMatch?.[1]?.trim();
+    const mapped = importPayeeFields(rawName, memoFromOfx || "Import OFX");
     rows.push({
       date: dateMatch ? ofxDate(dateMatch[1]) : new Date().toISOString().slice(0, 10),
-      payee: (nameMatch?.[1] ?? "Import OFX").trim(),
+      payee: mapped.payee,
       amount,
-      memo: memoMatch?.[1]?.trim() || "Import OFX",
+      memo: memoFromOfx || mapped.memo,
     });
   }
   return rows;

@@ -21,6 +21,7 @@ import {
 import { useCreateTransaction, useCreateTransfer, useUpdateTransaction } from "@/hooks/use-transactions";
 import type { Transaction } from "@/lib/types";
 import { todayIso } from "@/lib/format";
+import { displayPayee } from "@/lib/display-payee";
 import { categorySplitsValid } from "@/lib/category-splits";
 import { useFamily, useFamilyMembers } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
@@ -97,7 +98,11 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction }
       : prefill;
     const isIncome = source?.amount != null && source.amount > 0;
     setType(editTransaction && isTransferTx(editTransaction) ? "transfer" : isIncome ? "income" : "expense");
-    setPayee(source?.payee ?? "");
+    setPayee(
+      editTransaction
+        ? displayPayee(editTransaction.payee, editTransaction.memo)
+        : (source?.payee ?? "")
+    );
     setAmount(source?.amount != null ? String(Math.abs(source.amount)) : "");
     setDate(source?.date ?? todayIso());
     setCategoryId(source?.categoryId ?? "");

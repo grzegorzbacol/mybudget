@@ -18,6 +18,21 @@ describe("payee categorization rules", () => {
     expect(suggestCategoryForPayee("Biedronka 99", rules)).toBe("groceries");
   });
 
+  it("matches mBank card descriptions to the merchant, not the generic op type", () => {
+    const rules = buildPayeeCategoryRules([
+      {
+        payee: "PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK",
+        category_id: "food",
+        amount: -32,
+        date: "2026-09-01",
+      },
+    ]);
+    expect(suggestCategoryForPayee("JMP S.A. BIEDRONKA /RUDA SLASK", rules)).toBe("food");
+    expect(suggestCategoryForPayee("PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK", rules)).toBe(
+      "food"
+    );
+  });
+
   it("applies rules only to uncategorized rows", () => {
     const rules = new Map([[normalizePayee("Orlen"), "fuel"]]);
     const rows = applyPayeeRules(
