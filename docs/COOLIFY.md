@@ -124,6 +124,7 @@ Po dodaniu HTTPS do panelu Coolify możesz włączyć **Auto Deploy** w ustawien
 
 ## Troubleshooting
 
+- **`/api/health` `getaddrinfo EAI_AGAIN supabase-db-...`:** Docker DNS cannot resolve the Postgres hostname (container down or not on the same network). The app retries DNS 2–3 times with short backoff. If the host stays unreachable, **`GET /api/health` returns 200** `{ok:true, db:false, degraded:true}` so Coolify does **not** restart MyBudget while Kong/PostgREST may still work. Cashflow then loads via REST instead of hanging on SQL. Fix infra: start/reconnect the `supabase-db-*` container. Keep Coolify’s HTTP healthcheck on `/api/health` (liveness = 200). Treat `db:true` as SQL readiness, not a kill signal — do not require 503 for a DNS blip.
 - **Budżet pusty / 500 `transfer_account_id does not exist`:** Redeploy; w logach startu musi przejść `006_transfer_columns.sql` albo `ensure-schema.sql`. `DATABASE_URL` = baza PostgREST. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/006_transfer_columns.sql`
 - **Cashflow 500 `scheduled_transactions` / schema cache:** Redeploy; w logach startu `007_scheduled_transactions.sql` albo `ensure-schema.sql` musi utworzyć tabelę. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/007_scheduled_transactions.sql`
 - **Nie da się utworzyć konta / „nie znaleziono konta” przy wydatku:** brak `accounts.on_budget` albo stary `accounts_type_check`. Redeploy; `008_account_columns.sql` + ensure-schema. UI idzie przez `POST /api/accounts` (retry bez kolumny / po naprawie constraintu).

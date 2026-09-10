@@ -7,6 +7,7 @@ import {
   ensureFamilyCategories,
   fetchFamilyCategories,
   resetFamilyBudgetCache,
+  restFallbackFromSqlMiss,
   type FamilyBudgetCore,
 } from "./budget-read";
 import { DEFAULT_CATEGORIES } from "./default-categories";
@@ -356,6 +357,16 @@ describe("ensureFamilyCategories", () => {
   });
 });
 
+describe("restFallbackFromSqlMiss", () => {
+  it("uses REST for cashflow only when SQL cannot reach the host", () => {
+    expect(restFallbackFromSqlMiss(false)).toBe(false);
+    expect(restFallbackFromSqlMiss("unreachable")).toBe(false);
+    expect(restFallbackFromSqlMiss("unreachable", { kind: "dns", message: "getaddrinfo EAI_AGAIN db" })).toBe(true);
+    expect(restFallbackFromSqlMiss(true)).toBe(true);
+    expect(restFallbackFromSqlMiss(undefined)).toBe(true);
+  });
+});
+
 describe("loadFamilyBudgetCore cashflow path", () => {
   afterEach(() => {
     resetFamilyBudgetCache();
@@ -369,6 +380,7 @@ describe("loadFamilyBudgetCore cashflow path", () => {
       const actual = await vi.importActual<typeof import("./budget-sql")>("./budget-sql");
       return {
         ...actual,
+        tryQueryFamilyBudgetSql: vi.fn().mockResolvedValue({ payload: null }),
         queryFamilyBudgetSql: vi.fn().mockResolvedValue(null),
         queryLedgerRangeSql: vi.fn(),
       };
@@ -383,12 +395,94 @@ describe("loadFamilyBudgetCore cashflow path", () => {
     expect(core.schemaLag).toMatch(/snapshot/i);
   });
 
+  it("does not download REST ledger rows when cashflow SQL misses without DNS", async () => {
+    vi.resetModules();
+    vi.doMock("./budget-sql", async () => {
+      const actual = await vi.importActual<typeof import("./budget-sql")>("./budget-sql");
+      return {
+        ...actual,
+        tryQueryFamilyBudgetSql: vi.fn().mockResolvedValue({ payload: null }),
+        queryFamilyBudgetSql: vi.fn().mockResolvedValue(null),
+        queryLedgerRangeSql: vi.fn(),
+      };
+    });
+    const { loadFamilyBudgetCore, resetFamilyBudgetCache: reset } = await import("./budget-read");
+    reset();
+    const from = vi.fn();
+    const core = await loadFamilyBudgetCore({ from } as never, "fam-1", { allowRest: "unreachable" });
+    expect(from).not.toHaveBeenCalled();
+    expect(core.source).toBe("sql");
+    expect(core.categories).toEqual([]);
+  });
+
+  it("falls back to PostgREST when SQL DNS cannot resolve the DB host", async () => {
+    vi.resetModules();
+    vi.doMock("./budget-sql", async () => {
+      const actual = await vi.importActual<typeof import("./budget-sql")>("./budget-sql");
+      return {
+        ...actual,
+        tryQueryFamilyBudgetSql: vi.fn().mockResolvedValue({
+          payload: null,
+          unreachable: {
+            kind: "dns",
+            message: "getaddrinfo EAI_AGAIN supabase-db-c4w4kw0k4cogk8cgsckokg8c",
+          },
+        }),
+        queryFamilyBudgetSql: vi.fn().mockResolvedValue(null),
+        queryLedgerRangeSql: vi.fn(),
+      };
+    });
+    const { loadFamilyBudgetCore, resetFamilyBudgetCache: reset } = await import("./budget-read");
+    reset();
+
+    const thenable = (result: { data: unknown; error: unknown }) => {
+      const query: {
+        select: () => typeof query;
+        eq: () => typeof query;
+        order: () => typeof query;
+        limit: () => typeof query;
+        then: (resolve: (value: unknown) => void, reject?: (reason: unknown) => void) => Promise<unknown>;
+      } = {
+        select: () => query,
+        eq: () => query,
+        order: () => query,
+        limit: () => query,
+        then: (resolve, reject) => Promise.resolve(result).then(resolve, reject),
+      };
+      return query;
+    };
+
+    const from = vi.fn((table: string) => {
+      if (table === "budget_categories") {
+        return thenable({
+          data: [{ id: "zyw", family_id: "fam-1", group_name: "Żywność", name: "Zakupy", icon: "🛒", color: "#f59e0b", sort_order: 0 }],
+          error: null,
+        });
+      }
+      if (table === "accounts") {
+        return thenable({
+          data: [{ id: "checking", family_id: "fam-1", name: "Konto", type: "checking", balance: 100, currency: "PLN", on_budget: true }],
+          error: null,
+        });
+      }
+      return thenable({ data: [], error: null });
+    });
+
+    const core = await loadFamilyBudgetCore({ from } as never, "fam-1", { allowRest: "unreachable" });
+    expect(from).toHaveBeenCalled();
+    expect(core.source).toBe("rest");
+    expect(core.categories).toHaveLength(1);
+    expect(core.categories[0].name).toBe("Zakupy");
+    expect(core.schemaLag).toMatch(/PostgREST/i);
+  });
+
   it("does not wait for a REST inflight when allowRest is false", async () => {
     vi.resetModules();
     vi.doMock("./budget-sql", async () => {
       const actual = await vi.importActual<typeof import("./budget-sql")>("./budget-sql");
       return {
         ...actual,
+        tryQueryFamilyBudgetSql: vi.fn().mockResolvedValue({ payload: null }),
         queryFamilyBudgetSql: vi.fn().mockResolvedValue(null),
         queryLedgerRangeSql: vi.fn(),
       };

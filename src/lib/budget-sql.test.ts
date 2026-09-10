@@ -2,23 +2,32 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   FAMILY_BUDGET_SQL,
   FAMILY_BUDGET_SQL_SAFE,
+  classifySqlHostFailure,
   getSnapshotPlan,
   healthHttpFromProbe,
+  isDnsLookupError,
   isStatementTimeoutError,
   monthAmount,
   monthCount,
   parseFamilyBudgetPayload,
   postgresPoolConfig,
   postgresClientAnswered,
+  probeSqlWithQuery,
   queryCashflowDailyActualsWithClient,
   queryFamilyBudgetWithClient,
   remainingMs,
   resetBudgetSqlPlans,
+  retrySqlConnect,
+  shouldRetrySqlConnect,
   shouldSkipCashflowTimeline,
   snapshotAttempts,
+  SQL_CONNECTION_TIMEOUT_MS,
+  SQL_CONNECT_RETRY_ATTEMPTS,
   SQL_DATE_RANGE_PREDICATE,
   SQL_POOL_MAX,
   SQL_STATEMENT_TIMEOUT_MS,
+  sqlConnectBackoffMs,
+  sqlProbeFromCaughtError,
   sqlProbeFromClientResult,
   unwrapPgResult,
   withTimeout,
@@ -216,7 +225,9 @@ describe("postgres pool hardening", () => {
     expect(config.max).toBe(SQL_POOL_MAX);
     expect(config.max).toBeLessThan(4);
     expect(config.query_timeout).toBe(SQL_STATEMENT_TIMEOUT_MS);
-    expect(config.connectionTimeoutMillis).toBe(8_000);
+    expect(config.connectionTimeoutMillis).toBe(SQL_CONNECTION_TIMEOUT_MS);
+    expect(config.connectionTimeoutMillis).toBeLessThanOrEqual(3_000);
+    expect(config.connectionTimeoutMillis * SQL_CONNECT_RETRY_ATTEMPTS).toBeLessThan(12_000);
     expect(config).not.toHaveProperty("options");
   });
 
@@ -265,14 +276,41 @@ describe("postgres pool hardening", () => {
     expect(remainingMs(0, 8_000, 3_000)).toBe(5_000);
   });
 
-  it("reports db:true only after a successful probe, 503 when the URL is set but dead", () => {
+  it("reports db:true when Postgres is up", () => {
     expect(healthHttpFromProbe({ db: true })).toEqual({ status: 200, body: { ok: true, db: true } });
+    expect(healthHttpFromProbe({ db: true }).body).not.toHaveProperty("degraded");
+  });
+
+  it("returns 200 degraded (not 503) when Docker DNS cannot resolve the DB host", () => {
+    const dns = healthHttpFromProbe({
+      db: false,
+      error: "getaddrinfo EAI_AGAIN supabase-db-c4w4kw0k4cogk8cgsckokg8c",
+      reason: "dns",
+    });
+    expect(dns.status).toBe(200);
+    expect(dns.body).toMatchObject({ ok: true, db: false, degraded: true, reason: "dns" });
+    expect(healthHttpFromProbe({ db: false, error: "getaddrinfo EAI_AGAIN supabase-db-x" }).status).toBe(200);
+  });
+
+  it("returns 200 degraded on connect timeout so Coolify does not restart the app", () => {
+    const timedOut = healthHttpFromProbe({ db: false, error: "probe timed out" });
+    expect(timedOut.status).toBe(200);
+    expect(timedOut.body).toMatchObject({ ok: true, db: false, degraded: true, reason: "timeout" });
+  });
+
+  it("keeps 503 only when Postgres is reachable but the probe is truly dead", () => {
+    const fatal = healthHttpFromProbe({
+      db: false,
+      error: "password authentication failed for user \"postgres\"",
+      reason: "error",
+    });
+    expect(fatal.status).toBe(503);
+    expect(fatal.body).toMatchObject({ ok: false, db: false });
+    expect(fatal.body.degraded).toBeUndefined();
     expect(healthHttpFromProbe({ db: false, skipped: "DATABASE_URL not set" })).toEqual({
       status: 200,
       body: { ok: true, db: false, skipped: "DATABASE_URL not set" },
     });
-    expect(healthHttpFromProbe({ db: false, error: "probe timed out" }).status).toBe(503);
-    expect(healthHttpFromProbe({ db: false, error: "probe timed out" }).body.db).toBe(false);
   });
 
   it("treats every resolved SELECT 1 shape as db:true — never 'returned no rows'", () => {
@@ -289,6 +327,64 @@ describe("postgres pool hardening", () => {
     expect(sqlProbeFromClientResult(null).db).toBe(false);
     expect(sqlProbeFromClientResult(null).error).not.toMatch(/no rows/i);
     expect(JSON.stringify(sqlProbeFromClientResult({ rows: [] }))).not.toMatch(/no rows/i);
+  });
+
+  it("classifies EAI_AGAIN as a retryable DNS failure, not a statement timeout", () => {
+    const dns = Object.assign(new Error("getaddrinfo EAI_AGAIN supabase-db-c4w4kw0k4cogk8cgsckokg8c"), {
+      code: "EAI_AGAIN",
+    });
+    expect(isDnsLookupError(dns)).toBe(true);
+    expect(shouldRetrySqlConnect(dns)).toBe(true);
+    expect(classifySqlHostFailure(dns).kind).toBe("dns");
+    expect(sqlProbeFromCaughtError(dns)).toMatchObject({ db: false, reason: "dns" });
+    expect(shouldRetrySqlConnect(new Error("timeout exceeded when trying to connect"))).toBe(false);
+    expect(sqlConnectBackoffMs(1)).toBe(120);
+    expect(sqlConnectBackoffMs(2)).toBe(240);
+  });
+
+  it("retries EAI_AGAIN then succeeds without waiting a full connection timeout", async () => {
+    let calls = 0;
+    const sleeps: number[] = [];
+    const value = await retrySqlConnect(
+      async () => {
+        calls += 1;
+        if (calls < 3) {
+          throw Object.assign(new Error("getaddrinfo EAI_AGAIN supabase-db-x"), { code: "EAI_AGAIN" });
+        }
+        return "connected";
+      },
+      { sleep: async (ms) => { sleeps.push(ms); } }
+    );
+    expect(value).toBe("connected");
+    expect(calls).toBe(3);
+    expect(sleeps).toEqual([120, 240]);
+  });
+
+  it("health probe retries DNS then reports db:true; auth errors are not retried", async () => {
+    let dnsCalls = 0;
+    const up = await probeSqlWithQuery(
+      async () => {
+        dnsCalls += 1;
+        if (dnsCalls < 2) {
+          throw Object.assign(new Error("getaddrinfo EAI_AGAIN supabase-db-x"), { code: "EAI_AGAIN" });
+        }
+        return { rows: [{ ok: 1 }], command: "SELECT", rowCount: 1 };
+      },
+      { sleep: async () => undefined }
+    );
+    expect(up).toEqual({ db: true });
+    expect(dnsCalls).toBe(2);
+
+    let authCalls = 0;
+    const fatal = await probeSqlWithQuery(async () => {
+      authCalls += 1;
+      throw new Error("password authentication failed for user \"postgres\"");
+    });
+    expect(fatal).toMatchObject({ db: false, reason: "error" });
+    expect(authCalls).toBe(1);
+    expect(healthHttpFromProbe(up).status).toBe(200);
+    expect(healthHttpFromProbe(up).body.db).toBe(true);
+    expect(healthHttpFromProbe(fatal).status).toBe(503);
   });
 
   it("unwraps multi-statement node-pg arrays so snapshot payload is still found", () => {
