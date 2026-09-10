@@ -22,6 +22,10 @@ async function once() {
         console.log("SQL pool skipped", JSON.stringify(json));
         process.exit(0);
       }
+      if (json && json.degraded) {
+        console.log("SQL pool degraded (DNS/connect); continuing so PostgREST-backed routes still work", JSON.stringify(json));
+        process.exit(0);
+      }
       console.log("waiting for SQL pool", JSON.stringify(json));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

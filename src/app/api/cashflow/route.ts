@@ -58,7 +58,7 @@ export async function GET(request: Request) {
     const remaining = () => Math.max(0, deadlineAt - Date.now());
     const loaded = await withTimeout(
       Promise.all([
-        loadFamilyBudgetCore(ctx.supabase, ctx.family.id, { allowRest: false, deadlineAt }),
+        loadFamilyBudgetCore(ctx.supabase, ctx.family.id, { allowRest: "unreachable", deadlineAt }),
         withTimeout(
           Promise.resolve(
             ctx.supabase
@@ -96,7 +96,7 @@ export async function GET(request: Request) {
     });
 
     let dailyActuals: Awaited<ReturnType<typeof queryCashflowDailyActualsSql>> = null;
-    if (!lite && !shouldSkipCashflowTimeline(started)) {
+    if (!lite && core.source !== "rest" && !shouldSkipCashflowTimeline(started)) {
       dailyActuals = await queryCashflowDailyActualsSql(ctx.family.id, timelineFrom, to, process.env, {
         deadlineAt,
       });

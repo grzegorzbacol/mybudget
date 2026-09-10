@@ -10,9 +10,10 @@ import { addDays, monthRange } from "@/lib/money";
 import {
   monthAmount,
   monthCount,
-  queryFamilyBudgetSql,
+  tryQueryFamilyBudgetSql,
   queryLedgerRangeSql,
   type FamilyBudgetSqlPayload,
+  type SqlHostFailure,
 } from "@/lib/budget-sql";
 import { DEFAULT_CATEGORIES } from "@/lib/default-categories";
 import { isMissingRelationError, isSchemaLagError, missingScheduledTableMessage } from "@/lib/schema";
@@ -37,6 +38,9 @@ export type FamilyBudgetCore = {
   roundTrips?: number;
 };
 
+/** Budget always falls back to PostgREST. Cashflow only does so when SQL DNS/connect fails. */
+export type RestFallbackPolicy = boolean | "unreachable";
+
 const CORE_TTL_MS = 8_000;
 const coreCache = new Map<
   string,
@@ -44,7 +48,7 @@ const coreCache = new Map<
     at: number;
     value?: FamilyBudgetCore;
     inflight?: Promise<FamilyBudgetCore>;
-    inflightAllowRest?: boolean;
+    inflightAllowRest?: RestFallbackPolicy;
   }
 >();
 let cachedCategorySelect: string | null = null;
@@ -226,59 +230,80 @@ export function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
   };
 }
 
+export function restFallbackFromSqlMiss(
+  policy: RestFallbackPolicy | undefined,
+  unreachable?: SqlHostFailure
+): boolean {
+  if (policy === false) return false;
+  if (policy === "unreachable") return Boolean(unreachable);
+  return true;
+}
+
+function emptySqlCore(schemaLag: string): FamilyBudgetCore {
+  return {
+    categories: [],
+    allocations: [],
+    accounts: [],
+    scheduled: [],
+    activityMap: new Map(),
+    income: [],
+    spending: [],
+    uncategorized: [],
+    schemaLag,
+    source: "sql",
+  };
+}
+
 async function loadCoreUncached(
   supabase: Supabase,
   familyId: string,
-  options?: { allowRest?: boolean; deadlineAt?: number }
+  options?: { allowRest?: RestFallbackPolicy; deadlineAt?: number }
 ): Promise<FamilyBudgetCore> {
-  const sql = await queryFamilyBudgetSql(familyId, process.env, { deadlineAt: options?.deadlineAt });
-  if (sql) {
-    const core = coreFromSql(sql);
+  const sql = await tryQueryFamilyBudgetSql(familyId, process.env, { deadlineAt: options?.deadlineAt });
+  if (sql.payload) {
+    const core = coreFromSql(sql.payload);
     if (core.categories.length) return core;
     const recovered = await fetchFamilyCategories(supabase, familyId);
     const categories = await ensureFamilyCategories(supabase, familyId, recovered.data);
     return { ...core, categories };
   }
-  if (options?.allowRest === false) {
-    return {
-      categories: [],
-      allocations: [],
-      accounts: [],
-      scheduled: [],
-      activityMap: new Map(),
-      income: [],
-      spending: [],
-      uncategorized: [],
-      schemaLag: "Postgres snapshot niedostępny — spróbuj ponownie za chwilę.",
-      source: "sql",
-    };
+  if (!restFallbackFromSqlMiss(options?.allowRest, sql.unreachable)) {
+    const schemaLag = sql.unreachable
+      ? `Postgres niedostępny (${sql.unreachable.kind}): ${sql.unreachable.message}`
+      : "Postgres snapshot niedostępny — spróbuj ponownie za chwilę.";
+    return emptySqlCore(schemaLag);
   }
   const core = await loadCoreFromRest(supabase, familyId);
-  if (core.categories.length) return core;
+  const restLag = sql.unreachable
+    ? `SQL niedostępny (${sql.unreachable.kind}) — dane z PostgREST.`
+    : undefined;
+  const withLag = restLag ? { ...core, schemaLag: core.schemaLag ? `${core.schemaLag} ${restLag}` : restLag } : core;
+  if (withLag.categories.length) return withLag;
   const recovered = await fetchFamilyCategories(supabase, familyId);
   const categories = await ensureFamilyCategories(supabase, familyId, recovered.data);
-  return { ...core, categories };
+  return { ...withLag, categories };
 }
 
 export async function loadFamilyBudgetCore(
   supabase: Supabase,
   familyId: string,
-  options?: { allowRest?: boolean; deadlineAt?: number }
+  options?: { allowRest?: RestFallbackPolicy; deadlineAt?: number }
 ): Promise<FamilyBudgetCore> {
   const now = Date.now();
-  const allowRest = options?.allowRest !== false;
+  const allowRest = options?.allowRest ?? true;
   const entry = coreCache.get(familyId);
   if (entry?.value && now - entry.at < CORE_TTL_MS) {
     return entry.value;
   }
   // Only join an in-flight load with the same REST policy. Cashflow (allowRest:
-  // false) must not wait for /api/budget's 20k-row PostgREST fallback.
+  // "unreachable") must not wait for /api/budget's 20k-row PostgREST fallback
+  // unless SQL itself cannot connect.
   if (entry?.inflight && entry.inflightAllowRest === allowRest) {
     return entry.inflight;
   }
 
   const inflight = loadCoreUncached(supabase, familyId, options).then((value) => {
-    if (allowRest || value.categories.length) {
+    if (allowRest === true || value.categories.length) {
       coreCache.set(familyId, { at: Date.now(), value });
     }
     return value;

@@ -347,19 +347,135 @@ let poolPromise: Promise<PgPool | null> | null = null;
  */
 export const SQL_POOL_MAX = 3;
 export const SQL_STATEMENT_TIMEOUT_MS = 4_000;
-/** First TCP/TLS to Postgres after deploy can exceed 2s; health waits this long for a real SELECT 1. */
-export const SQL_CONNECTION_TIMEOUT_MS = 8_000;
+/**
+ * Cap TCP/DNS so a missing Docker hostname cannot eat the 12s browser abort.
+ * Transient EAI_AGAIN is retried a few times with short backoff instead of one long hang.
+ */
+export const SQL_CONNECTION_TIMEOUT_MS = 3_000;
+export const SQL_CONNECT_RETRY_ATTEMPTS = 3;
+export const SQL_CONNECT_RETRY_BACKOFF_MS = 120;
+export const SQL_HEALTH_RETRY_ATTEMPTS = 3;
+export const SQL_HEALTH_RETRY_BACKOFF_MS = 120;
 export const SQL_IDLE_TIMEOUT_MS = 5 * 60_000;
 export const FAMILY_BUDGET_SQL_BUDGET_MS = 6_000;
 export const CASHFLOW_TIMELINE_BUDGET_MS = 2_500;
 export const CASHFLOW_RESPONSE_BUDGET_MS = 8_000;
 export const CASHFLOW_AUTH_BUDGET_MS = 3_000;
 
+export type SqlHostFailureKind = "dns" | "connect" | "timeout";
+export type SqlHealthFailureReason = SqlHostFailureKind | "error";
+
+export type SqlHostFailure = {
+  kind: SqlHostFailureKind;
+  message: string;
+};
+
 export type SqlPoolProbe = {
   db: boolean;
   skipped?: string;
   error?: string;
+  reason?: SqlHealthFailureReason;
 };
+
+export type HealthHttpBody = {
+  ok: boolean;
+  db: boolean;
+  skipped?: string;
+  error?: string;
+  degraded?: boolean;
+  reason?: SqlHealthFailureReason;
+};
+
+const DNS_ERROR_CODES = new Set(["EAI_AGAIN", "ENOTFOUND", "EAI_FAIL", "EAI_NODATA", "EAI_NONAME"]);
+const CONNECT_ERROR_CODES = new Set(["ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "ECONNRESET"]);
+
+export function sqlErrorCode(error: unknown): string {
+  if (error && typeof error === "object" && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (typeof code === "string") return code;
+  }
+  return "";
+}
+
+export function sqlErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function isDnsLookupError(error: unknown): boolean {
+  const code = sqlErrorCode(error);
+  if (DNS_ERROR_CODES.has(code)) return true;
+  return /EAI_AGAIN|ENOTFOUND|getaddrinfo/i.test(sqlErrorMessage(error));
+}
+
+export function isConnectTimeoutError(error: unknown): boolean {
+  const code = sqlErrorCode(error);
+  if (code === "ETIMEDOUT") return true;
+  return /timeout exceeded when trying to connect|Connection terminated due to connection timeout|connect ETIMEDOUT|probe timed out/i.test(
+    sqlErrorMessage(error)
+  );
+}
+
+export function isTcpConnectError(error: unknown): boolean {
+  const code = sqlErrorCode(error);
+  if (CONNECT_ERROR_CODES.has(code)) return true;
+  return /ECONNREFUSED|ENETUNREACH|EHOSTUNREACH|ECONNRESET/i.test(sqlErrorMessage(error));
+}
+
+/** Docker DNS blip or Postgres hostname not on the network — PostgREST/Kong may still work. */
+export function isHostUnreachableError(error: unknown): boolean {
+  return isDnsLookupError(error) || isTcpConnectError(error) || isConnectTimeoutError(error);
+}
+
+export function classifySqlHostFailure(error: unknown): SqlHostFailure {
+  const message = sqlErrorMessage(error);
+  if (isDnsLookupError(error)) return { kind: "dns", message };
+  if (isConnectTimeoutError(error)) return { kind: "timeout", message };
+  return { kind: "connect", message };
+}
+
+/** Retry fast DNS/refused errors. Do not retry after a connection timeout — that already waited. */
+export function shouldRetrySqlConnect(error: unknown): boolean {
+  if (isConnectTimeoutError(error)) return false;
+  return isDnsLookupError(error) || isTcpConnectError(error);
+}
+
+export function sqlConnectBackoffMs(attempt: number, base = SQL_CONNECT_RETRY_BACKOFF_MS): number {
+  return base * Math.max(1, attempt);
+}
+
+export function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function retrySqlConnect<T>(
+  fn: () => Promise<T>,
+  options?: {
+    attempts?: number;
+    backoffMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+    deadlineAt?: number;
+  }
+): Promise<T> {
+  const attempts = options?.attempts ?? SQL_CONNECT_RETRY_ATTEMPTS;
+  const sleep = options?.sleep ?? delay;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (options?.deadlineAt && Date.now() >= options.deadlineAt) {
+      throw lastError ?? new Error("SQL connect deadline exceeded");
+    }
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (!shouldRetrySqlConnect(error) || attempt === attempts) throw error;
+      const wait = sqlConnectBackoffMs(attempt, options?.backoffMs);
+      const cap = options?.deadlineAt ? options.deadlineAt - Date.now() : wait;
+      if (cap <= 0) throw error;
+      await sleep(Math.min(wait, cap));
+    }
+  }
+  throw lastError ?? new Error("SQL connect failed");
+}
 
 /**
  * node-pg may return a Result, an array of Results (multi-statement), or omit `rows`
@@ -403,9 +519,51 @@ export function postgresClientAnswered(result: unknown): boolean {
 /** Map a resolved `SELECT 1` (any node-pg shape) to a health probe. Never "no rows" on success. */
 export function sqlProbeFromClientResult(result: unknown): SqlPoolProbe {
   if (result == null) {
-    return { db: false, error: "database unreachable" };
+    return { db: false, error: "database unreachable", reason: "error" };
   }
   return { db: true };
+}
+
+export function inferHealthFailureReason(error?: string): SqlHealthFailureReason | undefined {
+  if (!error) return undefined;
+  if (/probe timed out|timeout exceeded when trying to connect|Connection terminated due to connection timeout/i.test(error)) {
+    return "timeout";
+  }
+  if (/EAI_AGAIN|ENOTFOUND|getaddrinfo/i.test(error)) return "dns";
+  if (/ECONNREFUSED|ENETUNREACH|EHOSTUNREACH|ECONNRESET/i.test(error)) return "connect";
+  return undefined;
+}
+
+export function sqlProbeFromCaughtError(error: unknown): SqlPoolProbe {
+  if (isHostUnreachableError(error)) {
+    const failure = classifySqlHostFailure(error);
+    return { db: false, error: failure.message, reason: failure.kind };
+  }
+  return { db: false, error: sqlErrorMessage(error), reason: "error" };
+}
+
+export async function probeSqlWithQuery(
+  query: () => Promise<unknown>,
+  options?: {
+    attempts?: number;
+    backoffMs?: number;
+    sleep?: (ms: number) => Promise<void>;
+  }
+): Promise<SqlPoolProbe> {
+  const attempts = options?.attempts ?? SQL_HEALTH_RETRY_ATTEMPTS;
+  const sleep = options?.sleep ?? delay;
+  let last: SqlPoolProbe = { db: false, error: "probe failed", reason: "error" };
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const result = await query();
+      return sqlProbeFromClientResult(result);
+    } catch (error) {
+      last = sqlProbeFromCaughtError(error);
+      if (!shouldRetrySqlConnect(error) || attempt === attempts) return last;
+      await sleep(sqlConnectBackoffMs(attempt, options?.backoffMs ?? SQL_HEALTH_RETRY_BACKOFF_MS));
+    }
+  }
+  return last;
 }
 
 export function postgresPoolConfig(connectionString: string) {
@@ -444,25 +602,23 @@ export async function probeSqlPool(
   }
   const pool = await getPool(env);
   if (!pool) {
-    return { db: false, error: "pg pool failed to initialize" };
+    return { db: false, error: "pg pool failed to initialize", reason: "error" };
   }
-  try {
+  return probeSqlWithQuery(async () => {
     // Use pool.query — do not SET TIME ZONE / statement_timeout first.
     // Transaction poolers often hang or error on SET; checkout then treated a
     // successful SELECT 1 as "no rows" when the driver omitted `rows`.
     const timedOut = { timeout: true as const };
     const result = await withTimeout<unknown>(
       pool.query("SELECT 1 AS ok"),
-      SQL_CONNECTION_TIMEOUT_MS + 500,
+      SQL_CONNECTION_TIMEOUT_MS + 400,
       timedOut
     );
     if (result === timedOut) {
-      return { db: false, error: "probe timed out" };
+      throw Object.assign(new Error("probe timed out"), { code: "ETIMEDOUT" });
     }
-    return sqlProbeFromClientResult(result);
-  } catch (error) {
-    return { db: false, error: error instanceof Error ? error.message : "probe failed" };
-  }
+    return result;
+  });
 }
 
 /** @deprecated use probeSqlPool — kept so older imports keep compiling during rollout */
@@ -475,7 +631,7 @@ export async function warmupBudgetSqlPool(
 
 export function healthHttpFromProbe(probe: SqlPoolProbe): {
   status: number;
-  body: { ok: boolean; db: boolean; skipped?: string; error?: string };
+  body: HealthHttpBody;
 } {
   if (probe.skipped) {
     return { status: 200, body: { ok: true, db: false, skipped: probe.skipped } };
@@ -483,9 +639,23 @@ export function healthHttpFromProbe(probe: SqlPoolProbe): {
   if (probe.db) {
     return { status: 200, body: { ok: true, db: true } };
   }
+  const reason = probe.reason ?? inferHealthFailureReason(probe.error);
+  // DNS / connect / timeout: Coolify must not restart the app — PostgREST may still work.
+  if (reason === "dns" || reason === "connect" || reason === "timeout") {
+    return {
+      status: 200,
+      body: {
+        ok: true,
+        db: false,
+        degraded: true,
+        error: probe.error ?? "database unreachable",
+        reason,
+      },
+    };
+  }
   return {
     status: 503,
-    body: { ok: false, db: false, error: probe.error ?? "database unreachable" },
+    body: { ok: false, db: false, error: probe.error ?? "database unreachable", reason: reason ?? "error" },
   };
 }
 
@@ -523,33 +693,43 @@ export function shouldSkipCashflowTimeline(
   return remainingMs(started, budgetMs, now) < reserveMs;
 }
 
+type ClientWork<T> = { value: T | null; unreachable?: SqlHostFailure };
+
+function unreachableFromError(error: unknown): SqlHostFailure | undefined {
+  return isHostUnreachableError(error) ? classifySqlHostFailure(error) : undefined;
+}
+
 async function withCheckedOutClient<T>(
   pool: PgPool,
-  fn: (query: SqlQueryFn) => Promise<T>
-): Promise<T | null> {
+  fn: (query: SqlQueryFn) => Promise<T>,
+  options?: { deadlineAt?: number }
+): Promise<ClientWork<T>> {
   if (typeof pool.connect !== "function") {
     try {
-      return await fn((sql, params) => pool.query(sql, params));
+      const value = await retrySqlConnect(() => fn((sql, params) => pool.query(sql, params)), {
+        deadlineAt: options?.deadlineAt,
+      });
+      return { value };
     } catch (error) {
-      console.error("[budget-sql] pool query failed", error instanceof Error ? error.message : error);
-      return null;
+      console.error("[budget-sql] pool query failed", isHostUnreachableError(error) ? classifySqlHostFailure(error).kind : "query", sqlErrorMessage(error));
+      return { value: null, unreachable: unreachableFromError(error) };
     }
   }
   let client: PgPoolClient;
   try {
-    client = await pool.connect();
+    client = await retrySqlConnect(() => pool.connect!(), { deadlineAt: options?.deadlineAt });
   } catch (error) {
-    console.error("[budget-sql] pool connect failed", error instanceof Error ? error.message : error);
-    return null;
+    console.error("[budget-sql] pool connect failed", isHostUnreachableError(error) ? classifySqlHostFailure(error).kind : "query", sqlErrorMessage(error));
+    return { value: null, unreachable: unreachableFromError(error) };
   }
   try {
     // Do not SET TIME ZONE / statement_timeout here. Transaction poolers often
     // forbid or hang on SET (extra RTT / 4s query_timeout). Calendar months use
     // timezone('Europe/Warsaw', ...) in SQL; hung queries are capped by query_timeout.
-    return await fn((sql, params) => client.query(sql, params));
+    return { value: await fn((sql, params) => client.query(sql, params)) };
   } catch (error) {
-    console.error("[budget-sql] client query failed", error instanceof Error ? error.message : error);
-    return null;
+    console.error("[budget-sql] client query failed", isHostUnreachableError(error) ? classifySqlHostFailure(error).kind : "query", sqlErrorMessage(error));
+    return { value: null, unreachable: unreachableFromError(error) };
   } finally {
     client.release();
   }
@@ -674,18 +854,29 @@ export async function queryFamilyBudgetWithClient(
   return null;
 }
 
+export async function tryQueryFamilyBudgetSql(
+  familyId: string,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
+  options?: { deadlineAt?: number }
+): Promise<{ payload: FamilyBudgetSqlPayload | null; unreachable?: SqlHostFailure }> {
+  const pool = await getPool(env);
+  if (!pool) return { payload: null };
+  const deadlineAt = options?.deadlineAt ?? Date.now() + FAMILY_BUDGET_SQL_BUDGET_MS;
+  if (Date.now() >= deadlineAt) return { payload: null };
+  const result = await withCheckedOutClient(
+    pool,
+    (query) => queryFamilyBudgetWithClient(familyId, query, { deadlineAt }),
+    { deadlineAt }
+  );
+  return { payload: result.value, unreachable: result.unreachable };
+}
+
 export async function queryFamilyBudgetSql(
   familyId: string,
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env,
   options?: { deadlineAt?: number }
 ): Promise<FamilyBudgetSqlPayload | null> {
-  const pool = await getPool(env);
-  if (!pool) return null;
-  const deadlineAt = options?.deadlineAt ?? Date.now() + FAMILY_BUDGET_SQL_BUDGET_MS;
-  if (Date.now() >= deadlineAt) return null;
-  return withCheckedOutClient(pool, (query) =>
-    queryFamilyBudgetWithClient(familyId, query, { deadlineAt })
-  );
+  return (await tryQueryFamilyBudgetSql(familyId, env, options)).payload;
 }
 
 export async function queryCashflowDailyActualsWithClient(
@@ -722,9 +913,12 @@ export async function queryCashflowDailyActualsSql(
   const pool = await getPool(env);
   if (!pool) return null;
   if (options?.deadlineAt && Date.now() >= options.deadlineAt) return null;
-  return withCheckedOutClient(pool, (query) =>
-    queryCashflowDailyActualsWithClient(familyId, from, to, query)
+  const result = await withCheckedOutClient(
+    pool,
+    (query) => queryCashflowDailyActualsWithClient(familyId, from, to, query),
+    { deadlineAt: options?.deadlineAt }
   );
+  return result.value;
 }
 
 export async function queryLedgerRangeSql(
@@ -744,9 +938,17 @@ export async function queryLedgerRangeSql(
       ];
   for (const plan of plans) {
     try {
-      const result = await pool.query(ledgerRangeSql(plan.pred, plan.kind), [familyId, from, to]);
+      const result = await retrySqlConnect(() => pool.query(ledgerRangeSql(plan.pred, plan.kind), [familyId, from, to]));
       return unwrapPgResult(result).rows as unknown as LedgerTransaction[];
     } catch (error) {
+      if (isHostUnreachableError(error)) {
+        console.error(
+          "[budget-sql] ledger range connect failed",
+          classifySqlHostFailure(error).kind,
+          sqlErrorMessage(error)
+        );
+        return null;
+      }
       if (!isRetryableSqlError(error)) return null;
     }
   }
