@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { activityMapFromAggregates, assembleBudgetMonthData } from "./budget";
 import {
+  asBudgetCategories,
   budgetMonthFromCore,
   ensureFamilyCategories,
   fetchFamilyCategories,
@@ -127,6 +128,13 @@ describe("budgetMonthFromCore", () => {
     expect(data.incomeThisMonth).toBe(8808);
     expect(data.groups.map((g) => g.groupName)).toEqual(["Żywność"]);
     expect(data.groups[0].categories[0].category.id).toBe("food");
+  });
+});
+
+describe("asBudgetCategories", () => {
+  it("normalizes PostgREST rows without a ParserError cast", () => {
+    expect(asBudgetCategories(null)).toEqual([]);
+    expect(asBudgetCategories([{ id: "zyw", family_id: "f1", group_name: "Żywność", name: "Zakupy" }])).toHaveLength(1);
   });
 });
 
