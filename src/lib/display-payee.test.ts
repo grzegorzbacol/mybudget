@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { displayPayee, importPayeeFields, parseBankDescription, pickRichestDescription } from "./display-payee";
+import {
+  displayPayee,
+  importPayeeFields,
+  isGenericCardPayee,
+  parseBankDescription,
+  pickRichestDescription,
+  planStoredPayeeRepairs,
+  repairStoredPayee,
+} from "./display-payee";
 
 const examples = [
   ["PRZY UŻYCIU KARTY;As Vending /Zory", "As Vending /Zory"],
@@ -82,5 +90,51 @@ describe("pickRichestDescription", () => {
 
   it("uses Nadawca/Odbiorca when Tytuł is empty", () => {
     expect(pickRichestDescription(["", "LUXMED", "PRZELEW ZEWNĘTRZNY WYCHODZĄCY"])).toBe("LUXMED");
+  });
+});
+
+describe("repairStoredPayee", () => {
+  it("backfills payee when memo still has the mBank Tytuł string", () => {
+    expect(
+      repairStoredPayee({
+        payee: "ZAKUP PRZY UŻYCIU KARTY",
+        memo: "PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK",
+      })
+    ).toEqual({
+      payee: "JMP S.A. BIEDRONKA /RUDA SLASK",
+      memo: "PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK",
+    });
+  });
+
+  it("does not invent a merchant when memo is only Import mBank", () => {
+    expect(repairStoredPayee({ payee: "ZAKUP PRZY UŻYCIU KARTY", memo: "Import mBank" })).toBeNull();
+    expect(repairStoredPayee({ payee: "BLIK ZAKUP E-COMMERCE", memo: "Import mBank" })).toBeNull();
+    expect(repairStoredPayee({ payee: "PRZELEW WŁASNY", memo: "Import mBank" })).toBeNull();
+  });
+
+  it("plans patches only for recoverable rows", () => {
+    const patches = planStoredPayeeRepairs([
+      {
+        id: "1",
+        payee: "ZAKUP PRZY UŻYCIU KARTY",
+        memo: "PRZY UŻYCIU KARTY;ZABKA ZD466 K.2 /RUDA SLASK",
+      },
+      { id: "2", payee: "ZAKUP PRZY UŻYCIU KARTY", memo: "Import mBank" },
+      { id: "3", payee: "Biedronka", memo: "Import mBank" },
+    ]);
+    expect(patches).toEqual([
+      {
+        id: "1",
+        payee: "ZABKA ZD466 K.2 /RUDA SLASK",
+        memo: "PRZY UŻYCIU KARTY;ZABKA ZD466 K.2 /RUDA SLASK",
+      },
+    ]);
+  });
+
+  it("flags generic card titles used by the re-import banner", () => {
+    expect(isGenericCardPayee("ZAKUP PRZY UŻYCIU KARTY")).toBe(true);
+    expect(isGenericCardPayee("BLIK ZAKUP E-COMMERCE")).toBe(true);
+    expect(isGenericCardPayee("PRZELEW WŁASNY")).toBe(false);
+    expect(isGenericCardPayee("Biedronka")).toBe(false);
   });
 });

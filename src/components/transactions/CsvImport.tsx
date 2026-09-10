@@ -66,6 +66,7 @@ export function CsvImport() {
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["budget"] });
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["payee-repair"] });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Błąd importu");
     } finally {

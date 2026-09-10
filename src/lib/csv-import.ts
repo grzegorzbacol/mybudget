@@ -89,6 +89,8 @@ function cell(headers: string[], cols: string[], ...needles: string[]): string {
 
 function rawPayeeText(format: BankFormat, headers: string[], cols: string[]): string {
   if (format === "mbank") {
+    // Through #26 we stored only #Opis operacji (ZAKUP PRZY UŻYCIU KARTY) and memo
+    // "Import mBank". Merchant lives in #Tytuł / #Nadawca/Odbiorca — those were dropped.
     return pickRichestDescription([
       cell(headers, cols, "tytuł", "tytul"),
       cell(headers, cols, "nadawca", "odbiorca", "kontrahent"),

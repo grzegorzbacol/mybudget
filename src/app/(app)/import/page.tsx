@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CsvImport } from "@/components/transactions/CsvImport";
 import { BANK_AIS_PROVIDERS } from "@/lib/bank-sync";
 import { Button } from "@/components/ui/button";
+import { RepairPayeesButton } from "@/components/transactions/RepairPayeesButton";
 import { useQuery } from "@tanstack/react-query";
 
 export default function ImportPage() {
@@ -47,7 +48,10 @@ export default function ImportPage() {
             </li>
           </ol>
           <p className="text-muted-foreground">Obsługiwane nagłówki: mBank, PKO, ING oraz ogólny CSV i OFX.</p>
-          <CsvImport />
+          <div className="flex flex-wrap items-center gap-2">
+            <CsvImport />
+            <RepairPayeesButton />
+          </div>
           <Button variant="outline" asChild>
             <Link href="/transactions?filter=uncategorized">Kolejka bez kategorii</Link>
           </Button>

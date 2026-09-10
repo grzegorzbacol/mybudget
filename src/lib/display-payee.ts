@@ -28,6 +28,15 @@ export function isGenericBankPayee(payee: string | null | undefined): boolean {
   return isBankOperationType(source) && parseBankDescription(source) === source;
 }
 
+/** Card / BLIK op types shown as list titles when Tytuł was never stored. */
+export function isGenericCardPayee(payee: string | null | undefined): boolean {
+  const source = collapseWs(payee ?? "");
+  if (!isGenericBankPayee(source)) return false;
+  return /przy\s+u[żz]yciu\s+karty|blik/i.test(source);
+}
+
+export const GENERIC_CARD_BANNER_THRESHOLD = 3;
+
 /**
  * Extract merchant / location from mBank-style descriptions.
  * `PRZY UŻYCIU KARTY;As Vending /Zory` → `As Vending /Zory`
@@ -106,4 +115,32 @@ export function importPayeeFields(
     payee,
     memo: payee !== source ? source : fallbackMemo,
   };
+}
+
+/**
+ * Best-effort repair for rows imported before Tytuł was mapped:
+ * payee is a generic bank op type and memo still holds `OP TYPE;Merchant /City`.
+ * Returns null when nothing recoverable is stored (typical live memo: "Import mBank").
+ */
+export function repairStoredPayee(tx: {
+  payee: string;
+  memo?: string | null;
+}): { payee: string; memo: string } | null {
+  if (!isGenericBankPayee(tx.payee)) return null;
+  const memo = tx.memo ?? "";
+  if (!memo.includes(";")) return null;
+  const mapped = importPayeeFields(pickRichestDescription([memo, tx.payee]), memo);
+  if (!mapped.payee || mapped.payee === tx.payee || isGenericBankPayee(mapped.payee)) return null;
+  return mapped;
+}
+
+export function planStoredPayeeRepairs<T extends { id: string; payee: string; memo?: string | null }>(
+  rows: T[]
+): Array<{ id: string; payee: string; memo: string }> {
+  const patches: Array<{ id: string; payee: string; memo: string }> = [];
+  for (const row of rows) {
+    const next = repairStoredPayee(row);
+    if (next) patches.push({ id: row.id, ...next });
+  }
+  return patches;
 }

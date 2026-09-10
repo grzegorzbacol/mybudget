@@ -49,7 +49,7 @@ export async function GET(request: Request) {
   if (transactionsRes.error && isSchemaLagError(transactionsRes.error.message)) {
     const fallback = await ctx.supabase
       .from("transactions")
-      .select("id, account_id, category_id, amount, date, added_by")
+      .select("id, account_id, category_id, amount, date, transfer_account_id, transfer_id, added_by")
       .eq("family_id", ctx.family.id)
       .gte("date", start)
       .lt("date", end)
