@@ -58,6 +58,25 @@ export function useTransactions(filters: TransactionFilters = {}) {
           t.profile = t.added_by ? profileById.get(t.added_by) : undefined;
         }
       }
+
+      const ids = transactions.map((t) => t.id).filter(Boolean);
+      if (ids.length > 0) {
+        const { data: splitRows } = await supabase
+          .from("transaction_category_splits")
+          .select("transaction_id, category_id, amount")
+          .in("transaction_id", ids);
+        if (splitRows?.length) {
+          const byTx = new Map<string, NonNullable<Transaction["category_splits"]>>();
+          for (const row of splitRows) {
+            const list = byTx.get(row.transaction_id) ?? [];
+            list.push({ category_id: row.category_id, amount: Number(row.amount) });
+            byTx.set(row.transaction_id, list);
+          }
+          for (const t of transactions) {
+            t.category_splits = byTx.get(t.id);
+          }
+        }
+      }
       return transactions;
     },
   });
@@ -175,6 +194,7 @@ export function useUpdateTransaction() {
     onSuccess: () => {
       toast.success("Zapisano zmiany");
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["transaction-detail"] });
       queryClient.invalidateQueries({ queryKey: ["budget"] });
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["cashflow"] });
@@ -220,6 +240,7 @@ export function useDeleteTransaction() {
     },
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["transaction-detail"] });
       queryClient.invalidateQueries({ queryKey: ["budget"] });
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["cashflow"] });

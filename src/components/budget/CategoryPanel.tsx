@@ -21,6 +21,7 @@ import { useTransactions } from "@/hooks/use-transactions";
 import { useAllocateBudget, useMoveMoney } from "@/hooks/use-budget";
 import { formatCurrency } from "@/lib/format";
 import { displayPayee } from "@/lib/display-payee";
+import { transactionRowAriaLabel } from "@/lib/transaction-detail";
 import { cn } from "@/lib/utils";
 import type { BudgetCategoryRow } from "@/lib/types";
 import { TransactionDetail } from "@/components/transactions/TransactionDetail";
@@ -271,6 +272,7 @@ export function CategoryPanel({
                     type="button"
                     onClick={() => setDetail(t)}
                     className="flex w-full items-center justify-between rounded border px-3 py-2 text-sm transition-colors hover:bg-muted/50"
+                    aria-label={transactionRowAriaLabel(displayPayee(t.payee, t.memo))}
                   >
                     <div className="min-w-0 text-left">
                       <p className="truncate font-medium">{displayPayee(t.payee, t.memo)}</p>
@@ -290,7 +292,11 @@ export function CategoryPanel({
         </DialogContent>
       </Dialog>
 
-      <TransactionDetail transaction={detail} onOpenChange={(open) => !open && setDetail(null)} />
+      <TransactionDetail
+        transaction={detail}
+        transactionId={detail?.id}
+        onOpenChange={(open) => !open && setDetail(null)}
+      />
     </>
   );
 }

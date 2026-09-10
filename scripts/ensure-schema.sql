@@ -321,4 +321,36 @@ CREATE TABLE IF NOT EXISTS transaction_category_splits (
 CREATE INDEX IF NOT EXISTS idx_tx_category_splits_tx ON transaction_category_splits(transaction_id);
 CREATE INDEX IF NOT EXISTS idx_tx_category_splits_family ON transaction_category_splits(family_id);
 
+ALTER TABLE transaction_category_splits ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Family scoped select" ON transaction_category_splits;
+DROP POLICY IF EXISTS "Family scoped insert" ON transaction_category_splits;
+DROP POLICY IF EXISTS "Family scoped update" ON transaction_category_splits;
+DROP POLICY IF EXISTS "Family scoped delete" ON transaction_category_splits;
+DO $$
+BEGIN
+  CREATE POLICY "Family scoped select" ON transaction_category_splits
+    FOR SELECT USING (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped insert" ON transaction_category_splits
+    FOR INSERT WITH CHECK (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped update" ON transaction_category_splits
+    FOR UPDATE USING (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped delete" ON transaction_category_splits
+    FOR DELETE USING (family_id IN (SELECT get_user_family_ids()));
+EXCEPTION
+  WHEN undefined_function THEN NULL;
+  WHEN duplicate_object THEN NULL;
+  WHEN others THEN NULL;
+END $$;
+
+DO $$
+BEGIN
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.transaction_category_splits
+    TO anon, authenticated, service_role;
+EXCEPTION
+  WHEN undefined_object THEN NULL;
+  WHEN undefined_table THEN NULL;
+  WHEN insufficient_privilege THEN NULL;
+  WHEN others THEN NULL;
+END $$;
+
 NOTIFY pgrst, 'reload schema';
