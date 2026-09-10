@@ -9,6 +9,7 @@ import {
   queryFamilyBudgetWithClient,
   resetBudgetSqlPlans,
   snapshotAttempts,
+  withTimeout,
 } from "./budget-sql";
 
 describe("budget SQL aggregates", () => {
@@ -108,7 +109,7 @@ describe("snapshot dialect cache", () => {
     expect(kinds.filter((kind) => kind === "safe").length).toBeGreaterThanOrEqual(2);
   });
 
-  it("loads scheduled from a parallel optional query without putting it in the snapshot SQL", async () => {
+  it("loads scheduled from an optional query after the snapshot, not inside it", async () => {
     const query = async (sql: string) => {
       if (sql.includes("json_build_object")) {
         expect(sql).not.toContain("FROM scheduled_transactions");
@@ -147,5 +148,31 @@ describe("snapshot dialect cache", () => {
     expect(payload?.scheduled).toHaveLength(1);
     expect(payload?.scheduled[0].payee).toBe("Czynsz");
     expect(payload?.scheduledMissing).toBeFalsy();
+  });
+
+  it("does not start extras until the snapshot query returns", async () => {
+    const order: string[] = [];
+    const query = async (sql: string) => {
+      if (sql.includes("json_build_object")) {
+        order.push("snapshot");
+        return { rows: [{ payload: { categories: [{ id: "c1", group_name: "Żywność", name: "Zakupy" }] } }] };
+      }
+      if (sql.includes("FROM scheduled_transactions")) {
+        order.push("scheduled");
+        return { rows: [] };
+      }
+      order.push("splits");
+      return { rows: [] };
+    };
+    await queryFamilyBudgetWithClient("11111111-1111-1111-1111-111111111111", query);
+    expect(order[0]).toBe("snapshot");
+    expect(order.slice(1).sort()).toEqual(["scheduled", "splits"].sort());
+  });
+});
+
+describe("withTimeout", () => {
+  it("returns the fallback when the query never resolves", async () => {
+    const hung = new Promise<string>(() => undefined);
+    await expect(withTimeout(hung, 20, "fallback")).resolves.toBe("fallback");
   });
 });

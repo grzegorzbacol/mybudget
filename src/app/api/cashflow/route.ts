@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { computeCashflow, buildCashflowTimeline, nextPayday, outflowUntil, isLowBalance } from "@/lib/cashflow";
 import { addDays, addMonths, monthRange, money } from "@/lib/money";
 import { getAuthContext } from "@/lib/api-helpers";
-import { budgetMonthFromCore, loadFamilyBudgetCore, loadLedgerRange } from "@/lib/budget-read";
+import { budgetMonthFromCore, loadFamilyBudgetCore } from "@/lib/budget-read";
 import { monthAmount, queryCashflowDailyActualsSql } from "@/lib/budget-sql";
 import { getCurrentYearMonth } from "@/lib/format";
 import { computeRunway, monthSpendPace, wealthLayers } from "@/lib/wealth";
@@ -37,13 +37,12 @@ export async function GET(request: Request) {
         ? `${lookback.year}-${String(lookback.month).padStart(2, "0")}-01`
         : addDays(today, -28);
 
-    const [core, goalFull, dailyActuals] = await Promise.all([
+    const [core, goalFull] = await Promise.all([
       loadFamilyBudgetCore(ctx.supabase, ctx.family.id),
       ctx.supabase
         .from("goals")
         .select("id, category_id, target_amount, target_date, type, priority")
         .eq("family_id", ctx.family.id),
-      lite ? Promise.resolve(null) : queryCashflowDailyActualsSql(ctx.family.id, timelineFrom, to),
     ]);
     const scheduled = core.scheduled;
     const { start, end } = monthRange(year, month);
@@ -58,27 +57,17 @@ export async function GET(request: Request) {
       rows,
     });
 
+    let dailyActuals: Awaited<ReturnType<typeof queryCashflowDailyActualsSql>> = null;
     if (!lite) {
-      if (dailyActuals) {
-        cashflow.timeline = buildCashflowTimeline({
-          from: timelineFrom,
-          to,
-          dailyActuals,
-          accounts: core.accounts,
-          scheduled,
-          bucket,
-        });
-      } else {
-        const rangeTxs = await loadLedgerRange(ctx.family.id, timelineFrom, to);
-        cashflow.timeline = buildCashflowTimeline({
-          from: timelineFrom,
-          to,
-          transactions: rangeTxs,
-          accounts: core.accounts,
-          scheduled,
-          bucket,
-        });
-      }
+      dailyActuals = await queryCashflowDailyActualsSql(ctx.family.id, timelineFrom, to);
+      cashflow.timeline = buildCashflowTimeline({
+        from: timelineFrom,
+        to,
+        dailyActuals: dailyActuals ?? [],
+        accounts: core.accounts,
+        scheduled,
+        bucket,
+      });
     }
 
     const actualIncome = monthAmount(core.income, year, month);
@@ -183,7 +172,7 @@ export async function GET(request: Request) {
     });
     res.headers.set(
       "Server-Timing",
-      `total;dur=${Date.now() - started};desc="${lite ? "lite" : "full"},${core.source}${core.dialect ? "," + core.dialect : ""}${dailyActuals ? ",timeline=sql" : lite ? "" : ",timeline=ledger"}"`
+      `total;dur=${Date.now() - started};desc="${lite ? "lite" : "full"},${core.source}${core.dialect ? "," + core.dialect : ""}${lite ? "" : dailyActuals ? ",timeline=sql" : ",timeline=planned"}"`
     );
     return res;
   } catch (error) {
