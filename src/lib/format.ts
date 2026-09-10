@@ -1,3 +1,12 @@
+/** Accusative count for delete copy: 1 transakcję, 2 transakcje, 5 transakcji. */
+export function formatTransactionDeleteCount(n: number): string {
+  const abs = Math.abs(n) % 100;
+  const last = abs % 10;
+  if (n === 1) return "1 transakcję";
+  if (last >= 2 && last <= 4 && (abs < 12 || abs > 14)) return `${n} transakcje`;
+  return `${n} transakcji`;
+}
+
 export function formatCurrency(
   amount: number,
   currency = "PLN",

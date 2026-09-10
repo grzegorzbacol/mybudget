@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Camera } from "lucide-react";
+import { Camera, Trash2 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -14,10 +14,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useTransactions, useBulkUpdateCategory, useUpdateTransaction, useApplyCategoryMap } from "@/hooks/use-transactions";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  useTransactions,
+  useBulkUpdateCategory,
+  useBulkDeleteTransactions,
+  useUpdateTransaction,
+  useApplyCategoryMap,
+} from "@/hooks/use-transactions";
 import { isTransferTx } from "@/lib/budget";
 import { suggestedUpdatesForUncategorized } from "@/lib/categorize";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, formatTransactionDeleteCount } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useFamily } from "@/hooks/use-family";
@@ -45,7 +57,9 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
   const [detail, setDetail] = useState<Transaction | null>(null);
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState(searchParams.get("filter") ?? "all");
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const bulkUpdate = useBulkUpdateCategory();
+  const bulkDelete = useBulkDeleteTransactions();
   const applyRules = useApplyCategoryMap();
   const updateTx = useUpdateTransaction();
   const { data: familyData } = useFamily();
@@ -63,8 +77,7 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
     },
   });
 
-  const toggleSelect = (id: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const toggleSelect = (id: string) => {
     const next = new Set(selected);
     if (next.has(id)) next.delete(id);
     else next.add(id);
@@ -78,6 +91,17 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
       categoryId: bulkCategory,
     });
     setSelected(new Set());
+  };
+
+  const handleBulkDelete = async () => {
+    if (selected.size === 0 || bulkDelete.isPending) return;
+    try {
+      await bulkDelete.mutateAsync(Array.from(selected));
+      setSelected(new Set());
+      setConfirmOpen(false);
+    } catch {
+      /* toast from hook */
+    }
   };
 
   const ruleUpdates = useMemo(
@@ -106,6 +130,21 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
       );
     });
   }, [transactions, query, kind]);
+
+  const allVisibleSelected = visible.length > 0 && visible.every((t) => selected.has(t.id));
+  const someVisibleSelected = visible.some((t) => selected.has(t.id));
+
+  const toggleSelectAll = (checked: boolean | "indeterminate") => {
+    if (checked) {
+      const next = new Set(selected);
+      for (const t of visible) next.add(t.id);
+      setSelected(next);
+      return;
+    }
+    const next = new Set(selected);
+    for (const t of visible) next.delete(t.id);
+    setSelected(next);
+  };
 
   if (isLoading) {
     return <p className="p-4 text-center text-muted-foreground">Ładowanie...</p>;
@@ -138,25 +177,57 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
           </Button>
         )}
       </div>
-      {selected.size > 0 && (
-        <div className="flex items-center gap-2 rounded-lg border bg-muted/50 p-3">
-          <span className="text-sm">Zaznaczono: {selected.size}</span>
-          <Select value={bulkCategory} onValueChange={setBulkCategory}>
-            <SelectTrigger className="flex-1">
-              <SelectValue placeholder="Przypisz kategorię" />
-            </SelectTrigger>
-            <SelectContent>
-              {categories?.map((c) => (
-                <SelectItem key={c.id} value={c.id}>
-                  {c.icon} {c.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button size="sm" onClick={handleBulkUpdate}>
-            Zastosuj
+      {visible.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 p-3">
+          <label className="flex cursor-pointer items-center gap-2">
+            <Checkbox
+              checked={allVisibleSelected ? true : someVisibleSelected ? "indeterminate" : false}
+              disabled={bulkDelete.isPending}
+              onCheckedChange={toggleSelectAll}
+              aria-label="Zaznacz wszystkie"
+            />
+            <span className="text-sm">
+              {selected.size > 0 ? `Zaznaczono: ${selected.size}` : "Zaznacz wszystkie"}
+            </span>
+          </label>
+          {selected.size > 0 && (
+            <>
+              <Select value={bulkCategory} onValueChange={setBulkCategory}>
+                <SelectTrigger className="min-w-[160px] flex-1">
+                  <SelectValue placeholder="Przypisz kategorię" />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories?.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.icon} {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button size="sm" onClick={handleBulkUpdate} disabled={!bulkCategory || bulkUpdate.isPending}>
+                {bulkUpdate.isPending ? "Zapisywanie…" : "Zastosuj"}
+              </Button>
+            </>
+          )}
+          <Button
+            size="sm"
+            variant="destructive"
+            className="ml-auto"
+            disabled={selected.size === 0 || bulkDelete.isPending}
+            onClick={() => {
+              bulkDelete.reset();
+              setConfirmOpen(true);
+            }}
+          >
+            <Trash2 className="h-4 w-4" />
+            Usuń zaznaczone
           </Button>
         </div>
+      )}
+      {bulkDelete.isError && (
+        <p className="text-sm text-destructive" role="alert">
+          {bulkDelete.error instanceof Error ? bulkDelete.error.message : "Nie udało się usunąć transakcji"}
+        </p>
       )}
 
       <div className="space-y-2">
@@ -166,8 +237,16 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
             className="flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 transition-colors hover:bg-muted/30"
             onClick={() => setDetail(t)}
           >
-            <div onClick={(e) => toggleSelect(t.id, e)}>
-              <Checkbox checked={selected.has(t.id)} />
+            <div
+              onClick={(e) => e.stopPropagation()}
+              onPointerDown={(e) => e.stopPropagation()}
+            >
+              <Checkbox
+                checked={selected.has(t.id)}
+                disabled={bulkDelete.isPending}
+                onCheckedChange={() => toggleSelect(t.id)}
+                aria-label={`Zaznacz ${t.payee}`}
+              />
             </div>
             <Avatar className="h-8 w-8 shrink-0">
               <AvatarFallback className="text-xs">
@@ -248,6 +327,53 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
       </div>
 
       <TransactionDetail transaction={detail} onOpenChange={(open) => !open && setDetail(null)} />
+
+      <Dialog
+        open={confirmOpen}
+        onOpenChange={(open) => {
+          if (bulkDelete.isPending) return;
+          setConfirmOpen(open);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              Usunąć {formatTransactionDeleteCount(selected.size)}?
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Zaznaczone pozycje znikną z rejestru. Transfery zostaną usunięte z obu kont. Koperty i Do
+              rozdzielenia przeliczą się po usunięciu. Tej operacji nie da się cofnąć.
+            </p>
+            {bulkDelete.isError && (
+              <p className="text-sm text-destructive" role="alert">
+                {bulkDelete.error instanceof Error
+                  ? bulkDelete.error.message
+                  : "Nie udało się usunąć transakcji"}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                disabled={bulkDelete.isPending}
+                onClick={() => setConfirmOpen(false)}
+              >
+                Anuluj
+              </Button>
+              <Button
+                variant="destructive"
+                className="flex-1"
+                disabled={selected.size === 0 || bulkDelete.isPending}
+                onClick={handleBulkDelete}
+              >
+                {bulkDelete.isPending ? "Usuwanie…" : "Usuń zaznaczone"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

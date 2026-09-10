@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { isTransferTx } from "@/lib/budget";
+import { formatTransactionDeleteCount } from "@/lib/format";
 import { parseYearMonthFromDate } from "@/lib/money";
 import type { BudgetMonthData, Transaction } from "@/lib/types";
 import type { TransactionInput, TransferInput } from "@/lib/validators";
@@ -253,6 +254,66 @@ export function useApplyCategoryMap() {
       queryClient.invalidateQueries({ queryKey: ["budget"] });
     },
     onError: () => toast.error("Nie udało się zastosować reguł"),
+  });
+}
+
+export function useBulkDeleteTransactions() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const res = await fetch("/api/transactions/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const text = await res.text();
+      let data: { error?: string; ok?: boolean; deleted?: number } = {};
+      if (text) {
+        try {
+          data = JSON.parse(text) as { error?: string; ok?: boolean; deleted?: number };
+        } catch {
+          data = {};
+        }
+      }
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Nie udało się usunąć transakcji");
+      }
+      return { ...data, ids };
+    },
+    onMutate: async (ids) => {
+      await queryClient.cancelQueries({ queryKey: ["transactions"] });
+      const idSet = new Set(ids);
+      const previous = queryClient.getQueriesData<Transaction[]>({ queryKey: ["transactions"] });
+      queryClient.setQueriesData<Transaction[]>({ queryKey: ["transactions"] }, (current) => {
+        if (!current) return current;
+        const transferIds = new Set(
+          current.filter((row) => idSet.has(row.id) && row.transfer_id).map((row) => row.transfer_id as string)
+        );
+        return current.filter(
+          (row) => !idSet.has(row.id) && !(row.transfer_id && transferIds.has(row.transfer_id))
+        );
+      });
+      return { previous };
+    },
+    onError: (err, _ids, context) => {
+      for (const [key, data] of context?.previous ?? []) {
+        queryClient.setQueryData(key, data);
+      }
+      toast.error(err instanceof Error ? err.message : "Nie udało się usunąć transakcji");
+    },
+    onSuccess: (data, ids) => {
+      const count = data.deleted ?? ids.length;
+      toast.success(`Usunięto ${formatTransactionDeleteCount(count)}`);
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["budget"] });
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["account-history"] });
+      queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+      queryClient.invalidateQueries({ queryKey: ["settle"] });
+    },
   });
 }
 
