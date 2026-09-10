@@ -14,6 +14,23 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
+export async function parseResponseJson<T = Record<string, unknown>>(res: Response): Promise<T> {
+  if (typeof res.text === "function") {
+    const text = await res.text();
+    if (!text) return {} as T;
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      return {} as T;
+    }
+  }
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return {} as T;
+  }
+}
+
 export async function fetchJson<T>(
   url: string,
   init?: RequestInit,
@@ -23,7 +40,7 @@ export async function fetchJson<T>(
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, { ...init, signal: controller.signal });
-    const payload = (await res.json().catch(() => ({}))) as { error?: unknown };
+    const payload = await parseResponseJson<{ error?: unknown }>(res);
     if (!res.ok) {
       if (res.status === 401 && typeof window !== "undefined") {
         const next = `${window.location.pathname}${window.location.search}`;

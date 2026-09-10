@@ -98,6 +98,7 @@ export function CategoryPanel({
             <div className="grid grid-cols-2 gap-2 text-center text-sm sm:grid-cols-4">
               <div className="rounded-lg bg-muted p-2">
                 <p className="text-muted-foreground">Z zaległości</p>
+                <p className="text-[10px] text-muted-foreground">z poprzednich miesięcy</p>
                 <p className="font-semibold">{formatCurrency(row.leftover)}</p>
               </div>
               <div className="rounded-lg bg-muted p-2">
@@ -106,6 +107,7 @@ export function CategoryPanel({
               </div>
               <div className="rounded-lg bg-muted p-2">
                 <p className="text-muted-foreground">Aktywność</p>
+                <p className="text-[10px] text-muted-foreground">ten miesiąc</p>
                 <p className="font-semibold">{formatCurrency(row.activity)}</p>
               </div>
               <div className="rounded-lg bg-muted p-2">

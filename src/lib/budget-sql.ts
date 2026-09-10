@@ -365,6 +365,53 @@ export type SqlPoolProbe = {
   error?: string;
 };
 
+/**
+ * node-pg may return a Result, an array of Results (multi-statement), or omit `rows`
+ * while still setting `command` / `rowCount`. Health must not require `rows.length`.
+ */
+export function unwrapPgResult(result: unknown): {
+  rows: Array<Record<string, unknown>>;
+  rowCount: number | null;
+  command?: string;
+} {
+  if (Array.isArray(result)) {
+    for (let i = result.length - 1; i >= 0; i -= 1) {
+      const inner = unwrapPgResult(result[i]);
+      if (inner.rows.length > 0 || inner.command === "SELECT") return inner;
+    }
+    return result.length ? unwrapPgResult(result[result.length - 1]) : { rows: [], rowCount: 0 };
+  }
+  if (!result || typeof result !== "object") {
+    return { rows: [], rowCount: 0 };
+  }
+  const value = result as { rows?: unknown; rowCount?: unknown; command?: unknown };
+  const rows = Array.isArray(value.rows) ? (value.rows as Array<Record<string, unknown>>) : [];
+  const rowCount = typeof value.rowCount === "number" ? value.rowCount : rows.length;
+  const command = typeof value.command === "string" ? value.command : undefined;
+  return { rows, rowCount, command };
+}
+
+/** True when the driver handed back a completed query object (including empty SELECT / SET). */
+export function postgresClientAnswered(result: unknown): boolean {
+  if (result == null) return false;
+  if (Array.isArray(result)) return result.length > 0 && result.some(postgresClientAnswered);
+  if (typeof result !== "object") return false;
+  const value = result as { rows?: unknown; rowCount?: unknown; command?: unknown; fields?: unknown };
+  if (typeof value.command === "string") return true;
+  if (Array.isArray(value.rows)) return true;
+  if (typeof value.rowCount === "number") return true;
+  if (Array.isArray(value.fields)) return true;
+  return false;
+}
+
+/** Map a resolved `SELECT 1` (any node-pg shape) to a health probe. Never "no rows" on success. */
+export function sqlProbeFromClientResult(result: unknown): SqlPoolProbe {
+  if (result == null) {
+    return { db: false, error: "database unreachable" };
+  }
+  return { db: true };
+}
+
 export function postgresPoolConfig(connectionString: string) {
   return {
     connectionString,
@@ -404,11 +451,19 @@ export async function probeSqlPool(
     return { db: false, error: "pg pool failed to initialize" };
   }
   try {
-    const result = await withCheckedOutClient(pool, (query) => query("SELECT 1 AS ok"));
-    if (result?.rows?.length) {
-      return { db: true };
+    // Use pool.query — do not SET TIME ZONE / statement_timeout first.
+    // Transaction poolers often hang or error on SET; checkout then treated a
+    // successful SELECT 1 as "no rows" when the driver omitted `rows`.
+    const timedOut = { timeout: true as const };
+    const result = await withTimeout<unknown>(
+      pool.query("SELECT 1 AS ok"),
+      SQL_CONNECTION_TIMEOUT_MS + 500,
+      timedOut
+    );
+    if (result === timedOut) {
+      return { db: false, error: "probe timed out" };
     }
-    return { db: false, error: "SELECT 1 returned no rows" };
+    return sqlProbeFromClientResult(result);
   } catch (error) {
     return { db: false, error: error instanceof Error ? error.message : "probe failed" };
   }
@@ -492,17 +547,9 @@ async function withCheckedOutClient<T>(
     return null;
   }
   try {
-    try {
-      await client.query(
-        `SET statement_timeout = ${SQL_STATEMENT_TIMEOUT_MS}; SET TIME ZONE '${BUDGET_SQL_TIMEZONE}'`
-      );
-    } catch {
-      try {
-        await client.query(`SET statement_timeout = ${SQL_STATEMENT_TIMEOUT_MS}`);
-      } catch {
-        /* transaction poolers may forbid SET; query_timeout still applies */
-      }
-    }
+    // Do not SET TIME ZONE / statement_timeout here. Transaction poolers often
+    // forbid or hang on SET (extra RTT / 4s query_timeout). Calendar months use
+    // timezone('Europe/Warsaw', ...) in SQL; hung queries are capped by query_timeout.
     return await fn((sql, params) => client.query(sql, params));
   } catch (error) {
     console.error("[budget-sql] client query failed", error instanceof Error ? error.message : error);
@@ -568,7 +615,7 @@ export async function queryFamilyBudgetWithClient(
   const optional = async (sql: string) => {
     try {
       const result = await run(sql, [familyId]);
-      return { rows: result.rows, ok: true };
+      return { rows: unwrapPgResult(result).rows, ok: true };
     } catch {
       return { rows: [] as Array<Record<string, unknown>>, ok: false };
     }
@@ -576,7 +623,7 @@ export async function queryFamilyBudgetWithClient(
 
   const snapshot = async (plan: SnapshotPlan) => {
     const result = await run(snapshotSql(plan.pred, plan.kind), [familyId]);
-    return parseFamilyBudgetPayload(result.rows[0]?.payload);
+    return parseFamilyBudgetPayload(unwrapPgResult(result).rows[0]?.payload);
   };
 
   const finish = (
@@ -661,7 +708,7 @@ export async function queryCashflowDailyActualsWithClient(
   for (const plan of plans) {
     try {
       const result = await query(dailyActualsSql(plan.pred, plan.kind), [familyId, from, to]);
-      return parseDailyActuals(result.rows);
+      return parseDailyActuals(unwrapPgResult(result).rows);
     } catch (error) {
       if (!isRetryableSqlError(error)) return null;
     }
@@ -702,7 +749,7 @@ export async function queryLedgerRangeSql(
   for (const plan of plans) {
     try {
       const result = await pool.query(ledgerRangeSql(plan.pred, plan.kind), [familyId, from, to]);
-      return result.rows as unknown as LedgerTransaction[];
+      return unwrapPgResult(result).rows as unknown as LedgerTransaction[];
     } catch (error) {
       if (!isRetryableSqlError(error)) return null;
     }

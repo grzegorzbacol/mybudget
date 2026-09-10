@@ -12,7 +12,7 @@ import {
   CASHFLOW_RESPONSE_BUDGET_MS,
 } from "@/lib/budget-sql";
 import { degradedCashflowOverview } from "@/lib/cashflow-http";
-import { getCurrentYearMonth } from "@/lib/format";
+import { getCurrentYearMonth, todayIso } from "@/lib/format";
 import { computeRunway, monthSpendPace, wealthLayers } from "@/lib/wealth";
 import {
   contributionThisMonth,
@@ -44,7 +44,7 @@ export async function GET(request: Request) {
   const lite = searchParams.get("lite") === "1";
   const days = Math.min(180, Math.max(7, parseInt(searchParams.get("days") ?? "60", 10)));
   const bucket = searchParams.get("bucket") === "month" ? "month" : "week";
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIso();
   const to = addDays(today, days);
   const { year, month } = getCurrentYearMonth();
 

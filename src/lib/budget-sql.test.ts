@@ -9,6 +9,7 @@ import {
   monthCount,
   parseFamilyBudgetPayload,
   postgresPoolConfig,
+  postgresClientAnswered,
   queryFamilyBudgetWithClient,
   remainingMs,
   resetBudgetSqlPlans,
@@ -16,6 +17,8 @@ import {
   snapshotAttempts,
   SQL_POOL_MAX,
   SQL_STATEMENT_TIMEOUT_MS,
+  sqlProbeFromClientResult,
+  unwrapPgResult,
   withTimeout,
 } from "./budget-sql";
 
@@ -182,6 +185,20 @@ describe("snapshot dialect cache", () => {
     await queryFamilyBudgetWithClient("11111111-1111-1111-1111-111111111111", query);
     expect(order).toEqual(["snapshot", "splits", "scheduled"]);
   });
+
+  it("reads snapshot payload from a multi-statement result array", async () => {
+    const query = async (sql: string) => {
+      if (sql.includes("json_build_object")) {
+        return [
+          { command: "SET", rows: [] },
+          { rows: [{ payload: { categories: [{ id: "c1", group_name: "Żywność", name: "Zakupy" }] } }] },
+        ];
+      }
+      return { rows: [] };
+    };
+    const payload = await queryFamilyBudgetWithClient("11111111-1111-1111-1111-111111111111", query as never);
+    expect(payload?.categories[0]?.name).toBe("Zakupy");
+  });
 });
 
 describe("withTimeout", () => {
@@ -241,7 +258,31 @@ describe("postgres pool hardening", () => {
       status: 200,
       body: { ok: true, db: false, skipped: "DATABASE_URL not set" },
     });
-    expect(healthHttpFromProbe({ db: false, error: "SELECT 1 returned no rows" }).status).toBe(503);
-    expect(healthHttpFromProbe({ db: false, error: "SELECT 1 returned no rows" }).body.db).toBe(false);
+    expect(healthHttpFromProbe({ db: false, error: "probe timed out" }).status).toBe(503);
+    expect(healthHttpFromProbe({ db: false, error: "probe timed out" }).body.db).toBe(false);
+  });
+
+  it("treats every resolved SELECT 1 shape as db:true — never 'returned no rows'", () => {
+    expect(sqlProbeFromClientResult({ rows: [{ ok: 1 }] })).toEqual({ db: true });
+    expect(sqlProbeFromClientResult({ command: "SELECT", rowCount: 1 })).toEqual({ db: true });
+    expect(sqlProbeFromClientResult({ rows: [], command: "SELECT", rowCount: 1 })).toEqual({ db: true });
+    expect(sqlProbeFromClientResult({ command: "SELECT", rowCount: 1, fields: [{ name: "ok" }] })).toEqual({
+      db: true,
+    });
+    expect(sqlProbeFromClientResult([{ command: "SET", rows: [] }, { rows: [{ ok: 1 }] }])).toEqual({ db: true });
+    expect(postgresClientAnswered({ command: "SELECT", rowCount: 1 })).toBe(true);
+    expect(postgresClientAnswered({ rows: [] })).toBe(true);
+    expect(postgresClientAnswered(null)).toBe(false);
+    expect(sqlProbeFromClientResult(null).db).toBe(false);
+    expect(sqlProbeFromClientResult(null).error).not.toMatch(/no rows/i);
+    expect(JSON.stringify(sqlProbeFromClientResult({ rows: [] }))).not.toMatch(/no rows/i);
+  });
+
+  it("unwraps multi-statement node-pg arrays so snapshot payload is still found", () => {
+    const payload = { categories: [{ id: "c1" }], income: [{ year: 2026, month: 9, amount: 1 }] };
+    expect(unwrapPgResult([{ command: "SET", rows: [] }, { rows: [{ payload }] }]).rows[0]?.payload).toEqual(
+      payload
+    );
+    expect(unwrapPgResult({ command: "SELECT", rowCount: 1 }).rows).toEqual([]);
   });
 });

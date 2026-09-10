@@ -1,4 +1,4 @@
-import { getCurrentYearMonth } from "@/lib/format";
+import { getCurrentYearMonth, todayIso } from "@/lib/format";
 import type { CashflowOverview } from "@/lib/types";
 
 const zeroWealth = { assets: 0, liabilities: 0, netWorth: 0 };
@@ -6,7 +6,7 @@ const zeroWealth = { assets: 0, liabilities: 0, netWorth: 0 };
 /** JSON the client can render before the 12s abort when SQL/auth is still cold. */
 export function degradedCashflowOverview(warning: string): CashflowOverview {
   const { year, month } = getCurrentYearMonth();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayIso();
   return {
     budget: {
       year,
