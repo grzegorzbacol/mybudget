@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { TransactionForm } from "@/components/transactions/TransactionForm";
 import { TransactionList } from "@/components/transactions/TransactionList";
 import { CsvImport } from "@/components/transactions/CsvImport";
+import { GenericPayeeBanner } from "@/components/transactions/GenericPayeeBanner";
 import { ReceiptScanner } from "@/components/ReceiptScanner";
 import { MonthSwitcher } from "@/components/MonthSwitcher";
 import { getCurrentYearMonth } from "@/lib/format";
@@ -55,8 +56,11 @@ export default function TransactionsPage() {
 
       <p className="text-sm text-muted-foreground">
         Wydatek schodzi z koperty, przychód idzie do Do rozdzielenia, transfer tylko między kontami. Import: CSV
-        mBank/PKO/ING albo OFX. Reguły payee proponują kopertę po imporcie.
+        mBank (Zestawienie operacji — tam jest nazwa sklepu), PKO, ING albo OFX. Ten sam CSV jeszcze raz uzupełni
+        stare „ZAKUP PRZY UŻYCIU KARTY”. Reguły payee proponują kopertę po imporcie.
       </p>
+
+      <GenericPayeeBanner />
 
       <MonthSwitcher
         year={year}

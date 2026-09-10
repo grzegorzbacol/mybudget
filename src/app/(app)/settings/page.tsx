@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import type { BudgetCategory } from "@/lib/types";
 import Link from "next/link";
+import { RepairPayeesButton } from "@/components/transactions/RepairPayeesButton";
 
 export default function SettingsPage() {
   const { data: familyData } = useFamily();
@@ -240,9 +241,12 @@ export default function SettingsPage() {
             Żywe połączenie z mBank (PSD2 / AIS, np. GoCardless, Enable Banking, Kontomatik) nie jest w tej wersji —
             wymaga zgody banku i agregatora. Teraz: eksport CSV z mBank/PKO/ING albo plik OFX, potem Import na ekranie Transakcje.
           </p>
-          <Button variant="outline" asChild>
-            <Link href="/import">Import CSV/OFX (mBank)</Link>
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" asChild>
+              <Link href="/import">Import CSV/OFX (mBank)</Link>
+            </Button>
+            <RepairPayeesButton />
+          </div>
           <Button variant="ghost" asChild>
             <Link href="/reports">Raporty</Link>
           </Button>

@@ -324,22 +324,12 @@ describe("YNAB envelope math", () => {
     const broker = account("broker", 8000, false);
     expect(
       isOnBudgetCashTx(
-        { account_id: "checking", category_id: null, amount: -100, date: "2026-09-01", transfer_id: "tr1" },
+        { account_id: "checking", transfer_id: "tr1" },
         [checking, broker]
       )
     ).toBe(false);
-    expect(
-      isOnBudgetCashTx(
-        { account_id: "broker", category_id: "groceries", amount: -50, date: "2026-09-01" },
-        [checking, broker]
-      )
-    ).toBe(false);
-    expect(
-      isOnBudgetCashTx(
-        { account_id: "checking", category_id: "groceries", amount: -50, date: "2026-09-01" },
-        [checking, broker]
-      )
-    ).toBe(true);
+    expect(isOnBudgetCashTx({ account_id: "broker" }, [checking, broker])).toBe(false);
+    expect(isOnBudgetCashTx({ account_id: "checking" }, [checking, broker])).toBe(true);
   });
 
   it("does not let a tracking-account expense change envelope available", () => {

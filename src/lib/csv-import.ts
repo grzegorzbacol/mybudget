@@ -1,5 +1,6 @@
 import { decodeBankFileBytes } from "./csv-encoding";
-import { importPayeeFields } from "./display-payee";
+import { importPayeeFields, isGenericBankPayee, pickRichestDescription } from "./display-payee";
+import { money } from "./money";
 
 export interface CsvRow {
   date: string;
@@ -70,11 +71,40 @@ function descriptionIndex(format: BankFormat, headers: string[]): number {
       return col(headers, "opis");
     case "ing":
       return col(headers, "tytuł", "tytul");
-    case "mbank":
+    case "mbank": {
+      // Zestawienie: extras live in #Tytuł (`PRZY UŻYCIU KARTY;Biedronka /Ruda`), not #Opis.
+      const tytul = col(headers, "tytuł", "tytul");
+      if (tytul >= 0) return tytul;
       return col(headers, "opis");
+    }
     default:
-      return col(headers, "payee", "opis", "tytuł", "tytul", "kontrahent");
+      return col(headers, "payee", "tytuł", "tytul", "opis", "kontrahent");
   }
+}
+
+function cell(headers: string[], cols: string[], ...needles: string[]): string {
+  const index = col(headers, ...needles);
+  return index >= 0 ? (cols[index] ?? "").trim() : "";
+}
+
+function rawPayeeText(format: BankFormat, headers: string[], cols: string[]): string {
+  if (format === "mbank") {
+    // Through #26 we stored only #Opis operacji (ZAKUP PRZY UŻYCIU KARTY) and memo
+    // "Import mBank". Merchant lives in #Tytuł / #Nadawca/Odbiorca — those were dropped.
+    return pickRichestDescription([
+      cell(headers, cols, "tytuł", "tytul"),
+      cell(headers, cols, "nadawca", "odbiorca", "kontrahent"),
+      cell(headers, cols, "opis"),
+    ]);
+  }
+  if (format === "ing") {
+    return pickRichestDescription([
+      cell(headers, cols, "tytuł", "tytul"),
+      cell(headers, cols, "opis"),
+    ]);
+  }
+  const descIdx = descriptionIndex(format, headers);
+  return descIdx >= 0 ? (cols[descIdx] ?? "") : "";
 }
 
 function looksLikeHeader(headers: string[]): boolean {
@@ -90,7 +120,9 @@ function looksLikeHeader(headers: string[]): boolean {
 export function detectBankFormat(headers: string[]): BankFormat {
   const h = headers.map((x) => x.toLowerCase());
   const hashed = h.some((x) => x.startsWith("#"));
-  if (hashed && h.some((x) => x.includes("data operacji"))) return "mbank";
+  const hasOpis = h.some((x) => x.includes("opis"));
+  const hasTytul = h.some((x) => x.includes("tytuł") || x.includes("tytul"));
+  if (hashed && (h.some((x) => x.includes("data operacji")) || (hasOpis && hasTytul))) return "mbank";
   if (h.some((x) => x.includes("data księgowania") || x.includes("data ksiegowania"))) return "ing";
   if (h.some((x) => x.includes("data operacji")) && h.some((x) => x.includes("kwota"))) return "pko";
   return "generic";
@@ -145,7 +177,7 @@ export function parseBankCsv(content: string): CsvRow[] {
         if (dateIdx >= 0 && amountIdx >= 0) {
           row = {
             date: parseDate(cols[dateIdx]),
-            ...importPayeeFields(descIdx >= 0 ? cols[descIdx] : "", "Import PKO"),
+            ...importPayeeFields(rawPayeeText("pko", headers, cols), "Import PKO"),
             amount: parseAmount(cols[amountIdx]),
           };
         }
@@ -157,7 +189,7 @@ export function parseBankCsv(content: string): CsvRow[] {
         if (dateIdx >= 0 && amountIdx >= 0) {
           row = {
             date: parseDate(cols[dateIdx]),
-            ...importPayeeFields(descIdx >= 0 ? cols[descIdx] : "", "Import ING"),
+            ...importPayeeFields(rawPayeeText("ing", headers, cols), "Import ING"),
             amount: parseAmount(cols[amountIdx]),
           };
         }
@@ -169,7 +201,7 @@ export function parseBankCsv(content: string): CsvRow[] {
         if (dateIdx >= 0 && amountIdx >= 0) {
           row = {
             date: parseDate(cols[dateIdx]),
-            ...importPayeeFields(descIdx >= 0 ? cols[descIdx] : "", "Import mBank"),
+            ...importPayeeFields(rawPayeeText("mbank", headers, cols), "Import mBank"),
             amount: parseAmount(cols[amountIdx]),
           };
         }
@@ -181,7 +213,7 @@ export function parseBankCsv(content: string): CsvRow[] {
         if (dateIdx >= 0 && amountIdx >= 0) {
           row = {
             date: parseDate(cols[dateIdx]),
-            ...importPayeeFields(descIdx >= 0 ? cols[descIdx] : "", "Import CSV"),
+            ...importPayeeFields(rawPayeeText("generic", headers, cols), "Import CSV"),
             amount: parseAmount(cols[amountIdx]),
           };
         }
@@ -193,3 +225,70 @@ export function parseBankCsv(content: string): CsvRow[] {
 
   return rows;
 }
+
+export type ExistingImportTx = {
+  id: string;
+  date: string;
+  amount: number;
+  payee: string;
+};
+
+function sameAmount(a: number, b: number): boolean {
+  return money(a) === money(b);
+}
+
+function sameDate(a: string, b: string): boolean {
+  return a.slice(0, 10) === b.slice(0, 10);
+}
+
+/**
+ * Re-import repair: fill merchant names on existing generic-op rows (same date+amount)
+ * instead of inserting duplicates. Skip rows already stored with the same payee.
+ */
+export function planImportedPayeeUpdates<T extends CsvRow>(
+  incoming: T[],
+  existing: ExistingImportTx[]
+): {
+  updates: Array<{ id: string; payee: string; memo: string }>;
+  inserts: T[];
+  skipped: number;
+} {
+  const unused = existing.map((row) => ({ ...row, used: false }));
+  const updates: Array<{ id: string; payee: string; memo: string }> = [];
+  const inserts: T[] = [];
+  let skipped = 0;
+
+  for (const row of incoming) {
+    const exact = unused.find(
+      (tx) => !tx.used && sameDate(tx.date, row.date) && sameAmount(tx.amount, row.amount) && tx.payee === row.payee
+    );
+    if (exact) {
+      exact.used = true;
+      skipped += 1;
+      continue;
+    }
+
+    const generic = unused.find(
+      (tx) =>
+        !tx.used &&
+        sameDate(tx.date, row.date) &&
+        sameAmount(tx.amount, row.amount) &&
+        isGenericBankPayee(tx.payee) &&
+        !isGenericBankPayee(row.payee)
+    );
+    if (generic) {
+      generic.used = true;
+      updates.push({
+        id: generic.id,
+        payee: row.payee,
+        memo: row.memo ?? generic.payee,
+      });
+      continue;
+    }
+
+    inserts.push(row);
+  }
+
+  return { updates, inserts, skipped };
+}
+

@@ -54,10 +54,19 @@ export function CsvImport() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
-      toast.success(`Zaimportowano ${data.imported} transakcji`);
+      const imported = Number(data.imported) || 0;
+      const updated = Number(data.updated) || 0;
+      if (updated > 0 && imported > 0) {
+        toast.success(`Zaimportowano ${imported}, uzupełniono nazwy: ${updated}`);
+      } else if (updated > 0) {
+        toast.success(`Uzupełniono nazwy sklepów: ${updated}`);
+      } else {
+        toast.success(`Zaimportowano ${imported} transakcji`);
+      }
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["budget"] });
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["payee-repair"] });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Błąd importu");
     } finally {
