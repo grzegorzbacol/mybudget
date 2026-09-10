@@ -182,4 +182,53 @@ describe("bank CSV import", () => {
       { date: "2026-09-08", payee: "Tesco £12.50", amount: -12.5, memo: "Import mBank" },
     ]);
   });
+
+  it("extracts mBank merchant/place from opis after semicolon, including unquoted extra columns", () => {
+    const csv = `#Data operacji;#Opis operacji;#Rachunek;#Kategoria;#Kwota
+2026-09-08;PRZY UŻYCIU KARTY;As Vending /Zory;eKonto;Zakupy;-10,00
+2026-09-08;PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK;eKonto;Zakupy;-32,40
+2026-09-08;PRZY UŻYCIU KARTY;ZABKA ZD466 K.2 /RUDA SLASK;eKonto;Zakupy;-15,20
+2026-09-08;PRZY UŻYCIU KARTY;Allegro /Poznan;eKonto;Zakupy;-49,99
+2026-09-08;"PRZY UŻYCIU KARTY;APPLE.COM/BILL  /CORK";eKonto;Zakupy;-12,99
+2026-09-08;EW ZEWNĘTRZNY WYCHODZĄCY;LUXMED;DELTA KTW ;'1410501214100009;eKonto;Zdrowie;-200,00
+`;
+    expect(parseBankCsv(csv)).toEqual([
+      {
+        date: "2026-09-08",
+        payee: "As Vending /Zory",
+        amount: -10,
+        memo: "PRZY UŻYCIU KARTY;As Vending /Zory",
+      },
+      {
+        date: "2026-09-08",
+        payee: "JMP S.A. BIEDRONKA /RUDA SLASK",
+        amount: -32.4,
+        memo: "PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK",
+      },
+      {
+        date: "2026-09-08",
+        payee: "ZABKA ZD466 K.2 /RUDA SLASK",
+        amount: -15.2,
+        memo: "PRZY UŻYCIU KARTY;ZABKA ZD466 K.2 /RUDA SLASK",
+      },
+      {
+        date: "2026-09-08",
+        payee: "Allegro /Poznan",
+        amount: -49.99,
+        memo: "PRZY UŻYCIU KARTY;Allegro /Poznan",
+      },
+      {
+        date: "2026-09-08",
+        payee: "APPLE.COM/BILL /CORK",
+        amount: -12.99,
+        memo: "PRZY UŻYCIU KARTY;APPLE.COM/BILL /CORK",
+      },
+      {
+        date: "2026-09-08",
+        payee: "LUXMED; DELTA KTW",
+        amount: -200,
+        memo: "EW ZEWNĘTRZNY WYCHODZĄCY;LUXMED;DELTA KTW;'1410501214100009",
+      },
+    ]);
+  });
 });

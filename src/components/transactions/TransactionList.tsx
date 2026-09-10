@@ -30,6 +30,7 @@ import {
 import { isTransferTx } from "@/lib/budget";
 import { suggestedUpdatesForUncategorized } from "@/lib/categorize";
 import { formatCurrency, formatTransactionDeleteCount } from "@/lib/format";
+import { displayPayee } from "@/lib/display-payee";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useFamily } from "@/hooks/use-family";
@@ -122,7 +123,9 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
       if (kind === "transfer" && !isTransferTx(t)) return false;
       if (kind === "uncategorized" && (isTransferTx(t) || t.amount >= 0 || t.category_id)) return false;
       if (!q) return true;
+      const title = displayPayee(t.payee, t.memo);
       return (
+        title.toLowerCase().includes(q) ||
         t.payee.toLowerCase().includes(q) ||
         (t.memo ?? "").toLowerCase().includes(q) ||
         (t.category?.name ?? "").toLowerCase().includes(q) ||
@@ -231,7 +234,9 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
       )}
 
       <div className="space-y-2">
-        {visible.map((t) => (
+        {visible.map((t) => {
+          const title = displayPayee(t.payee, t.memo);
+          return (
           <div
             key={t.id}
             className="flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-3 transition-colors hover:bg-muted/30"
@@ -245,7 +250,7 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
                 checked={selected.has(t.id)}
                 disabled={bulkDelete.isPending}
                 onCheckedChange={() => toggleSelect(t.id)}
-                aria-label={`Zaznacz ${t.payee}`}
+                aria-label={`Zaznacz ${title}`}
               />
             </div>
             <Avatar className="h-8 w-8 shrink-0">
@@ -271,7 +276,7 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
             </button>
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5">
-                <p className="truncate font-medium">{t.payee}</p>
+                <p className="truncate font-medium">{title}</p>
                 {t.receipt_url && (
                   <Camera className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 )}
@@ -301,7 +306,8 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
               {formatCurrency(t.amount)}
             </span>
           </div>
-        ))}
+          );
+        })}
         {visible.length === 0 && (
           <div className="rounded-lg border border-dashed px-4 py-8 text-center">
             <p className="font-medium">

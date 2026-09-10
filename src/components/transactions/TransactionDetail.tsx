@@ -16,6 +16,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatCurrency } from "@/lib/format";
+import { displayPayee } from "@/lib/display-payee";
 import { cn } from "@/lib/utils";
 import { isExpenseCategory, isTransferTx } from "@/lib/budget";
 import type { Transaction } from "@/lib/types";
@@ -82,6 +83,8 @@ export function TransactionDetail({ transaction, onOpenChange }: TransactionDeta
   const transfer = isTransferTx(transaction);
   const isExpense = transaction.amount < 0 && !transfer;
   const isIncome = transaction.amount > 0 && !transfer;
+  const title = displayPayee(transaction.payee, transaction.memo);
+  const showRawPayee = title !== transaction.payee && transaction.memo !== transaction.payee;
 
   return (
     <Dialog open={!!transaction} onOpenChange={onOpenChange}>
@@ -103,7 +106,10 @@ export function TransactionDetail({ transaction, onOpenChange }: TransactionDeta
             >
               {formatCurrency(transaction.amount)}
             </p>
-            <p className="mt-1 text-lg font-medium">{transaction.payee}</p>
+            <p className="mt-1 text-lg font-medium">{title}</p>
+            {showRawPayee && (
+              <p className="text-xs text-muted-foreground break-all">{transaction.payee}</p>
+            )}
             <p className="text-sm text-muted-foreground">{transaction.date}</p>
           </div>
 

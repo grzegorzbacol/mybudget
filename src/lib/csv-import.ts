@@ -1,4 +1,5 @@
 import { decodeBankFileBytes } from "./csv-encoding";
+import { importPayeeFields } from "./display-payee";
 
 export interface CsvRow {
   date: string;
@@ -28,7 +29,52 @@ function parseDate(value: string): string {
 }
 
 function splitLine(line: string, delimiter: string): string[] {
-  return line.split(delimiter).map((cell) => cell.replace(/"/g, "").trim());
+  const cells: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (ch === delimiter && !inQuotes) {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+/** mBank opis often contains unquoted `;Merchant /City` — fold extras back into that field. */
+function foldExtraField(cols: string[], expectedLength: number, fieldIdx: number): string[] {
+  const extra = cols.length - expectedLength;
+  if (extra <= 0 || fieldIdx < 0 || fieldIdx >= cols.length) return cols;
+  const end = fieldIdx + extra + 1;
+  if (end > cols.length) return cols;
+  const merged = cols.slice(fieldIdx, end).join(";");
+  return [...cols.slice(0, fieldIdx), merged, ...cols.slice(end)];
+}
+
+function descriptionIndex(format: BankFormat, headers: string[]): number {
+  switch (format) {
+    case "pko":
+      return col(headers, "opis");
+    case "ing":
+      return col(headers, "tytuł", "tytul");
+    case "mbank":
+      return col(headers, "opis");
+    default:
+      return col(headers, "payee", "opis", "tytuł", "tytul", "kontrahent");
+  }
 }
 
 function looksLikeHeader(headers: string[]): boolean {
@@ -81,12 +127,14 @@ export function parseBankCsv(content: string): CsvRow[] {
 
   const { headers, delimiter, index } = header;
   const format = detectBankFormat(headers);
+  const descIdx = descriptionIndex(format, headers);
   const rows: CsvRow[] = [];
 
   for (let i = index + 1; i < lines.length; i++) {
-    const cols = splitLine(lines[i], delimiter);
-    if (cols.length < 2) continue;
-    if (cols[0].startsWith("#") && !/^\d/.test(cols[0].replace("#", ""))) continue;
+    const rawCols = splitLine(lines[i], delimiter);
+    if (rawCols.length < 2) continue;
+    if (rawCols[0].startsWith("#") && !/^\d/.test(rawCols[0].replace("#", ""))) continue;
+    const cols = foldExtraField(rawCols, headers.length, descIdx);
 
     let row: CsvRow | null = null;
 
@@ -94,13 +142,11 @@ export function parseBankCsv(content: string): CsvRow[] {
       case "pko": {
         const dateIdx = col(headers, "data operacji");
         const amountIdx = headers.findIndex((h) => h.toLowerCase() === "kwota");
-        const descIdx = col(headers, "opis");
         if (dateIdx >= 0 && amountIdx >= 0) {
           row = {
             date: parseDate(cols[dateIdx]),
-            payee: descIdx >= 0 ? cols[descIdx] : "Import CSV",
+            ...importPayeeFields(descIdx >= 0 ? cols[descIdx] : "", "Import PKO"),
             amount: parseAmount(cols[amountIdx]),
-            memo: "Import PKO",
           };
         }
         break;
@@ -108,13 +154,11 @@ export function parseBankCsv(content: string): CsvRow[] {
       case "ing": {
         const dateIdx = col(headers, "data księgowania", "data ksiegowania");
         const amountIdx = col(headers, "kwota");
-        const titleIdx = col(headers, "tytuł", "tytul");
         if (dateIdx >= 0 && amountIdx >= 0) {
           row = {
             date: parseDate(cols[dateIdx]),
-            payee: titleIdx >= 0 ? cols[titleIdx] : "Import CSV",
+            ...importPayeeFields(descIdx >= 0 ? cols[descIdx] : "", "Import ING"),
             amount: parseAmount(cols[amountIdx]),
-            memo: "Import ING",
           };
         }
         break;
@@ -122,13 +166,11 @@ export function parseBankCsv(content: string): CsvRow[] {
       case "mbank": {
         const dateIdx = col(headers, "data operacji");
         const amountIdx = col(headers, "kwota");
-        const descIdx = col(headers, "opis");
         if (dateIdx >= 0 && amountIdx >= 0) {
           row = {
             date: parseDate(cols[dateIdx]),
-            payee: descIdx >= 0 ? cols[descIdx] : "Import CSV",
+            ...importPayeeFields(descIdx >= 0 ? cols[descIdx] : "", "Import mBank"),
             amount: parseAmount(cols[amountIdx]),
-            memo: "Import mBank",
           };
         }
         break;
@@ -136,11 +178,10 @@ export function parseBankCsv(content: string): CsvRow[] {
       default: {
         const dateIdx = col(headers, "date", "data operacji", "data");
         const amountIdx = col(headers, "amount", "kwota", "wartość", "wartosc");
-        const payeeIdx = col(headers, "payee", "opis", "tytuł", "tytul", "kontrahent");
         if (dateIdx >= 0 && amountIdx >= 0) {
           row = {
             date: parseDate(cols[dateIdx]),
-            payee: payeeIdx >= 0 ? cols[payeeIdx] : "Import CSV",
+            ...importPayeeFields(descIdx >= 0 ? cols[descIdx] : "", "Import CSV"),
             amount: parseAmount(cols[amountIdx]),
           };
         }
