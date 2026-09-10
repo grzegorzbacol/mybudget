@@ -54,7 +54,7 @@ export async function POST(request: Request) {
       ran.push(file);
     }
 
-    const ensured = await applyEnsureSchema();
+    const ensured = await applyEnsureSchema(process.env, { force: true });
 
     return NextResponse.json({
       ok: true,

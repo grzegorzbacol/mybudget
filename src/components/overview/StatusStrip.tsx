@@ -32,7 +32,7 @@ function plusReason(input: {
 }
 
 export function StatusStrip() {
-  const { data } = useCashflowOverview(60, "week");
+  const { data } = useCashflowOverview(60, "week", true);
 
   if (!data?.supervision || !data.wealth) return null;
   const { supervision, wealth } = data;

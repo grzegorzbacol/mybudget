@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
+import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
 import { loadAccountForLedger } from "@/lib/accounts";
 import { insertRowWithSchemaRepair, insertRowsWithSchemaRepair } from "@/lib/schema-write";
 import { transactionSchema } from "@/lib/validators";
+import { categorySplitsValid, replaceCategorySplits } from "@/lib/category-splits";
 
 export async function POST(request: Request) {
   const ctx = await getAuthContext();
@@ -16,9 +18,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { splits, ...payload } = parsed.data;
+  const { splits, category_splits: categorySplits, ...payload } = parsed.data;
   if (payload.amount > 0) {
     payload.category_id = null;
+  }
+  if (categorySplits?.length) {
+    if (!categorySplitsValid(payload.amount, categorySplits)) {
+      return NextResponse.json({ error: "Suma podziału na koperty musi równać się kwocie" }, { status: 400 });
+    }
+    payload.category_id = categorySplits[0].category_id;
   }
 
   const loaded = await loadAccountForLedger(ctx.supabase, ctx.family.id, payload.account_id);
@@ -69,6 +77,14 @@ export async function POST(request: Request) {
     }
   }
 
+  if (categorySplits?.length && data) {
+    const splitWrite = await replaceCategorySplits(ctx.supabase, ctx.family.id, data.id, categorySplits);
+    if (splitWrite.error) {
+      return NextResponse.json({ error: splitWrite.error }, { status: 500 });
+    }
+  }
+
+  invalidateFamilyBudgetCache(ctx.family.id);
   return NextResponse.json(
     created.warning ? { ...(created.data as object), warning: created.warning } : created.data
   );

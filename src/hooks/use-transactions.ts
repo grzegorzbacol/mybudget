@@ -4,7 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { isTransferTx } from "@/lib/budget";
-import type { Transaction } from "@/lib/types";
+import { parseYearMonthFromDate } from "@/lib/money";
+import type { BudgetMonthData, Transaction } from "@/lib/types";
 import type { TransactionInput, TransferInput } from "@/lib/validators";
 
 interface TransactionFilters {
@@ -75,16 +76,58 @@ export function useCreateTransaction() {
       if (!res.ok) throw new Error(data.error || "Nie udało się dodać transakcji");
       return data as Transaction;
     },
+    onMutate: async (input) => {
+      const ym = parseYearMonthFromDate(input.date);
+      if (!ym) return;
+      const key = ["budget", ym.year, ym.month] as const;
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<BudgetMonthData>(key);
+      if (!previous) return { previous, key };
+      const next = structuredClone(previous);
+      if (Number(input.amount) > 0) {
+        next.incomeThisMonth += Number(input.amount);
+        next.readyToAssign += Number(input.amount);
+        next.onBudgetBalance += Number(input.amount);
+      } else {
+        const lines = input.category_splits?.length
+          ? input.category_splits
+          : input.category_id
+            ? [{ category_id: input.category_id, amount: Math.abs(Number(input.amount)) }]
+            : [];
+        for (const line of lines) {
+          for (const group of next.groups) {
+            for (const row of group.categories) {
+              if (row.category.id !== line.category_id) continue;
+              const add = -Math.abs(Number(line.amount));
+              row.activity += add;
+              row.available += add;
+              group.activity += add;
+              group.available += add;
+              next.totalActivity += add;
+              next.totalAvailable += add;
+            }
+          }
+        }
+        next.onBudgetBalance += Number(input.amount);
+      }
+      queryClient.setQueryData(key, next);
+      return { previous, key };
+    },
+    onError: (err, _input, context) => {
+      if (context?.previous && context.key) {
+        queryClient.setQueryData(context.key, context.previous);
+      }
+      toast.error(err instanceof Error ? err.message : "Nie udało się dodać transakcji");
+    },
     onSuccess: () => {
       toast.success("Transakcja dodana");
+    },
+    onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["budget"] });
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["cashflow"] });
       queryClient.invalidateQueries({ queryKey: ["settle"] });
-    },
-    onError: (err) => {
-      toast.error(err instanceof Error ? err.message : "Nie udało się dodać transakcji");
     },
   });
 }
@@ -129,6 +172,7 @@ export function useUpdateTransaction() {
       return data;
     },
     onSuccess: () => {
+      toast.success("Zapisano zmiany");
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["budget"] });
       queryClient.invalidateQueries({ queryKey: ["accounts"] });

@@ -18,12 +18,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useCreateTransaction, useCreateTransfer } from "@/hooks/use-transactions";
+import { useCreateTransaction, useCreateTransfer, useUpdateTransaction } from "@/hooks/use-transactions";
+import type { Transaction } from "@/lib/types";
+import { categorySplitsValid } from "@/lib/category-splits";
 import { useFamily, useFamilyMembers } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { isExpenseCategory, isOnBudget } from "@/lib/budget";
+import { isExpenseCategory, isOnBudget, isTransferTx } from "@/lib/budget";
 import { customSplits, equalSplits, splitsMatchTotal } from "@/lib/splits";
 import { buildPayeeCategoryRules, suggestCategoryForPayee } from "@/lib/categorize";
 import { cn } from "@/lib/utils";
@@ -39,15 +41,17 @@ interface TransactionFormProps {
     accountId?: string;
     receiptUrl?: string;
   };
+  editTransaction?: Transaction | null;
 }
 
 type EntryType = "expense" | "income" | "transfer";
 
-export function TransactionForm({ open, onOpenChange, prefill }: TransactionFormProps) {
+export function TransactionForm({ open, onOpenChange, prefill, editTransaction }: TransactionFormProps) {
   const { data: familyData } = useFamily();
   const { data: members } = useFamilyMembers();
   const createTransaction = useCreateTransaction();
   const createTransfer = useCreateTransfer();
+  const updateTransaction = useUpdateTransaction();
   const queryClient = useQueryClient();
   const supabase = createClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -70,23 +74,57 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
   const [receiptUrl, setReceiptUrl] = useState(prefill?.receiptUrl ?? "");
   const [receiptPreview, setReceiptPreview] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [envelopeSplit, setEnvelopeSplit] = useState(false);
+  const [categoryLines, setCategoryLines] = useState<Array<{ category_id: string; amount: string }>>([
+    { category_id: "", amount: "" },
+    { category_id: "", amount: "" },
+  ]);
 
   useEffect(() => {
     if (!open) return;
-    setType(prefill?.amount != null && prefill.amount > 0 ? "income" : "expense");
-    setPayee(prefill?.payee ?? "");
-    setAmount(prefill?.amount != null ? String(Math.abs(prefill.amount)) : "");
-    setDate(prefill?.date ?? new Date().toISOString().slice(0, 10));
-    setCategoryId(prefill?.categoryId ?? "");
-    setAccountId(prefill?.accountId ?? "");
-    setReceiptUrl(prefill?.receiptUrl ?? "");
-    setCleared(false);
-    setMemo("");
+    const source = editTransaction
+      ? {
+          amount: editTransaction.amount,
+          payee: editTransaction.payee,
+          date: editTransaction.date.slice(0, 10),
+          categoryId: editTransaction.category_id ?? "",
+          accountId: editTransaction.account_id,
+          receiptUrl: editTransaction.receipt_url ?? "",
+        }
+      : prefill;
+    const isIncome = source?.amount != null && source.amount > 0;
+    setType(editTransaction && isTransferTx(editTransaction) ? "transfer" : isIncome ? "income" : "expense");
+    setPayee(source?.payee ?? "");
+    setAmount(source?.amount != null ? String(Math.abs(source.amount)) : "");
+    setDate(source?.date ?? new Date().toISOString().slice(0, 10));
+    setCategoryId(source?.categoryId ?? "");
+    setAccountId(source?.accountId ?? "");
+    setReceiptUrl(source?.receiptUrl ?? "");
+    setCleared(editTransaction?.cleared ?? false);
+    setMemo(editTransaction?.memo ?? "");
     setToAccountId("");
     setSplitMode("none");
     setSplitUnit("pln");
     setCustomAmounts({});
-  }, [open, prefill]);
+    setEnvelopeSplit(false);
+    setCategoryLines([
+      { category_id: source?.categoryId ?? "", amount: source?.amount != null ? String(Math.abs(source.amount)) : "" },
+      { category_id: "", amount: "" },
+    ]);
+    if (editTransaction?.id) {
+      const client = createClient();
+      void client
+        .from("transaction_category_splits")
+        .select("category_id, amount")
+        .eq("transaction_id", editTransaction.id)
+        .then(({ data }) => {
+          if (data?.length) {
+            setEnvelopeSplit(true);
+            setCategoryLines(data.map((row) => ({ category_id: row.category_id, amount: String(row.amount) })));
+          }
+        });
+    }
+  }, [open, prefill, editTransaction]);
 
   const createDefaultAccount = useMutation({
     mutationFn: async () => {
@@ -111,7 +149,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
 
   const { data: accounts } = useQuery({
     queryKey: ["accounts", familyData?.family.id],
-    enabled: !!familyData?.family.id,
+    enabled: open && !!familyData?.family.id,
     queryFn: async () => {
       const { data } = await supabase
         .from("accounts")
@@ -123,7 +161,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
 
   const { data: payees } = useQuery({
     queryKey: ["payees", familyData?.family.id],
-    enabled: !!familyData?.family.id,
+    enabled: open && !!familyData?.family.id,
     queryFn: async () => {
       const { data } = await supabase
         .from("transactions")
@@ -138,7 +176,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
 
   const { data: categories } = useQuery({
     queryKey: ["categories", familyData?.family.id],
-    enabled: !!familyData?.family.id,
+    enabled: open && !!familyData?.family.id,
     queryFn: async () => {
       const { data } = await supabase
         .from("budget_categories")
@@ -226,7 +264,15 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
       toast.error("Podaj kwotę");
       return;
     }
-    if (type === "expense" && !categoryId) {
+    const parsedLines = categoryLines
+      .map((line) => ({ category_id: line.category_id, amount: Math.abs(parseFloat(line.amount.replace(",", ".")) || 0) }))
+      .filter((line) => line.category_id && line.amount > 0);
+    if (type === "expense" && envelopeSplit) {
+      if (parsedLines.length < 2 || !categorySplitsValid(absAmount, parsedLines)) {
+        toast.error("Podziel kwotę na koperty — suma musi się zgadzać");
+        return;
+      }
+    } else if (type === "expense" && !categoryId) {
       toast.error("Wybierz kopertę");
       return;
     }
@@ -271,19 +317,25 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
           return;
         }
       }
-      await createTransaction.mutateAsync({
+      const payload = {
         account_id: accountId,
-        category_id: type === "income" ? null : categoryId || null,
+        category_id: type === "income" ? null : envelopeSplit ? parsedLines[0]?.category_id : categoryId || null,
         amount: numAmount,
         payee,
         memo,
         date,
-        source: "manual",
+        source: "manual" as const,
         cleared,
         receipt_url: receiptUrl || null,
         paid_by: paidBy || currentUserId || null,
         splits,
-      });
+        category_splits: type === "expense" && envelopeSplit ? parsedLines : undefined,
+      };
+      if (editTransaction) {
+        await updateTransaction.mutateAsync({ id: editTransaction.id, ...payload });
+      } else {
+        await createTransaction.mutateAsync(payload);
+      }
     }
 
     onOpenChange(false);
@@ -293,7 +345,8 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
     type === "transfer" ? (accounts ?? []) : (accounts ?? []).filter(isOnBudget);
   const cashAccounts = listedAccounts.filter((a) => a.type === "cash");
   const bankAccounts = listedAccounts.filter((a) => a.type !== "cash");
-  const pending = createTransaction.isPending || createTransfer.isPending || uploading;
+  const pending =
+    createTransaction.isPending || createTransfer.isPending || updateTransaction.isPending || uploading;
   const selectedOnBudget = fromAccount ? isOnBudget(fromAccount) : true;
 
   const accountOptions = (
@@ -326,7 +379,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Dodaj transakcję</DialogTitle>
+          <DialogTitle>{editTransaction ? "Edytuj transakcję" : "Dodaj transakcję"}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
@@ -443,7 +496,7 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
             </p>
           )}
 
-          {(type === "expense" || trackingTransfer) && (
+          {(type === "expense" || trackingTransfer) && !envelopeSplit && (
             <div>
               <Label>{trackingTransfer ? "Kategoria (wyjście z budżetu)" : "Kategoria"}</Label>
               <Select value={categoryId} onValueChange={setCategoryId}>
@@ -458,6 +511,65 @@ export function TransactionForm({ open, onOpenChange, prefill }: TransactionForm
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+          )}
+
+          {type === "expense" && (
+            <div className="space-y-2 rounded-md border p-3">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={envelopeSplit}
+                  onChange={(e) => setEnvelopeSplit(e.target.checked)}
+                />
+                Podziel na kilka kopert (np. Jedzenie + Rozrywka)
+              </label>
+              {envelopeSplit &&
+                categoryLines.map((line, index) => (
+                  <div key={index} className="grid grid-cols-2 gap-2">
+                    <Select
+                      value={line.category_id}
+                      onValueChange={(value) => {
+                        const next = [...categoryLines];
+                        next[index] = { ...next[index], category_id: value };
+                        setCategoryLines(next);
+                      }}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Koperta" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {expenseCategories.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.icon} {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={line.amount}
+                      placeholder="Kwota"
+                      onChange={(e) => {
+                        const next = [...categoryLines];
+                        next[index] = { ...next[index], amount: e.target.value };
+                        setCategoryLines(next);
+                      }}
+                    />
+                  </div>
+                ))}
+              {envelopeSplit && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCategoryLines([...categoryLines, { category_id: "", amount: "" }])}
+                >
+                  Dodaj kopertę
+                </Button>
+              )}
             </div>
           )}
 

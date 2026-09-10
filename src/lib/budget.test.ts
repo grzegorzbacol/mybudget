@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, uncategorizedExpenses } from "./budget";
+import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, isIncomeToReadyToAssign, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, uncategorizedExpenses } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -83,6 +83,67 @@ describe("YNAB envelope math", () => {
     expect(data.incomeThisMonth).toBe(3000);
     expect(data.readyToAssign).toBe(3000);
     expect(data.groups[0].categories[0].available).toBe(0);
+  });
+
+  it("counts categorized inflows as Przychody, not envelope Aktywność", () => {
+    expect(
+      isIncomeToReadyToAssign(tx({ amount: 3253, date: "2026-09-10", category_id: "salary" }), [
+        account("checking", 3253),
+      ])
+    ).toBe(true);
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("salary", "Wynagrodzenie"), category("hobby", "Hobby")],
+      [alloc("salary", 2026, 9, 0), alloc("hobby", 2026, 9, 0)],
+      [account("checking", 3253)],
+      [tx({ amount: 3253, date: "2026-09-10", category_id: "salary" })]
+    );
+    expect(data.incomeThisMonth).toBe(3253);
+    expect(data.readyToAssign).toBe(3253);
+    const salary = data.groups.flatMap((g) => g.categories).find((row) => row.category.id === "salary");
+    expect(salary?.activity).toBe(0);
+  });
+
+  it("puts a categorized expense on envelope Aktywność", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("hobby", "Hobby")],
+      [alloc("hobby", 2026, 9, 100)],
+      [account("checking", 3213)],
+      [
+        tx({ amount: 3253, date: "2026-09-01" }),
+        tx({ amount: -40, date: "2026-09-10", category_id: "hobby" }),
+      ]
+    );
+    expect(data.groups[0].categories[0].activity).toBe(-40);
+    expect(data.groups[0].categories[0].available).toBe(60);
+    expect(data.incomeThisMonth).toBe(3253);
+  });
+
+  it("splits one shop trip across two envelopes", () => {
+    const lines = expandCategorySplits(
+      [tx({ id: "biedronka", amount: -100, date: "2026-09-10", category_id: "food" })],
+      [
+        { transaction_id: "biedronka", category_id: "food", amount: 70 },
+        { transaction_id: "biedronka", category_id: "fun", amount: 30 },
+      ]
+    );
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("food", "Jedzenie"), category("fun", "Hobby", "Życie", 1)],
+      [alloc("food", 2026, 9, 200), alloc("fun", 2026, 9, 50)],
+      [account("checking", 2900)],
+      [tx({ amount: 3000, date: "2026-09-01" }), ...lines]
+    );
+    const food = data.groups[0].categories.find((row) => row.category.id === "food")!;
+    const fun = data.groups[0].categories.find((row) => row.category.id === "fun")!;
+    expect(food.activity).toBe(-70);
+    expect(fun.activity).toBe(-30);
+    expect(food.available).toBe(130);
+    expect(fun.available).toBe(20);
   });
 
   it("assigning money reduces Ready to Assign and fills the envelope", () => {

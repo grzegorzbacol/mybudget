@@ -71,7 +71,7 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
 
   const { data: categories } = useQuery({
     queryKey: ["categories", familyData?.family.id],
-    enabled: !!familyData?.family.id,
+    enabled: open && !!familyData?.family.id,
     queryFn: async () => {
       const { data } = await supabase
         .from("budget_categories")
@@ -84,7 +84,7 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
 
   const { data: accounts } = useQuery({
     queryKey: ["accounts", familyData?.family.id],
-    enabled: !!familyData?.family.id,
+    enabled: open && !!familyData?.family.id,
     queryFn: async () => {
       const { data } = await supabase
         .from("accounts")

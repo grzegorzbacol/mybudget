@@ -22,6 +22,14 @@ export const transactionSchema = z.object({
       })
     )
     .optional(),
+  category_splits: z
+    .array(
+      z.object({
+        category_id: z.string().uuid(),
+        amount: z.number().positive(),
+      })
+    )
+    .optional(),
 });
 
 export const transactionPatchSchema = transactionSchema.partial().extend({
