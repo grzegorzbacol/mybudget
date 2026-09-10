@@ -197,14 +197,20 @@ function dailyActualsSql(pred: FamilyPred, kind: SnapshotKind): string {
       ? `AND t.transfer_account_id IS NULL
   AND t.transfer_id IS NULL`
       : "";
+  // Same on-budget rule as the snapshot ledger so chart Wpływy match Przychody / Ten miesiąc.
+  const onBudgetJoin =
+    kind === "full" ? "LEFT JOIN accounts a ON a.id::text = t.account_id::text" : "";
+  const onBudgetFilter = kind === "full" ? "AND a.on_budget IS DISTINCT FROM FALSE" : "";
   return `
 SELECT t.date::text AS date,
-       SUM(CASE WHEN t.amount > 0 AND t.category_id IS NULL THEN t.amount ELSE 0 END)::float8 AS actual_in,
+       SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END)::float8 AS actual_in,
        SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END)::float8 AS actual_out
 FROM transactions t
+${onBudgetJoin}
 WHERE ${familyIdMatch(pred, "t")}
   AND ${SQL_DATE_RANGE_PREDICATE}
   ${transferFilter}
+  ${onBudgetFilter}
 GROUP BY 1
 `;
 }

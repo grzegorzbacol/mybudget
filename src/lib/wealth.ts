@@ -1,5 +1,6 @@
-import { isOnBudget, isTransferTx } from "./budget";
+import { isOnBudget, isTransferTx, signedAccountBalance } from "./budget";
 import { generateScheduleOccurrences } from "./cashflow";
+import { todayIso } from "./format";
 import { addDays, daysInMonth, money } from "./money";
 import type { Account, LedgerTransaction, ScheduledTransaction, WealthTotals } from "./types";
 
@@ -25,11 +26,7 @@ export function isLiabilityType(type: string): boolean {
 
 /** Liability balances are stored negative; a positive entry is treated as debt. */
 export function netWorthContribution(account: Account): number {
-  const raw = Number(account.balance);
-  if (isLiabilityType(account.type)) {
-    return raw <= 0 ? raw : -Math.abs(raw);
-  }
-  return raw;
+  return signedAccountBalance(account);
 }
 
 export function displayBalance(account: Account): number {
@@ -68,7 +65,7 @@ export function netWorthHistory(
   transactions: Array<Pick<LedgerTransaction, "account_id" | "amount" | "date">>,
   asOf?: string
 ): Array<{ date: string; netWorth: number; assets: number; liabilities: number }> {
-  const today = asOf ?? new Date().toISOString().slice(0, 10);
+  const today = asOf ?? todayIso();
   const txSum = new Map<string, number>();
   for (const tx of transactions) {
     txSum.set(tx.account_id, money((txSum.get(tx.account_id) ?? 0) + Number(tx.amount)));
@@ -176,7 +173,8 @@ export function monthCashActual(
     const account = accounts.find((a) => a.id === tx.account_id);
     if (account && !isOnBudget(account)) continue;
     const amount = Number(tx.amount);
-    if (amount > 0 && !tx.category_id) income = money(income + amount);
+    // Same rule as budget Przychody / SQL snapshot income: any on-budget inflow.
+    if (amount > 0) income = money(income + amount);
     if (amount < 0) spending = money(spending + Math.abs(amount));
   }
   return { income, spending, net: money(income - spending) };

@@ -36,6 +36,7 @@ export function degradedCashflowOverview(warning: string): CashflowOverview {
     },
     scheduled: [],
     warning,
+    degraded: true,
     wealth: {
       ...zeroWealth,
       onBudget: { ...zeroWealth },

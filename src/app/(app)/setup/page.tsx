@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, todayIso } from "@/lib/format";
 
 export default function SetupPage() {
   const router = useRouter();
@@ -71,7 +71,7 @@ export default function SetupPage() {
         amount,
         payee: "Saldo początkowe",
         memo: "Opening balance",
-        date: new Date().toISOString().slice(0, 10),
+        date: todayIso(),
         source: "manual",
         cleared: true,
       });

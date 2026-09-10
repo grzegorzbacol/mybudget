@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/select";
 import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, todayIso } from "@/lib/format";
 import { isOnBudget } from "@/lib/budget";
 import { ACCOUNT_TYPE_META, computeNetWorth, displayBalance, isLiabilityType } from "@/lib/wealth";
 import { isQaLeftoverAccountName } from "@/lib/account-delete-policy";
@@ -101,7 +101,7 @@ export default function AccountsPage() {
           amount: signed,
           payee: "Saldo początkowe",
           memo: "Opening balance",
-          date: new Date().toISOString().slice(0, 10),
+          date: todayIso(),
           source: "manual",
           cleared: true,
         });
@@ -132,7 +132,7 @@ export default function AccountsPage() {
         amount: diff,
         payee: "Korekta salda",
         memo: "Reconciliation",
-        date: new Date().toISOString().slice(0, 10),
+        date: todayIso(),
         source: "manual",
         cleared: true,
       });

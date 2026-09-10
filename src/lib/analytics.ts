@@ -106,12 +106,14 @@ export function weeklyRitual(input: {
     {
       id: "rta",
       label: "Przydziel Do rozdzielenia",
-      done: input.readyToAssign <= 0.005,
+      done: Math.abs(input.readyToAssign) <= 0.005,
       href: "/budget",
       detail:
         input.readyToAssign > 0.005
           ? `Zostało ${input.readyToAssign.toFixed(2)} zł bez zadania`
-          : "Każda złotówka ma zadanie",
+          : input.readyToAssign < -0.005
+            ? `Do rozdzielenia na minusie (${input.readyToAssign.toFixed(2)} zł) — cofnij przydział`
+            : "Każda złotówka ma zadanie",
     },
     {
       id: "uncat",

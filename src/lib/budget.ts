@@ -20,6 +20,30 @@ export function isOnBudget(account: Account): boolean {
   return account.on_budget !== false;
 }
 
+/** Matches wealth ACCOUNT_TYPE_META liability kinds without importing wealth (cycle). */
+const LIABILITY_ACCOUNT_TYPES = new Set(["credit", "loan", "mortgage", "other_liability"]);
+
+/**
+ * Liability balances are stored negative. A positive credit/loan entry is still debt
+ * so "Saldo w budżecie" matches Majątek / Wartość netto.
+ */
+export function signedAccountBalance(account: Pick<Account, "type" | "balance">): number {
+  const raw = Number(account.balance);
+  if (LIABILITY_ACCOUNT_TYPES.has(account.type) && raw > 0) {
+    return -Math.abs(raw);
+  }
+  return raw;
+}
+
+/** On-budget cash movement: skip transfers and tracking accounts. */
+export function isOnBudgetCashTx(
+  tx: Pick<LedgerTransaction, "account_id" | "transfer_account_id" | "transfer_id">,
+  accounts: Account[] = []
+): boolean {
+  if (isTransferTx(tx)) return false;
+  return isOnBudgetAccount(tx, accounts);
+}
+
 /** Lowercase trimmed id so SQL uuid::text and json uuid keys always match. */
 export function normalizeBudgetId(value: unknown): string {
   if (typeof value === "string") return value.trim().toLowerCase();
@@ -183,7 +207,9 @@ export function incomeInMonth(
 }
 
 export function onBudgetBalance(accounts: Account[]): number {
-  return money(accounts.filter(isOnBudget).reduce((sum, account) => sum + Number(account.balance), 0));
+  return money(
+    accounts.filter(isOnBudget).reduce((sum, account) => sum + signedAccountBalance(account), 0)
+  );
 }
 
 function allocationLookup(allocations: BudgetAllocation[]) {

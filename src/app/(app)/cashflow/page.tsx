@@ -330,7 +330,7 @@ export default function CashflowPage() {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground">Nadchodzące przychody</CardTitle>
+                <CardTitle className="text-sm text-muted-foreground">Nadchodzące przychody (plan)</CardTitle>
               </CardHeader>
               <CardContent className="text-xl font-bold text-green-600">
                 {formatCurrency(cashflow.incomeUpcoming)}
@@ -338,7 +338,7 @@ export default function CashflowPage() {
             </Card>
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-muted-foreground">Nadchodzące wydatki</CardTitle>
+                <CardTitle className="text-sm text-muted-foreground">Nadchodzące wydatki (plan)</CardTitle>
               </CardHeader>
               <CardContent className="text-xl font-bold">{formatCurrency(cashflow.expenseUpcoming)}</CardContent>
             </Card>

@@ -193,7 +193,8 @@ export default function ReviewPage() {
           <CardContent>
             <p className="text-2xl font-bold">{flow.savingsRate.toFixed(0)}%</p>
             <p className="text-xs text-muted-foreground">
-              {formatCurrency(flow.saved)} z {formatCurrency(flow.income)} przychodu
+              {formatCurrency(flow.saved)} z {formatCurrency(flow.income)} przychodu w miesiącu (koperty, nie cały
+              majątek)
             </p>
           </CardContent>
         </Card>
@@ -215,7 +216,7 @@ export default function ReviewPage() {
           </CardHeader>
           <CardContent className="space-y-1 text-sm">
             <p>Oszczędności {formatCurrency(flow.saved)}</p>
-            <p>Wydatki {formatCurrency(flow.spent)}</p>
+            <p>Wydatki w kopertach {formatCurrency(flow.spent)}</p>
             <p className="text-muted-foreground">Reszta {formatCurrency(flow.leftover)}</p>
           </CardContent>
         </Card>

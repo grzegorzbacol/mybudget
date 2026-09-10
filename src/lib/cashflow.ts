@@ -104,6 +104,7 @@ export function computeCashflow(input: {
   const categoryName = new Map(input.categories.map((c) => [c.id, `${c.icon} ${c.name}`]));
   const accountName = new Map(input.accounts.map((a) => [a.id, a.name]));
   const remaining = new Map(input.rows.map((row) => [row.category.id, row.available]));
+  const onBudgetIds = new Set(input.accounts.filter(isOnBudget).map((account) => account.id));
 
   const occurrences = generateScheduleOccurrences(input.scheduled, input.from, input.to);
   const items: CashflowItem[] = [];
@@ -117,10 +118,11 @@ export function computeCashflow(input: {
   for (const occ of occurrences) {
     const isTransfer = Boolean(occ.transferAccountId);
     const kind: CashflowItem["kind"] = isTransfer ? "transfer" : occ.amount >= 0 ? "income" : "expense";
+    const onBudgetOcc = !input.accounts.length || onBudgetIds.has(occ.accountId);
     let funded = true;
     let shortfall = 0;
 
-    if (kind === "expense" && occ.categoryId) {
+    if (kind === "expense" && occ.categoryId && onBudgetOcc) {
       const left = remaining.get(occ.categoryId) ?? 0;
       const need = Math.abs(occ.amount);
       if (left + 0.0001 >= need) {
@@ -135,8 +137,8 @@ export function computeCashflow(input: {
       upcomingByCat.set(occ.categoryId, (upcomingByCat.get(occ.categoryId) ?? 0) + need);
     }
 
-    if (kind === "income") incomeUpcoming = money(incomeUpcoming + occ.amount);
-    if (kind === "expense") expenseUpcoming = money(expenseUpcoming + Math.abs(occ.amount));
+    if (kind === "income" && onBudgetOcc) incomeUpcoming = money(incomeUpcoming + occ.amount);
+    if (kind === "expense" && onBudgetOcc) expenseUpcoming = money(expenseUpcoming + Math.abs(occ.amount));
     if (kind === "transfer") transferUpcoming = money(transferUpcoming + Math.abs(occ.amount));
     if (funded) fundedCount += 1;
 
@@ -254,7 +256,8 @@ export function buildCashflowTimeline(input: {
       if (!onBudgetIds.has(tx.account_id)) continue;
       const row = ensure(tx.date);
       const amount = Number(tx.amount);
-      if (amount > 0 && !tx.category_id) row.actualIn = money(row.actualIn + amount);
+      // Match budget Przychody / SQL snapshot: categorized inflows still count as cash in.
+      if (amount > 0) row.actualIn = money(row.actualIn + amount);
       if (amount < 0) row.actualOut = money(row.actualOut + Math.abs(amount));
     }
   }

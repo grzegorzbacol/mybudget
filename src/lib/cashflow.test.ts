@@ -134,6 +134,65 @@ describe("scheduled cashflow", () => {
     expect(weekOfPay?.plannedIn).toBe(8000);
   });
 
+  it("counts categorized on-budget inflows as actual cash-in (same as Przychody)", () => {
+    const checking: Account = {
+      id: "checking",
+      family_id: "fam",
+      name: "Konto",
+      type: "checking",
+      balance: 1000,
+      currency: "PLN",
+      owner_user_id: null,
+      created_at: "",
+      on_budget: true,
+    };
+    const timeline = buildCashflowTimeline({
+      from: "2026-09-01",
+      to: "2026-09-14",
+      accounts: [checking],
+      scheduled: [],
+      transactions: [{ account_id: "checking", category_id: "salary", amount: 3253, date: "2026-09-10" }],
+      bucket: "week",
+    });
+    expect(timeline.some((row) => row.actualIn === 3253)).toBe(true);
+  });
+
+  it("does not count off-budget scheduled income in upcoming totals", () => {
+    const checking: Account = {
+      id: "checking",
+      family_id: "fam",
+      name: "Konto",
+      type: "checking",
+      balance: 500,
+      currency: "PLN",
+      owner_user_id: null,
+      created_at: "",
+      on_budget: true,
+    };
+    const broker: Account = {
+      ...checking,
+      id: "broker",
+      type: "investment",
+      on_budget: false,
+    };
+    const dividend: ScheduledTransaction = {
+      ...payday,
+      id: "s3",
+      account_id: "broker",
+      amount: 50000,
+      payee: "Dywidenda",
+    };
+    const cashflow = computeCashflow({
+      from: "2026-09-01",
+      to: "2026-09-30",
+      scheduled: [payday, dividend],
+      categories: [],
+      accounts: [checking, broker],
+      rows: [],
+    });
+    expect(cashflow.incomeUpcoming).toBe(8000);
+  });
+
   it("builds weekly buckets from daily SQL actuals without raw ledger rows", () => {
     const checking: Account = {
       id: "checking",

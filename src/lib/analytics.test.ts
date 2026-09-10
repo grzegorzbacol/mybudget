@@ -71,4 +71,17 @@ describe("savings analytics", () => {
     expect(items.find((i) => i.id === "uncat")?.done).toBe(true);
     expect(items.find((i) => i.id === "save")?.done).toBe(false);
   });
+
+  it("does not mark Przydziel Do rozdzielenia done when RTA is negative", () => {
+    const items = weeklyRitual({
+      readyToAssign: -80,
+      uncategorizedCount: 0,
+      unfundedTotal: 0,
+      behindGoals: 0,
+      tightOn: null,
+    });
+    const rta = items.find((i) => i.id === "rta");
+    expect(rta?.done).toBe(false);
+    expect(rta?.detail).toMatch(/minusie/);
+  });
 });
