@@ -170,22 +170,11 @@ WHERE ${familyIdMatch(pred, "t")}
 }
 
 function dailyActualsSql(pred: FamilyPred, kind: SnapshotKind): string {
-  if (kind === "full") {
-    return `
-SELECT t.date::text AS date,
-       SUM(CASE WHEN t.amount > 0 AND t.category_id IS NULL THEN t.amount ELSE 0 END)::float8 AS actual_in,
-       SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END)::float8 AS actual_out
-FROM transactions t
-JOIN accounts a ON a.id = t.account_id
-WHERE ${familyIdMatch(pred, "t")}
-  AND t.date >= $2::date
-  AND t.date < $3::date
-  AND t.transfer_account_id IS NULL
-  AND t.transfer_id IS NULL
-  AND COALESCE(a.on_budget, true)
-GROUP BY t.date
-`;
-  }
+  const transferFilter =
+    kind === "full"
+      ? `AND t.transfer_account_id IS NULL
+  AND t.transfer_id IS NULL`
+      : "";
   return `
 SELECT t.date::text AS date,
        SUM(CASE WHEN t.amount > 0 AND t.category_id IS NULL THEN t.amount ELSE 0 END)::float8 AS actual_in,
@@ -194,6 +183,7 @@ FROM transactions t
 WHERE ${familyIdMatch(pred, "t")}
   AND t.date >= $2::date
   AND t.date < $3::date
+  ${transferFilter}
 GROUP BY t.date
 `;
 }
@@ -318,9 +308,15 @@ export function monthCount(
 
 type PgPool = {
   query: (sql: string, params?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
+  on?: (event: string, listener: (client: { query: (sql: string) => unknown }) => void) => void;
 };
 
 let poolPromise: Promise<PgPool | null> | null = null;
+
+/** Bound hung queries so /api/cashflow cannot sit until the 12s browser abort. */
+export const SQL_STATEMENT_TIMEOUT_MS = 4_000;
+export const SQL_CONNECTION_TIMEOUT_MS = 4_000;
+export const CASHFLOW_TIMELINE_BUDGET_MS = 3_000;
 
 async function getPool(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
@@ -329,9 +325,37 @@ async function getPool(
   const databaseUrl = resolveDatabaseUrl(env);
   if (!databaseUrl) return null;
   poolPromise = import("pg")
-    .then(({ Pool }) => new Pool({ connectionString: databaseUrl, max: 4, idleTimeoutMillis: 15_000 }) as unknown as PgPool)
+    .then(({ Pool }) => {
+      const pool = new Pool({
+        connectionString: databaseUrl,
+        max: 4,
+        idleTimeoutMillis: 15_000,
+        connectionTimeoutMillis: SQL_CONNECTION_TIMEOUT_MS,
+      }) as unknown as PgPool;
+      pool.on?.("connect", (client) => {
+        void client.query(`SET statement_timeout = ${SQL_STATEMENT_TIMEOUT_MS}`);
+      });
+      return pool;
+    })
     .catch(() => null);
   return poolPromise;
+}
+
+export function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return new Promise<T>((resolve, reject) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+    promise.then(
+      (value) => {
+        if (timer) clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        if (timer) clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
 }
 
 export function isUndefinedObject(error: unknown): boolean {
@@ -412,29 +436,17 @@ export async function queryFamilyBudgetWithClient(
     };
   };
 
-  const plans = snapshotAttempts();
-  const first = plans[0];
-  try {
-    const [payload, scheduledRes, splitRes] = await Promise.all([
-      snapshot(first),
-      optional(scheduledSql(first.pred)),
-      optional(splitLinesSql(first.pred, first.kind)),
-    ]);
-    return finish(payload, first, scheduledRes, splitRes.rows);
-  } catch (error) {
-    if (!isRetryableSqlError(error)) {
-      console.error("[budget-sql]", error instanceof Error ? error.message : error);
-      return null;
-    }
-  }
+  const loadExtras = async (plan: SnapshotPlan) => {
+    const scheduledRes = await optional(scheduledSql(plan.pred));
+    const splitRes = await optional(splitLinesSql(plan.pred, plan.kind));
+    return { scheduledRes, splitRes };
+  };
 
-  for (const plan of plans.slice(1)) {
+  const plans = snapshotAttempts();
+  for (const plan of plans) {
     try {
       const payload = await snapshot(plan);
-      const [scheduledRes, splitRes] = await Promise.all([
-        optional(scheduledSql(plan.pred)),
-        optional(splitLinesSql(plan.pred, plan.kind)),
-      ]);
+      const { scheduledRes, splitRes } = await loadExtras(plan);
       return finish(payload, plan, scheduledRes, splitRes.rows);
     } catch (error) {
       if (!isRetryableSqlError(error)) {
@@ -461,7 +473,13 @@ export async function queryCashflowDailyActualsWithClient(
   to: string,
   query: SqlQueryFn
 ): Promise<DailyCashflowActual[] | null> {
-  const plans = snapshotAttempts();
+  const cached = snapshotPlan;
+  const plans: SnapshotPlan[] = cached
+    ? [cached]
+    : [
+        { pred: "uuid", kind: "full" },
+        { pred: "uuid", kind: "safe" },
+      ];
   for (const plan of plans) {
     try {
       const result = await query(dailyActualsSql(plan.pred, plan.kind), [familyId, from, to]);
@@ -481,7 +499,10 @@ export async function queryCashflowDailyActualsSql(
 ): Promise<DailyCashflowActual[] | null> {
   const pool = await getPool(env);
   if (!pool) return null;
-  return queryCashflowDailyActualsWithClient(familyId, from, to, (sql, params) => pool.query(sql, params));
+  const pending = queryCashflowDailyActualsWithClient(familyId, from, to, (sql, params) =>
+    pool.query(sql, params)
+  ).catch(() => null);
+  return withTimeout(pending, CASHFLOW_TIMELINE_BUDGET_MS, null);
 }
 
 export async function queryLedgerRangeSql(
@@ -492,7 +513,13 @@ export async function queryLedgerRangeSql(
 ): Promise<LedgerTransaction[] | null> {
   const pool = await getPool(env);
   if (!pool) return null;
-  const plans = snapshotAttempts();
+  const cached = snapshotPlan;
+  const plans: SnapshotPlan[] = cached
+    ? [cached]
+    : [
+        { pred: "uuid", kind: "full" },
+        { pred: "uuid", kind: "safe" },
+      ];
   for (const plan of plans) {
     try {
       const result = await pool.query(ledgerRangeSql(plan.pred, plan.kind), [familyId, from, to]);
