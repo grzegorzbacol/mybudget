@@ -264,6 +264,73 @@ export type ActivityAggregate = {
   activity: number;
 };
 
+/** Optional split lines used to correct SQL category-month aggregates. */
+export type SplitActivityLine = {
+  transaction_id: string;
+  account_id?: string | null;
+  parent_category_id?: string | null;
+  year: number;
+  month: number;
+  parent_amount: number;
+  split_category_id: string;
+  split_activity: number;
+};
+
+function addActivityDelta(
+  map: Map<string, Map<MonthKey, number>>,
+  categoryId: string | null | undefined,
+  year: number,
+  month: number,
+  delta: number
+) {
+  if (!categoryId || !delta) return;
+  if (!isPlausibleBudgetYearMonth(year, month)) return;
+  const key = monthKey(year, month);
+  let byMonth = map.get(categoryId);
+  if (!byMonth) {
+    byMonth = new Map();
+    map.set(categoryId, byMonth);
+  }
+  byMonth.set(key, money((byMonth.get(key) ?? 0) + delta));
+}
+
+/**
+ * SQL snapshot sums the parent expense. Replace that with per-envelope split
+ * lines so Aktywność matches expandCategorySplits / REST.
+ */
+export function applyCategorySplitAggregates(
+  activityMap: Map<string, Map<MonthKey, number>>,
+  lines: SplitActivityLine[] | null | undefined,
+  accounts: Account[] = []
+): Map<string, Map<MonthKey, number>> {
+  if (!lines?.length) return activityMap;
+  const skipTx = new Set<string>();
+  const undone = new Set<string>();
+  for (const line of lines) {
+    if (!line?.transaction_id || !line.split_category_id) continue;
+    if (skipTx.has(line.transaction_id)) continue;
+    if (line.account_id && accounts.length && !isOnBudgetAccount({ account_id: line.account_id }, accounts)) {
+      skipTx.add(line.transaction_id);
+      continue;
+    }
+    if (!undone.has(line.transaction_id)) {
+      undone.add(line.transaction_id);
+      const parentAmount = Number(line.parent_amount) || 0;
+      if (parentAmount < 0 && line.parent_category_id) {
+        addActivityDelta(activityMap, line.parent_category_id, Number(line.year), Number(line.month), -parentAmount);
+      }
+    }
+    addActivityDelta(
+      activityMap,
+      line.split_category_id,
+      Number(line.year),
+      Number(line.month),
+      Number(line.split_activity) || 0
+    );
+  }
+  return activityMap;
+}
+
 export function activityMapFromAggregates(
   rows: ActivityAggregate[] | null | undefined
 ): Map<string, Map<MonthKey, number>> {

@@ -26,7 +26,10 @@ export async function GET(
     const data = budgetMonthFromCore(core, year, month);
     const body = core.schemaLag ? { ...data, warning: core.schemaLag } : data;
     const res = NextResponse.json(body);
-    res.headers.set("Server-Timing", `total;dur=${Date.now() - started};desc="${core.source}"`);
+    res.headers.set(
+      "Server-Timing",
+      `total;dur=${Date.now() - started};desc="${core.source}${core.dialect ? "," + core.dialect : ""}${core.roundTrips != null ? ",rt=" + core.roundTrips : ""}"`
+    );
     return res;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Nie udało się obliczyć budżetu";

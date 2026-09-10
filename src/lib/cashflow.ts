@@ -107,6 +107,7 @@ export function computeCashflow(input: {
 
   const occurrences = generateScheduleOccurrences(input.scheduled, input.from, input.to);
   const items: CashflowItem[] = [];
+  const upcomingByCat = new Map<string, number>();
   let incomeUpcoming = 0;
   let expenseUpcoming = 0;
   let transferUpcoming = 0;
@@ -131,6 +132,7 @@ export function computeCashflow(input: {
         funded = false;
         unfundedTotal = money(unfundedTotal + shortfall);
       }
+      upcomingByCat.set(occ.categoryId, (upcomingByCat.get(occ.categoryId) ?? 0) + need);
     }
 
     if (kind === "income") incomeUpcoming = money(incomeUpcoming + occ.amount);
@@ -156,15 +158,13 @@ export function computeCashflow(input: {
 
   const byCategory = input.rows
     .map((row) => {
-      const upcoming = items
-        .filter((item) => item.categoryId === row.category.id && item.kind === "expense")
-        .reduce((sum, item) => sum + Math.abs(item.amount), 0);
+      const upcoming = money(upcomingByCat.get(row.category.id) ?? 0);
       const shortfall = money(Math.max(0, upcoming - Math.max(0, row.available)));
       return {
         categoryId: row.category.id,
         categoryName: `${row.category.icon} ${row.category.name}`,
         available: row.available,
-        upcoming: money(upcoming),
+        upcoming,
         funded: shortfall <= 0,
         shortfall,
       };
@@ -196,7 +196,8 @@ export function isoWeekStart(date: string): string {
 export function buildCashflowTimeline(input: {
   from: string;
   to: string;
-  transactions: LedgerTransaction[];
+  transactions?: LedgerTransaction[];
+  dailyActuals?: Array<{ date: string; actualIn: number; actualOut: number }>;
   accounts: Account[];
   scheduled: ScheduledTransaction[];
   bucket?: "week" | "month";
@@ -239,14 +240,23 @@ export function buildCashflowTimeline(input: {
   }
   ensure(input.to);
 
-  for (const tx of input.transactions) {
-    if (tx.date < input.from || tx.date > input.to) continue;
-    if (isTransferTx(tx)) continue;
-    if (!onBudgetIds.has(tx.account_id)) continue;
-    const row = ensure(tx.date);
-    const amount = Number(tx.amount);
-    if (amount > 0 && !tx.category_id) row.actualIn = money(row.actualIn + amount);
-    if (amount < 0) row.actualOut = money(row.actualOut + Math.abs(amount));
+  if (input.dailyActuals?.length) {
+    for (const day of input.dailyActuals) {
+      if (day.date < input.from || day.date > input.to) continue;
+      const row = ensure(day.date);
+      row.actualIn = money(row.actualIn + (Number(day.actualIn) || 0));
+      row.actualOut = money(row.actualOut + (Number(day.actualOut) || 0));
+    }
+  } else {
+    for (const tx of input.transactions ?? []) {
+      if (tx.date < input.from || tx.date > input.to) continue;
+      if (isTransferTx(tx)) continue;
+      if (!onBudgetIds.has(tx.account_id)) continue;
+      const row = ensure(tx.date);
+      const amount = Number(tx.amount);
+      if (amount > 0 && !tx.category_id) row.actualIn = money(row.actualIn + amount);
+      if (amount < 0) row.actualOut = money(row.actualOut + Math.abs(amount));
+    }
   }
 
   for (const occ of generateScheduleOccurrences(input.scheduled, input.from, input.to)) {

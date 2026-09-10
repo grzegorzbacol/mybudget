@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, uncategorizedExpenses } from "./budget";
+import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, uncategorizedExpenses } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -145,6 +145,34 @@ describe("YNAB envelope math", () => {
     expect(fun.activity).toBe(-30);
     expect(food.available).toBe(130);
     expect(fun.available).toBe(20);
+  });
+
+  it("corrects SQL parent-sum activity into split envelopes", () => {
+    const map = activityMapFromAggregates([{ category_id: "food", year: 2026, month: 9, activity: -100 }]);
+    applyCategorySplitAggregates(map, [
+      {
+        transaction_id: "biedronka",
+        account_id: "checking",
+        parent_category_id: "food",
+        year: 2026,
+        month: 9,
+        parent_amount: -100,
+        split_category_id: "food",
+        split_activity: -70,
+      },
+      {
+        transaction_id: "biedronka",
+        account_id: "checking",
+        parent_category_id: "food",
+        year: 2026,
+        month: 9,
+        parent_amount: -100,
+        split_category_id: "fun",
+        split_activity: -30,
+      },
+    ]);
+    expect(map.get("food")?.get("2026-9")).toBe(-70);
+    expect(map.get("fun")?.get("2026-9")).toBe(-30);
   });
 
   it("assigning money reduces Ready to Assign and fills the envelope", () => {

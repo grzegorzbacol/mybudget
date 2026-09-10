@@ -6,13 +6,14 @@ import { fetchJson } from "@/lib/http";
 import type { BudgetMonthData } from "@/lib/types";
 import type { AllocateInput, MoveMoneyInput } from "@/lib/validators";
 
-export function useBudget(year: number, month: number) {
+export function useBudget(year: number, month: number, enabled = true) {
   return useQuery<BudgetMonthData>({
     queryKey: ["budget", year, month],
     queryFn: () => fetchJson<BudgetMonthData>(`/api/budget/${year}/${month}`),
     retry: 1,
     retryDelay: 400,
     placeholderData: keepPreviousData,
+    enabled,
   });
 }
 

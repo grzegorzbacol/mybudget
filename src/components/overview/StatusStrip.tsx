@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCurrency } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useCashflowOverview } from "@/hooks/use-cashflow";
+import type { CashflowOverview } from "@/lib/types";
 
 function plusReason(input: {
   inTheBlack: boolean;
@@ -31,8 +32,15 @@ function plusReason(input: {
   return input.inTheBlack ? "Plan zasilony, miesiąc na plusie" : "Sprawdź przepływy";
 }
 
-export function StatusStrip() {
-  const { data } = useCashflowOverview(60, "week", true);
+export function StatusStrip({
+  overview,
+  fetchWhenMissing = true,
+}: {
+  overview?: CashflowOverview | null;
+  fetchWhenMissing?: boolean;
+}) {
+  const fetched = useCashflowOverview(60, "week", true, fetchWhenMissing && !overview);
+  const data = overview ?? fetched.data;
 
   if (!data?.supervision || !data.wealth) return null;
   const { supervision, wealth } = data;

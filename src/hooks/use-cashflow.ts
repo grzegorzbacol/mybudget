@@ -4,7 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchJson } from "@/lib/http";
 import type { CashflowOverview } from "@/lib/types";
 
-export function useCashflowOverview(days = 60, bucket: "week" | "month" = "week", lite = false) {
+export function useCashflowOverview(
+  days = 60,
+  bucket: "week" | "month" = "week",
+  lite = false,
+  enabled = true
+) {
   return useQuery<CashflowOverview>({
     queryKey: ["cashflow", days, bucket, lite ? "lite" : "full"],
     queryFn: () =>
@@ -13,5 +18,6 @@ export function useCashflowOverview(days = 60, bucket: "week" | "month" = "week"
       ),
     retry: 1,
     retryDelay: 400,
+    enabled,
   });
 }

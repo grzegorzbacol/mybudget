@@ -2,10 +2,9 @@ import { upcomingByCategory } from "@/lib/cashflow";
 import {
   activityByCategoryMonth,
   activityMapFromAggregates,
+  applyCategorySplitAggregates,
   assembleBudgetMonthData,
   expandCategorySplits,
-  incomeInMonth,
-  uncategorizedExpenses,
 } from "@/lib/budget";
 import { addDays, monthRange } from "@/lib/money";
 import {
@@ -34,6 +33,8 @@ export type FamilyBudgetCore = {
   uncategorized: FamilyBudgetSqlPayload["uncategorized"];
   schemaLag?: string;
   source: "sql" | "rest";
+  dialect?: string;
+  roundTrips?: number;
 };
 
 const CORE_TTL_MS = 8_000;
@@ -41,6 +42,7 @@ const coreCache = new Map<
   string,
   { at: number; value?: FamilyBudgetCore; inflight?: Promise<FamilyBudgetCore> }
 >();
+let cachedCategorySelect: string | null = null;
 
 export function invalidateFamilyBudgetCache(familyId?: string) {
   if (familyId) coreCache.delete(familyId);
@@ -49,6 +51,7 @@ export function invalidateFamilyBudgetCache(familyId?: string) {
 
 export function resetFamilyBudgetCache() {
   coreCache.clear();
+  cachedCategorySelect = null;
 }
 
 /** Dynamic PostgREST column lists are typed as ParserError/GenericStringError. */
@@ -67,14 +70,18 @@ export async function fetchFamilyCategories(
   supabase: Supabase,
   familyId: string
 ): Promise<{ data: BudgetCategory[]; error?: string }> {
+  const selects = cachedCategorySelect
+    ? [cachedCategorySelect, ...CATEGORY_SELECTS.filter((columns) => columns !== cachedCategorySelect)]
+    : CATEGORY_SELECTS;
   let lastError: string | undefined;
-  for (const columns of CATEGORY_SELECTS) {
+  for (const columns of selects) {
     const res = await supabase
       .from("budget_categories")
       .select(columns)
       .eq("family_id", familyId)
       .order("sort_order");
     if (!res.error) {
+      cachedCategorySelect = columns;
       return { data: asBudgetCategories(res.data) };
     }
     lastError = res.error.message;
@@ -122,11 +129,15 @@ function fetchRestRows(supabase: Supabase, familyId: string) {
         "id, family_id, account_id, transfer_account_id, category_id, amount, payee, next_date, frequency, end_date, enabled"
       )
       .eq("family_id", familyId),
+    supabase
+      .from("transaction_category_splits")
+      .select("transaction_id, category_id, amount")
+      .eq("family_id", familyId),
   ]);
 }
 
 async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<FamilyBudgetCore> {
-  const [categoriesRes, allocationsRes, accountsRes, transactionsRes, scheduledRes] =
+  const [categoriesRes, allocationsRes, accountsRes, transactionsRes, scheduledRes, splitRes] =
     await fetchRestRows(supabase, familyId);
 
   let schemaLag: string | undefined;
@@ -140,14 +151,8 @@ async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<F
     transactions = fallback.error ? [] : ((fallback.data ?? []) as LedgerTransaction[]);
     schemaLag = transactionsRes.error.message;
   }
-  if (transactions.length) {
-    const splitRes = await supabase
-      .from("transaction_category_splits")
-      .select("transaction_id, category_id, amount")
-      .eq("family_id", familyId);
-    if (!splitRes.error && splitRes.data?.length) {
-      transactions = expandCategorySplits(transactions, splitRes.data);
-    }
+  if (transactions.length && !splitRes.error && splitRes.data?.length) {
+    transactions = expandCategorySplits(transactions, splitRes.data);
   }
 
   const scheduledError = scheduledRes.error?.message;
@@ -195,17 +200,24 @@ async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<F
 }
 
 function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
+  const activityMap = applyCategorySplitAggregates(
+    activityMapFromAggregates(payload.activity),
+    payload.splitLines,
+    payload.accounts
+  );
   return {
     categories: payload.categories,
     allocations: payload.allocations,
     accounts: payload.accounts,
     scheduled: payload.scheduled,
-    activityMap: activityMapFromAggregates(payload.activity),
+    activityMap,
     income: payload.income,
     spending: payload.spending,
     uncategorized: payload.uncategorized,
     schemaLag: payload.scheduledMissing ? missingScheduledTableMessage() : undefined,
     source: "sql",
+    dialect: payload.dialect,
+    roundTrips: payload.roundTrips,
   };
 }
 
@@ -275,37 +287,44 @@ export function attachRestMonthTotals(
   core: FamilyBudgetCore,
   transactions: LedgerTransaction[]
 ): FamilyBudgetCore {
-  const income: FamilyBudgetCore["income"] = [];
-  const spending: FamilyBudgetCore["spending"] = [];
-  const uncategorized: FamilyBudgetCore["uncategorized"] = [];
-  const months = new Set<string>();
+  const incomeByMonth = new Map<string, number>();
+  const spendByMonth = new Map<string, number>();
+  const uncategorizedByMonth = new Map<string, number>();
+  const accountsById = new Map(core.accounts.map((account) => [account.id, account]));
+
   for (const tx of transactions) {
     if (typeof tx.date !== "string" || tx.date.length < 7) continue;
-    const [y, m] = tx.date.slice(0, 7).split("-");
-    months.add(`${Number(y)}-${Number(m)}`);
-  }
-  for (const key of Array.from(months)) {
-    const [y, m] = key.split("-").map(Number);
-    income.push({ year: y, month: m, amount: incomeInMonth(transactions, y, m, core.accounts) });
-    const start = `${y}-${String(m).padStart(2, "0")}-01`;
-    const endMonth = m === 12 ? 1 : m + 1;
-    const endYear = m === 12 ? y + 1 : y;
-    const end = `${endYear}-${String(endMonth).padStart(2, "0")}-01`;
-    let spend = 0;
-    for (const tx of transactions) {
-      if (tx.date < start || tx.date >= end) continue;
-      if (tx.transfer_account_id || tx.transfer_id) continue;
-      const account = core.accounts.find((a) => a.id === tx.account_id);
-      if (account && account.on_budget === false) continue;
-      if (Number(tx.amount) < 0) spend += Math.abs(Number(tx.amount));
+    const [yRaw, mRaw] = tx.date.slice(0, 7).split("-");
+    const year = Number(yRaw);
+    const month = Number(mRaw);
+    if (!year || !month) continue;
+    const key = `${year}-${month}`;
+    const account = accountsById.get(tx.account_id);
+    if (account && account.on_budget === false) continue;
+    if (tx.transfer_account_id || tx.transfer_id) continue;
+    const amount = Number(tx.amount);
+    if (amount > 0) {
+      incomeByMonth.set(key, (incomeByMonth.get(key) ?? 0) + amount);
+    } else if (amount < 0) {
+      spendByMonth.set(key, (spendByMonth.get(key) ?? 0) + Math.abs(amount));
+      if (!tx.category_id) {
+        uncategorizedByMonth.set(key, (uncategorizedByMonth.get(key) ?? 0) + 1);
+      }
     }
-    spending.push({ year: y, month: m, amount: spend });
-    uncategorized.push({
-      year: y,
-      month: m,
-      n: uncategorizedExpenses(transactions, y, m, core.accounts).length,
-    });
   }
+
+  const income: FamilyBudgetCore["income"] = Array.from(incomeByMonth, ([key, amount]) => {
+    const [year, month] = key.split("-").map(Number);
+    return { year, month, amount };
+  });
+  const spending: FamilyBudgetCore["spending"] = Array.from(spendByMonth, ([key, amount]) => {
+    const [year, month] = key.split("-").map(Number);
+    return { year, month, amount };
+  });
+  const uncategorized: FamilyBudgetCore["uncategorized"] = Array.from(uncategorizedByMonth, ([key, n]) => {
+    const [year, month] = key.split("-").map(Number);
+    return { year, month, n };
+  });
   return { ...core, income, spending, uncategorized };
 }
 

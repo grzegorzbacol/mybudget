@@ -147,7 +147,7 @@ export default function ReviewPage() {
         </p>
       </div>
 
-      <StatusStrip />
+      <StatusStrip overview={overview} fetchWhenMissing={false} />
 
       <Card>
         <CardHeader>

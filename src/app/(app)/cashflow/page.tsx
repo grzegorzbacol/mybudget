@@ -105,7 +105,7 @@ export default function CashflowPage() {
 
   const { data: accounts } = useQuery({
     queryKey: ["accounts", familyData?.family.id],
-    enabled: !!familyData?.family.id,
+    enabled: !!familyData?.family.id && formOpen,
     queryFn: async () => {
       const { data: rows } = await supabase.from("accounts").select("*").eq("family_id", familyData!.family.id);
       return rows ?? [];
@@ -119,7 +119,7 @@ export default function CashflowPage() {
 
   const { data: categories } = useQuery({
     queryKey: ["categories", familyData?.family.id],
-    enabled: !!familyData?.family.id,
+    enabled: !!familyData?.family.id && formOpen,
     queryFn: async () => {
       const { data: rows } = await supabase
         .from("budget_categories")
@@ -248,8 +248,8 @@ export default function CashflowPage() {
         poniżej zera przy zaplanowanych ruchach.
       </p>
 
-      <StatusStrip />
-      <SavingsStrip />
+      <StatusStrip overview={data} fetchWhenMissing={false} />
+      {data?.budget ? <SavingsStrip budget={data.budget} /> : null}
 
       {data?.supervision &&
         (data.supervision.threatenedGoals?.length > 0 ||
