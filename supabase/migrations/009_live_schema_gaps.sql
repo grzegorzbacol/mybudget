@@ -29,6 +29,15 @@ END $$;
 ALTER TABLE budget_categories
   ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'expense';
 
+UPDATE budget_categories
+SET kind = 'income'
+WHERE group_name = 'Przychody' AND kind IS DISTINCT FROM 'income';
+
+UPDATE budget_categories
+SET kind = 'expense'
+WHERE kind = 'income'
+  AND group_name IS DISTINCT FROM 'Przychody';
+
 ALTER TABLE budget_allocations
   ADD COLUMN IF NOT EXISTS moved numeric NOT NULL DEFAULT 0;
 

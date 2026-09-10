@@ -50,6 +50,12 @@ UPDATE budget_categories
 SET kind = 'income'
 WHERE group_name = 'Przychody' AND kind IS DISTINCT FROM 'income';
 
+-- Wrong DEFAULT 'income' on add-column left Żywność/Transport/etc hidden after #12.
+UPDATE budget_categories
+SET kind = 'expense'
+WHERE kind = 'income'
+  AND group_name IS DISTINCT FROM 'Przychody';
+
 -- ---------------------------------------------------------------------------
 -- budget_allocations.moved (002)
 -- ---------------------------------------------------------------------------

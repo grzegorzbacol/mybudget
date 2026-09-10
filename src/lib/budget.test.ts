@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, isIncomeToReadyToAssign, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, uncategorizedExpenses } from "./budget";
+import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, uncategorizedExpenses } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -101,8 +101,9 @@ describe("YNAB envelope math", () => {
     );
     expect(data.incomeThisMonth).toBe(3253);
     expect(data.readyToAssign).toBe(3253);
-    const salary = data.groups.flatMap((g) => g.categories).find((row) => row.category.id === "salary");
-    expect(salary?.activity).toBe(0);
+    const rows = data.groups.flatMap((g) => g.categories);
+    expect(rows.find((row) => row.category.id === "salary")).toBeUndefined();
+    expect(rows.find((row) => row.category.id === "hobby")?.activity).toBe(0);
   });
 
   it("puts a categorized expense on envelope Aktywność", () => {
@@ -398,6 +399,32 @@ describe("YNAB envelope math", () => {
     expect(data.groups[0].categories[0].leftover).toBe(500);
     expect(data.groups[0].categories[0].available).toBe(500);
     expect(data.readyToAssign).toBe(0);
+  });
+
+  it("keeps classic Żywność envelopes when live kind defaulted every row to income", () => {
+    const food = {
+      ...category("food", "Zakupy spożywcze", "Żywność"),
+      kind: "income" as const,
+    };
+    const salary = {
+      ...category("salary", "Wynagrodzenie", "Przychody"),
+      kind: "income" as const,
+    };
+    expect(isEnvelopeCategory(food)).toBe(true);
+    expect(isExpenseCategory(food)).toBe(true);
+    expect(isEnvelopeCategory(salary)).toBe(false);
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [salary, food],
+      [alloc("food", 2026, 9, 100)],
+      [account("checking", 8808)],
+      [tx({ amount: 8808, date: "2026-09-01", category_id: "salary" })]
+    );
+    expect(data.incomeThisMonth).toBe(8808);
+    expect(data.groups.map((g) => g.groupName)).toEqual(["Żywność"]);
+    expect(data.groups[0].categories).toHaveLength(1);
+    expect(data.groups[0].categories[0].category.name).toBe("Zakupy spożywcze");
   });
 
   it("does not treat markerless rows as income when transfer columns are missing", () => {

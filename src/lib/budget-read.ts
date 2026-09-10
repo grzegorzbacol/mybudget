@@ -15,7 +15,9 @@ import {
   queryLedgerRangeSql,
   type FamilyBudgetSqlPayload,
 } from "@/lib/budget-sql";
+import { DEFAULT_CATEGORIES } from "@/lib/default-categories";
 import { isMissingRelationError, isSchemaLagError, missingScheduledTableMessage } from "@/lib/schema";
+import { insertRowsWithSchemaRepair } from "@/lib/schema-write";
 import type { Account, BudgetAllocation, BudgetCategory, BudgetMonthData, LedgerTransaction, ScheduledTransaction } from "@/lib/types";
 import type { createClient } from "@/lib/supabase/server";
 
@@ -49,13 +51,53 @@ export function resetFamilyBudgetCache() {
   coreCache.clear();
 }
 
+const CATEGORY_SELECTS = [
+  "id, family_id, group_name, name, icon, color, sort_order, kind",
+  "id, family_id, group_name, name, icon, color, sort_order",
+  "*",
+] as const;
+
+/** PostgREST schema-cache miss on `kind` must not wipe envelopes. */
+export async function fetchFamilyCategories(
+  supabase: Supabase,
+  familyId: string
+): Promise<{ data: BudgetCategory[]; error?: string }> {
+  let lastError: string | undefined;
+  for (const columns of CATEGORY_SELECTS) {
+    const res = await supabase
+      .from("budget_categories")
+      .select(columns)
+      .eq("family_id", familyId)
+      .order("sort_order");
+    if (!res.error) {
+      return { data: (res.data ?? []) as BudgetCategory[] };
+    }
+    lastError = res.error.message;
+    if (!isSchemaLagError(lastError)) {
+      return { data: [], error: lastError };
+    }
+  }
+  return { data: [], error: lastError };
+}
+
+export async function ensureFamilyCategories(
+  supabase: Supabase,
+  familyId: string,
+  existing: BudgetCategory[]
+): Promise<BudgetCategory[]> {
+  if (existing.length) return existing;
+  const inserted = await insertRowsWithSchemaRepair(
+    async (rows) => supabase.from("budget_categories").insert(rows).select(),
+    DEFAULT_CATEGORIES.map((category) => ({ ...category, family_id: familyId })),
+    ["kind"]
+  );
+  const created = (inserted.data ?? []) as BudgetCategory[];
+  return created.length ? created : existing;
+}
+
 function fetchRestRows(supabase: Supabase, familyId: string) {
   return Promise.all([
-    supabase
-      .from("budget_categories")
-      .select("id, family_id, group_name, name, icon, color, sort_order, kind")
-      .eq("family_id", familyId)
-      .order("sort_order"),
+    fetchFamilyCategories(supabase, familyId),
     supabase
       .from("budget_allocations")
       .select("id, family_id, category_id, year, month, allocated, activity, available, rollover, moved")
@@ -112,8 +154,26 @@ async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<F
   }
 
   const categories = (categoriesRes.data ?? []) as BudgetCategory[];
-  const allocations = (allocationsRes.data ?? []) as BudgetAllocation[];
-  const accounts = (accountsRes.data ?? []) as Account[];
+  if (categoriesRes.error && !categories.length) {
+    schemaLag = schemaLag ? `${schemaLag} ${categoriesRes.error}` : categoriesRes.error;
+  }
+  let allocations = (allocationsRes.data ?? []) as BudgetAllocation[];
+  if (allocationsRes.error && isSchemaLagError(allocationsRes.error.message)) {
+    const fallback = await supabase
+      .from("budget_allocations")
+      .select("id, family_id, category_id, year, month, allocated, activity, available, rollover")
+      .eq("family_id", familyId);
+    allocations = fallback.error ? [] : ((fallback.data ?? []) as BudgetAllocation[]);
+    schemaLag = schemaLag ? `${schemaLag} ${allocationsRes.error.message}` : allocationsRes.error.message;
+  }
+  let accounts = (accountsRes.data ?? []) as Account[];
+  if (accountsRes.error && isSchemaLagError(accountsRes.error.message)) {
+    const fallback = await supabase
+      .from("accounts")
+      .select("id, family_id, name, type, balance, currency, owner_user_id")
+      .eq("family_id", familyId);
+    accounts = fallback.error ? [] : ((fallback.data ?? []) as Account[]);
+  }
   const core: FamilyBudgetCore = {
     categories,
     allocations,
@@ -146,8 +206,12 @@ function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
 
 async function loadCoreUncached(supabase: Supabase, familyId: string): Promise<FamilyBudgetCore> {
   const sql = await queryFamilyBudgetSql(familyId);
-  if (sql) return coreFromSql(sql);
-  return loadCoreFromRest(supabase, familyId);
+  const core = sql ? coreFromSql(sql) : await loadCoreFromRest(supabase, familyId);
+  if (core.categories.length) return core;
+
+  const recovered = await fetchFamilyCategories(supabase, familyId);
+  const categories = await ensureFamilyCategories(supabase, familyId, recovered.data);
+  return { ...core, categories };
 }
 
 export async function loadFamilyBudgetCore(
