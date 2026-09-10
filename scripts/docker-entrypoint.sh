@@ -76,4 +76,10 @@ else
   echo "WARNING: DATABASE_URL not set, skipping migration. Budget/cashflow need transfer columns and scheduled_transactions on the PostgREST database."
 fi
 
-exec node server.js
+# Bind then open a pg client in this Node process before Coolify routes users.
+# A TCP-only healthcheck would otherwise send the first /api/cashflow at a cold pool.
+node server.js &
+pid=$!
+trap 'kill $pid 2>/dev/null; wait $pid' INT TERM
+node ./wait-for-sql-pool.cjs
+wait $pid

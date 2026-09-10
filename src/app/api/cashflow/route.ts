@@ -3,7 +3,15 @@ import { computeCashflow, buildCashflowTimeline, nextPayday, outflowUntil, isLow
 import { addDays, addMonths, monthRange, money } from "@/lib/money";
 import { getAuthContext } from "@/lib/api-helpers";
 import { budgetMonthFromCore, loadFamilyBudgetCore } from "@/lib/budget-read";
-import { monthAmount, queryCashflowDailyActualsSql, shouldSkipCashflowTimeline, CASHFLOW_RESPONSE_BUDGET_MS } from "@/lib/budget-sql";
+import {
+  monthAmount,
+  queryCashflowDailyActualsSql,
+  shouldSkipCashflowTimeline,
+  withTimeout,
+  CASHFLOW_AUTH_BUDGET_MS,
+  CASHFLOW_RESPONSE_BUDGET_MS,
+} from "@/lib/budget-sql";
+import { degradedCashflowOverview } from "@/lib/cashflow-http";
 import { getCurrentYearMonth } from "@/lib/format";
 import { computeRunway, monthSpendPace, wealthLayers } from "@/lib/wealth";
 import {
@@ -17,7 +25,17 @@ import type { Goal } from "@/lib/types";
 
 export async function GET(request: Request) {
   const started = Date.now();
-  const ctx = await getAuthContext();
+  const deadlineAt = started + CASHFLOW_RESPONSE_BUDGET_MS;
+
+  const ctx = await withTimeout(getAuthContext(), CASHFLOW_AUTH_BUDGET_MS, null);
+  if (!ctx) {
+    const res = NextResponse.json(
+      degradedCashflowOverview("Logowanie trwało zbyt długo — odśwież, jeśli koperty są puste."),
+      { status: 200 }
+    );
+    res.headers.set("Server-Timing", `total;dur=${Date.now() - started};desc="auth-timeout"`);
+    return res;
+  }
   if ("error" in ctx) {
     return NextResponse.json({ error: ctx.error }, { status: ctx.status });
   }
@@ -31,20 +49,39 @@ export async function GET(request: Request) {
   const { year, month } = getCurrentYearMonth();
 
   try {
-    const deadlineAt = started + CASHFLOW_RESPONSE_BUDGET_MS;
     const lookback = addMonths(year, month, -5);
     const timelineFrom =
       bucket === "month"
         ? `${lookback.year}-${String(lookback.month).padStart(2, "0")}-01`
         : addDays(today, -28);
 
-    const [core, goalFull] = await Promise.all([
-      loadFamilyBudgetCore(ctx.supabase, ctx.family.id, { allowRest: false, deadlineAt }),
-      ctx.supabase
-        .from("goals")
-        .select("id, category_id, target_amount, target_date, type, priority")
-        .eq("family_id", ctx.family.id),
-    ]);
+    const remaining = () => Math.max(0, deadlineAt - Date.now());
+    const loaded = await withTimeout(
+      Promise.all([
+        loadFamilyBudgetCore(ctx.supabase, ctx.family.id, { allowRest: false, deadlineAt }),
+        withTimeout(
+          Promise.resolve(
+            ctx.supabase
+              .from("goals")
+              .select("id, category_id, target_amount, target_date, type, priority")
+              .eq("family_id", ctx.family.id)
+          ),
+          Math.min(2_000, remaining()),
+          { data: null, error: { message: "timeout" } } as never
+        ),
+      ]),
+      remaining(),
+      null
+    );
+    if (!loaded) {
+      const res = NextResponse.json(
+        degradedCashflowOverview("Przepływy nie zdążyły się policzyć — odśwież za chwilę."),
+        { status: 200 }
+      );
+      res.headers.set("Server-Timing", `total;dur=${Date.now() - started};desc="core-timeout"`);
+      return res;
+    }
+    const [core, goalFull] = loaded;
     const scheduled = core.scheduled;
     const { start, end } = monthRange(year, month);
     const budget = budgetMonthFromCore(core, year, month);

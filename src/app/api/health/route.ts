@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { warmupBudgetSqlPool } from "@/lib/budget-sql";
+import { healthHttpFromProbe, probeSqlPool } from "@/lib/budget-sql";
 
 export const dynamic = "force-dynamic";
 
-/** Coolify/process probes: open a Postgres client so the first user request is not the pool cold start. */
+/** Coolify readiness: 200 + db:true only after a real SELECT 1 on the SQL pool. */
 export async function GET() {
-  const db = await warmupBudgetSqlPool();
-  return NextResponse.json({ ok: true, db });
+  const probe = await probeSqlPool();
+  const { status, body } = healthHttpFromProbe(probe);
+  return NextResponse.json(body, { status });
 }

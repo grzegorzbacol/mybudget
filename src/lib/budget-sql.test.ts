@@ -3,6 +3,7 @@ import {
   FAMILY_BUDGET_SQL,
   FAMILY_BUDGET_SQL_SAFE,
   getSnapshotPlan,
+  healthHttpFromProbe,
   isStatementTimeoutError,
   monthAmount,
   monthCount,
@@ -183,14 +184,13 @@ describe("withTimeout", () => {
 });
 
 describe("postgres pool hardening", () => {
-  it("applies statement_timeout at connect and keeps max under 4", () => {
+  it("applies a client query timeout and keeps max under 4", () => {
     const config = postgresPoolConfig("postgres://localhost/db");
     expect(config.max).toBe(SQL_POOL_MAX);
     expect(config.max).toBeLessThan(4);
-    expect(config.options).toContain(`statement_timeout=${SQL_STATEMENT_TIMEOUT_MS}`);
-    expect(config.statement_timeout).toBe(SQL_STATEMENT_TIMEOUT_MS);
     expect(config.query_timeout).toBe(SQL_STATEMENT_TIMEOUT_MS);
-    expect(config.connectionTimeoutMillis).toBeLessThanOrEqual(2_000);
+    expect(config.connectionTimeoutMillis).toBe(8_000);
+    expect(config).not.toHaveProperty("options");
   });
 
   it("does not treat a statement timeout as a dialect miss", async () => {
@@ -225,5 +225,15 @@ describe("postgres pool hardening", () => {
     expect(shouldSkipCashflowTimeline(0, 8_000, 1_500, 7_000)).toBe(true);
     expect(shouldSkipCashflowTimeline(0, 8_000, 1_500, 1_000)).toBe(false);
     expect(remainingMs(0, 8_000, 3_000)).toBe(5_000);
+  });
+
+  it("reports db:true only after a successful probe, 503 when the URL is set but dead", () => {
+    expect(healthHttpFromProbe({ db: true })).toEqual({ status: 200, body: { ok: true, db: true } });
+    expect(healthHttpFromProbe({ db: false, skipped: "DATABASE_URL not set" })).toEqual({
+      status: 200,
+      body: { ok: true, db: false, skipped: "DATABASE_URL not set" },
+    });
+    expect(healthHttpFromProbe({ db: false, error: "SELECT 1 returned no rows" }).status).toBe(503);
+    expect(healthHttpFromProbe({ db: false, error: "SELECT 1 returned no rows" }).body.db).toBe(false);
   });
 });
