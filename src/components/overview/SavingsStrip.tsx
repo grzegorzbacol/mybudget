@@ -11,14 +11,15 @@ import { createClient } from "@/lib/supabase/client";
 import { formatCurrency, getCurrentYearMonth } from "@/lib/format";
 import { contributionThisMonth, goalPercent, isBehindSchedule, suggestedForGoal } from "@/lib/savings";
 import { envelopeRowsFromBudget } from "@/lib/budget";
-import type { Goal } from "@/lib/types";
+import type { BudgetMonthData, Goal } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-export function SavingsStrip() {
+export function SavingsStrip({ budget }: { budget?: BudgetMonthData | null }) {
   const { data: familyData } = useFamily();
   const supabase = createClient();
   const { year, month } = getCurrentYearMonth();
-  const { data: budget } = useBudget(year, month);
+  const fetched = useBudget(year, month, !budget);
+  const budgetData = budget ?? fetched.data;
 
   const { data: goals } = useQuery({
     queryKey: ["goals", familyData?.family.id],
@@ -32,9 +33,9 @@ export function SavingsStrip() {
     },
   });
 
-  if (!goals?.length || !budget) return null;
+  if (!goals?.length || !budgetData) return null;
 
-  const rows = envelopeRowsFromBudget(budget);
+  const rows = envelopeRowsFromBudget(budgetData);
   const saved = goals.reduce((sum, goal) => {
     const row = rows.find((r) => r.category.id === goal.category_id);
     return sum + Math.max(0, row?.available ?? 0);

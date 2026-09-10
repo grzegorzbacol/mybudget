@@ -139,6 +139,10 @@ describe("asBudgetCategories", () => {
 });
 
 describe("fetchFamilyCategories", () => {
+  afterEach(() => {
+    resetFamilyBudgetCache();
+  });
+
   it("retries without kind when PostgREST schema cache lags", async () => {
     let calls = 0;
     const supabase = {
@@ -175,6 +179,10 @@ describe("fetchFamilyCategories", () => {
     expect(result.data).toHaveLength(1);
     expect(result.data[0].name).toBe("Zakupy");
     expect(calls).toBeGreaterThanOrEqual(2);
+
+    const again = await fetchFamilyCategories(supabase as never, "f1");
+    expect(again.data).toHaveLength(1);
+    expect(calls).toBe(3);
   });
 });
 

@@ -134,6 +134,35 @@ describe("scheduled cashflow", () => {
     expect(weekOfPay?.plannedIn).toBe(8000);
   });
 
+  it("builds weekly buckets from daily SQL actuals without raw ledger rows", () => {
+    const checking: Account = {
+      id: "checking",
+      family_id: "fam",
+      name: "Konto",
+      type: "checking",
+      balance: 1000,
+      currency: "PLN",
+      owner_user_id: null,
+      created_at: "",
+      on_budget: true,
+    };
+    const timeline = buildCashflowTimeline({
+      from: "2026-09-01",
+      to: "2026-09-14",
+      accounts: [checking],
+      scheduled: [rent, payday],
+      dailyActuals: [
+        { date: "2026-09-10", actualIn: 8000, actualOut: 0 },
+        { date: "2026-09-05", actualIn: 0, actualOut: 2000 },
+      ],
+      bucket: "week",
+    });
+    const weekOfRent = timeline.find((row) => row.key <= "2026-09-05" && row.key >= "2026-08-31");
+    expect(weekOfRent?.actualOut).toBe(2000);
+    const weekOfPay = timeline.find((row) => row.plannedIn === 8000 || row.actualIn === 8000);
+    expect(weekOfPay?.actualIn).toBe(8000);
+  });
+
   it("builds monthly actual vs planned buckets", () => {
     const checking: Account = {
       id: "checking",

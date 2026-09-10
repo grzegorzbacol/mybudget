@@ -82,7 +82,9 @@ CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON transactions(transfer_id
 CREATE INDEX IF NOT EXISTS idx_transactions_cleared ON transactions(account_id, cleared);
 CREATE INDEX IF NOT EXISTS idx_transactions_family_date ON transactions(family_id, date);
 CREATE INDEX IF NOT EXISTS idx_transactions_family_category ON transactions(family_id, category_id);
+CREATE INDEX IF NOT EXISTS idx_transactions_family_nontransfer_date ON transactions (family_id, date) WHERE transfer_account_id IS NULL AND transfer_id IS NULL;
 CREATE INDEX IF NOT EXISTS idx_allocations_family ON budget_allocations(family_id);
+CREATE INDEX IF NOT EXISTS idx_budget_categories_family ON budget_categories(family_id);
 
 DO $$
 BEGIN
