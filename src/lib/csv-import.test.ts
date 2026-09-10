@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { detectBankFileEncoding, decodeBankFileBytes } from "./csv-encoding";
-import { detectBankFormat, parseBankCsv, parseBankCsvBytes } from "./csv-import";
+import { detectBankFormat, parseBankCsv, parseBankCsvBytes, planImportedPayeeUpdates } from "./csv-import";
 import { parseBankFile, parseBankFileBytes } from "./ofx-import";
 
 const windows1250Fixture = new Uint8Array(
@@ -230,5 +230,94 @@ describe("bank CSV import", () => {
         memo: "EW ZEWNĘTRZNY WYCHODZĄCY;LUXMED;DELTA KTW;'1410501214100009",
       },
     ]);
+  });
+
+  it("reads mBank Zestawienie #Tytuł (merchant) instead of generic #Opis operacji", () => {
+    const headers = [
+      "#Data księgowania",
+      "#Data operacji",
+      "#Opis operacji",
+      "#Tytuł",
+      "#Nadawca/Odbiorca",
+      "#Numer konta",
+      "#Kwota",
+      "#Saldo po operacji",
+    ];
+    expect(detectBankFormat(headers)).toBe("mbank");
+
+    const csv = `#Numer rachunku;11 1140 2004 0000 0000 0000 0000
+#Data księgowania;#Data operacji;#Opis operacji;#Tytuł;#Nadawca/Odbiorca;#Numer konta;#Kwota;#Saldo po operacji
+2026-09-08;2026-09-08;ZAKUP PRZY UŻYCIU KARTY;"PRZY UŻYCIU KARTY;As Vending /Zory";;'1410501214100001';-10,00;1000,00
+2026-09-08;2026-09-08;ZAKUP PRZY UŻYCIU KARTY;PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK;;'1410501214100002';-32,40;967,60
+2026-09-08;2026-09-08;ZAKUP PRZY UŻYCIU KARTY;"PRZY UŻYCIU KARTY;ZABKA ZD466 K.2 /RUDA SLASK";;'1410501214100003';-15,20;952,40
+2026-09-08;2026-09-08;BLIK ZAKUP E-COMMERCE;"PRZY UŻYCIU KARTY;Allegro /Poznan";Allegro;;-49,99;902,41
+2026-09-08;2026-09-08;PRZELEW WŁASNY;;;'1410501214100004';-20,00;882,41
+2026-09-08;2026-09-08;PRZELEW ZEWNĘTRZNY WYCHODZĄCY;"EW ZEWNĘTRZNY WYCHODZĄCY;LUXMED;DELTA KTW ;'1410501214100009";LUXMED;'1410501214100009';-200,00;682,41
+`;
+    expect(parseBankCsv(csv)).toEqual([
+      {
+        date: "2026-09-08",
+        payee: "As Vending /Zory",
+        amount: -10,
+        memo: "PRZY UŻYCIU KARTY;As Vending /Zory",
+      },
+      {
+        date: "2026-09-08",
+        payee: "JMP S.A. BIEDRONKA /RUDA SLASK",
+        amount: -32.4,
+        memo: "PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK",
+      },
+      {
+        date: "2026-09-08",
+        payee: "ZABKA ZD466 K.2 /RUDA SLASK",
+        amount: -15.2,
+        memo: "PRZY UŻYCIU KARTY;ZABKA ZD466 K.2 /RUDA SLASK",
+      },
+      {
+        date: "2026-09-08",
+        payee: "Allegro /Poznan",
+        amount: -49.99,
+        memo: "PRZY UŻYCIU KARTY;Allegro /Poznan",
+      },
+      {
+        date: "2026-09-08",
+        payee: "PRZELEW WŁASNY",
+        amount: -20,
+        memo: "Import mBank",
+      },
+      {
+        date: "2026-09-08",
+        payee: "LUXMED; DELTA KTW",
+        amount: -200,
+        memo: "EW ZEWNĘTRZNY WYCHODZĄCY;LUXMED;DELTA KTW ;'1410501214100009",
+      },
+    ]);
+  });
+
+  it("updates generic imported payees on re-import instead of duplicating them", () => {
+    const plan = planImportedPayeeUpdates(
+      [
+        {
+          date: "2026-09-08",
+          payee: "JMP S.A. BIEDRONKA /RUDA SLASK",
+          amount: -32.4,
+          memo: "PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK",
+        },
+        { date: "2026-09-08", payee: "PRZELEW WŁASNY", amount: -20, memo: "Import mBank" },
+      ],
+      [
+        { id: "tx-1", date: "2026-09-08", amount: -32.4, payee: "ZAKUP PRZY UŻYCIU KARTY" },
+        { id: "tx-2", date: "2026-09-08", amount: -20, payee: "PRZELEW WŁASNY" },
+      ]
+    );
+    expect(plan.updates).toEqual([
+      {
+        id: "tx-1",
+        payee: "JMP S.A. BIEDRONKA /RUDA SLASK",
+        memo: "PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK",
+      },
+    ]);
+    expect(plan.skipped).toBe(1);
+    expect(plan.inserts).toEqual([]);
   });
 });

@@ -55,7 +55,8 @@ export default function TransactionsPage() {
 
       <p className="text-sm text-muted-foreground">
         Wydatek schodzi z koperty, przychód idzie do Do rozdzielenia, transfer tylko między kontami. Import: CSV
-        mBank/PKO/ING albo OFX. Reguły payee proponują kopertę po imporcie.
+        mBank (Zestawienie operacji — tam jest nazwa sklepu), PKO, ING albo OFX. Ten sam CSV jeszcze raz uzupełni
+        stare „ZAKUP PRZY UŻYCIU KARTY”. Reguły payee proponują kopertę po imporcie.
       </p>
 
       <MonthSwitcher

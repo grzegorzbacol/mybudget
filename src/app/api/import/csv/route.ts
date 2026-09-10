@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { parseBankFile } from "@/lib/ofx-import";
+import { planImportedPayeeUpdates } from "@/lib/csv-import";
 import { applyPayeeRules, buildPayeeCategoryRules } from "@/lib/categorize";
 import { insertRowsWithSchemaRepair } from "@/lib/schema-write";
 import { z } from "zod";
@@ -41,7 +42,48 @@ export async function POST(request: Request) {
     rules
   );
 
-  const transactions = tagged.map((row) => ({
+  const existingRes = await ctx.supabase
+    .from("transactions")
+    .select("id, date, amount, payee")
+    .eq("family_id", ctx.family.id)
+    .eq("account_id", parsed.data.account_id)
+    .eq("source", "import");
+  if (existingRes.error) {
+    return NextResponse.json({ error: existingRes.error.message }, { status: 500 });
+  }
+
+  const plan = planImportedPayeeUpdates(tagged, (existingRes.data ?? []).map((tx) => ({
+    id: tx.id,
+    date: String(tx.date),
+    amount: Number(tx.amount),
+    payee: tx.payee,
+  })));
+
+  let updated = 0;
+  for (const patch of plan.updates) {
+    const { error } = await ctx.supabase
+      .from("transactions")
+      .update({ payee: patch.payee, memo: patch.memo })
+      .eq("id", patch.id)
+      .eq("family_id", ctx.family.id);
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    updated += 1;
+  }
+
+  const taggedInserts = plan.inserts;
+
+  if (taggedInserts.length === 0) {
+    return NextResponse.json({
+      imported: 0,
+      updated,
+      skipped: plan.skipped,
+      transactions: [],
+    });
+  }
+
+  const transactions = taggedInserts.map((row) => ({
     family_id: ctx.family.id,
     account_id: parsed.data.account_id,
     added_by: ctx.user.id,
@@ -65,5 +107,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: created.error }, { status: 500 });
   }
 
-  return NextResponse.json({ imported: created.data.length, transactions: created.data });
+  return NextResponse.json({
+    imported: created.data.length,
+    updated,
+    skipped: plan.skipped,
+    transactions: created.data,
+  });
 }

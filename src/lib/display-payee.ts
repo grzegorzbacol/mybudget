@@ -6,6 +6,8 @@ function collapseWs(value: string): string {
 const BANK_OPERATION_TYPE =
   /przy\s+u[żz]yciu\s+karty|przelew|zewn[ęe]trzny|wewn[ęe]trzny|blik|wyp[łl]ata|wp[łl]ata|op[łl]ata|prowizja|zwrot|zakup|uznanie|obci[ąa][żz]enie|do[łl]adowanie|p[łl]atno[śs][ćc]/i;
 
+const IMPORT_PLACEHOLDER_MEMO = /^import\s+(mbank|pko|ing|csv|ofx)$/i;
+
 /** Polish account / IBAN / card-style tokens (often prefixed with `'` in CSV). */
 function isAccountLike(segment: string): boolean {
   const compact = segment.replace(/['"`\s-]/g, "");
@@ -16,6 +18,14 @@ function isAccountLike(segment: string): boolean {
 
 function isBankOperationType(segment: string): boolean {
   return BANK_OPERATION_TYPE.test(segment);
+}
+
+/** True when the whole string is only a bank op type (no merchant). */
+export function isGenericBankPayee(payee: string | null | undefined): boolean {
+  const source = collapseWs(payee ?? "");
+  if (!source) return false;
+  if (IMPORT_PLACEHOLDER_MEMO.test(source)) return true;
+  return isBankOperationType(source) && parseBankDescription(source) === source;
 }
 
 /**
@@ -44,6 +54,25 @@ export function parseBankDescription(raw: string | null | undefined): string {
 }
 
 /**
+ * Prefer Tytuł / Nadawca over generic Opis operacji.
+ * Returns the raw string that `importPayeeFields` should split into payee + memo.
+ */
+export function pickRichestDescription(parts: Array<string | null | undefined>): string {
+  const unique: string[] = [];
+  for (const part of parts) {
+    const cleaned = collapseWs(part ?? "");
+    if (cleaned && !unique.includes(cleaned)) unique.push(cleaned);
+  }
+  for (const part of unique) {
+    if (parseBankDescription(part) !== part) return part;
+  }
+  for (const part of unique) {
+    if (!isGenericBankPayee(part)) return part;
+  }
+  return unique[0] ?? "";
+}
+
+/**
  * Title for the transaction list / detail.
  * Uses payee first; if that is still a generic bank op line, try memo
  * (already-imported rows may keep the raw CSV string in either field).
@@ -54,7 +83,13 @@ export function displayPayee(payee: string, memo?: string | null): string {
 
   if (memo) {
     const cleanedMemo = parseBankDescription(memo);
-    if (cleanedMemo && cleanedMemo !== collapseWs(memo)) return cleanedMemo;
+    const memoIsPlaceholder = IMPORT_PLACEHOLDER_MEMO.test(collapseWs(memo));
+    if (cleanedMemo && cleanedMemo !== collapseWs(memo) && !memoIsPlaceholder) {
+      return cleanedMemo;
+    }
+    if (isGenericBankPayee(payee) && !memoIsPlaceholder && !isGenericBankPayee(memo)) {
+      return cleanedMemo || collapseWs(memo);
+    }
   }
 
   return cleanedPayee || collapseWs(payee);

@@ -31,9 +31,20 @@ export default function ImportPage() {
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
           <ol className="list-decimal space-y-1 pl-4 text-muted-foreground">
-            <li>mBank: Historia → eksport do pliku CSV (albo OFX/QFX z innego banku).</li>
+            <li>
+              mBank: Płatności → Historia → <strong>Zestawienie operacji</strong> → CSV (nie „Lista
+              operacji” — tam nie ma nazwy sklepu). Albo OFX/QFX z innego banku.
+            </li>
             <li>Wybierz konto w budżecie, do którego trafią ruchy.</li>
-            <li>Po imporcie przypisz koperty filtrem „Bez kategorii” albo przyciskiem „Zastosuj reguły” (ostatnia kategoria dla payee).</li>
+            <li>
+              Po imporcie przypisz koperty filtrem „Bez kategorii” albo przyciskiem „Zastosuj
+              reguły” (ostatnia kategoria dla payee).
+            </li>
+            <li>
+              Jeśli lista pokazuje tylko „ZAKUP PRZY UŻYCIU KARTY”: wgraj ten sam CSV jeszcze raz —
+              uzupełnimy nazwy sklepów przy istniejących importach (ta sama data i kwota), bez
+              utraty kategorii. Albo usuń zaznaczone importy i zaimportuj od nowa.
+            </li>
           </ol>
           <p className="text-muted-foreground">Obsługiwane nagłówki: mBank, PKO, ING oraz ogólny CSV i OFX.</p>
           <CsvImport />

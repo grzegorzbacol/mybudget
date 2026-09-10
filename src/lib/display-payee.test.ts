@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayPayee, importPayeeFields, parseBankDescription } from "./display-payee";
+import { displayPayee, importPayeeFields, parseBankDescription, pickRichestDescription } from "./display-payee";
 
 const examples = [
   ["PRZY UŻYCIU KARTY;As Vending /Zory", "As Vending /Zory"],
@@ -44,6 +44,7 @@ describe("displayPayee", () => {
     expect(
       displayPayee("ZAKUP PRZY UŻYCIU KARTY", "PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK")
     ).toBe("JMP S.A. BIEDRONKA /RUDA SLASK");
+    expect(displayPayee("BLIK ZAKUP E-COMMERCE", "Allegro /Poznan")).toBe("Allegro /Poznan");
   });
 
   it("leaves already-clean payees and generic-only rows unchanged", () => {
@@ -65,5 +66,21 @@ describe("importPayeeFields", () => {
       payee: "PRZELEW WŁASNY",
       memo: "Import mBank",
     });
+  });
+});
+
+describe("pickRichestDescription", () => {
+  it("prefers Tytuł with merchant over generic Opis operacji", () => {
+    expect(
+      pickRichestDescription([
+        "PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK",
+        "",
+        "ZAKUP PRZY UŻYCIU KARTY",
+      ])
+    ).toBe("PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK");
+  });
+
+  it("uses Nadawca/Odbiorca when Tytuł is empty", () => {
+    expect(pickRichestDescription(["", "LUXMED", "PRZELEW ZEWNĘTRZNY WYCHODZĄCY"])).toBe("LUXMED");
   });
 });
