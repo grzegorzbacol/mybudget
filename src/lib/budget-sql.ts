@@ -252,7 +252,7 @@ export const SNAPSHOT_PLANS: SnapshotPlan[] = [
 let snapshotPlan: SnapshotPlan | null = null;
 
 export function resetBudgetSqlPool() {
-  poolPromise = null;
+  writeSharedPool(null);
   snapshotPlan = null;
 }
 
@@ -345,6 +345,28 @@ type PgPool = {
 let poolPromise: Promise<PgPool | null> | null = null;
 
 /**
+ * Next.js compiles /api/health and /api/cashflow into separate chunks with their
+ * own module state. A process-wide slot makes the boot health probe's pool the
+ * same pool the first authenticated cashflow GET uses.
+ */
+export const PG_POOL_GLOBAL_KEY = "__mybudgetPgPoolPromise";
+
+type GlobalPg = typeof globalThis & {
+  [PG_POOL_GLOBAL_KEY]?: Promise<PgPool | null>;
+};
+
+function readSharedPool(): Promise<PgPool | null> | null {
+  return poolPromise ?? (globalThis as GlobalPg)[PG_POOL_GLOBAL_KEY] ?? null;
+}
+
+function writeSharedPool(value: Promise<PgPool | null> | null) {
+  poolPromise = value;
+  const g = globalThis as GlobalPg;
+  if (value) g[PG_POOL_GLOBAL_KEY] = value;
+  else delete g[PG_POOL_GLOBAL_KEY];
+}
+
+/**
  * Bound hung queries so /api/cashflow cannot sit until the 12s browser abort.
  * max is 3 (not 4) so one request cannot occupy every slot; each GET checks out
  * a single client for snapshot + extras instead of running them in parallel.
@@ -390,7 +412,27 @@ export type HealthHttpBody = {
   error?: string;
   degraded?: boolean;
   reason?: SqlHealthFailureReason;
+  /** Git SHA of the running image. Null when Coolify/build did not inject a commit. */
+  revision: string | null;
+  gitSha: string | null;
 };
+
+const GIT_REVISION_ENV_KEYS = ["GIT_COMMIT", "SOURCE_COMMIT", "COOLIFY_HASH", "NEXT_PUBLIC_GIT_SHA"] as const;
+
+function firstNonEmpty(...values: Array<string | undefined>): string | null {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) return trimmed;
+  }
+  return null;
+}
+
+/** Coolify Dockerfile builds inject SOURCE_COMMIT; GIT_COMMIT is the explicit runtime override. */
+export function resolveGitRevision(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): string | null {
+  return firstNonEmpty(...GIT_REVISION_ENV_KEYS.map((key) => env[key]));
+}
 
 const DNS_ERROR_CODES = new Set(["EAI_AGAIN", "ENOTFOUND", "EAI_FAIL", "EAI_NODATA", "EAI_NONAME"]);
 const CONNECT_ERROR_CODES = new Set(["ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "ECONNRESET"]);
@@ -587,17 +629,26 @@ export function postgresPoolConfig(connectionString: string) {
 async function getPool(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
 ): Promise<PgPool | null> {
-  if (poolPromise) return poolPromise;
+  const existing = readSharedPool();
+  if (existing) return existing;
   const databaseUrl = resolveDatabaseUrl(env);
   if (!databaseUrl) return null;
-  poolPromise = import("pg")
+  const created = import("pg")
     .then(({ Pool }) => new Pool(postgresPoolConfig(databaseUrl)) as unknown as PgPool)
     .catch((error) => {
       console.error("[budget-sql] pool init failed", error instanceof Error ? error.message : error);
-      poolPromise = null;
+      writeSharedPool(null);
       return null;
     });
-  return poolPromise;
+  writeSharedPool(created);
+  return created;
+}
+
+/** Fire-and-forget: open the shared pool while auth/other work runs. */
+export function beginSqlPoolWarmup(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): Promise<boolean> {
+  return warmupBudgetSqlPool(env);
 }
 
 export async function probeSqlPool(
@@ -635,33 +686,50 @@ export async function warmupBudgetSqlPool(
   return probe.db;
 }
 
-export function healthHttpFromProbe(probe: SqlPoolProbe): {
+function attachHealthRevision(
+  body: Omit<HealthHttpBody, "revision" | "gitSha">,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): HealthHttpBody {
+  const revision = resolveGitRevision(env);
+  return { ...body, revision, gitSha: revision };
+}
+
+export function healthHttpFromProbe(
+  probe: SqlPoolProbe,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): {
   status: number;
   body: HealthHttpBody;
 } {
   if (probe.skipped) {
-    return { status: 200, body: { ok: true, db: false, skipped: probe.skipped } };
+    return { status: 200, body: attachHealthRevision({ ok: true, db: false, skipped: probe.skipped }, env) };
   }
   if (probe.db) {
-    return { status: 200, body: { ok: true, db: true } };
+    return { status: 200, body: attachHealthRevision({ ok: true, db: true }, env) };
   }
   const reason = probe.reason ?? inferHealthFailureReason(probe.error);
   // DNS / connect / timeout: Coolify must not restart the app — PostgREST may still work.
   if (reason === "dns" || reason === "connect" || reason === "timeout") {
     return {
       status: 200,
-      body: {
-        ok: true,
-        db: false,
-        degraded: true,
-        error: probe.error ?? "database unreachable",
-        reason,
-      },
+      body: attachHealthRevision(
+        {
+          ok: true,
+          db: false,
+          degraded: true,
+          error: probe.error ?? "database unreachable",
+          reason,
+        },
+        env
+      ),
     };
   }
   return {
     status: 503,
-    body: { ok: false, db: false, error: probe.error ?? "database unreachable", reason: reason ?? "error" },
+    body: attachHealthRevision(
+      { ok: false, db: false, error: probe.error ?? "database unreachable", reason: reason ?? "error" },
+      env
+    ),
   };
 }
 

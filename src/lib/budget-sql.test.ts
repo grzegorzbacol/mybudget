@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   FAMILY_BUDGET_SQL,
   FAMILY_BUDGET_SQL_SAFE,
+  beginSqlPoolWarmup,
   classifySqlHostFailure,
   getSnapshotPlan,
   healthHttpFromProbe,
@@ -10,6 +11,7 @@ import {
   monthAmount,
   monthCount,
   parseFamilyBudgetPayload,
+  PG_POOL_GLOBAL_KEY,
   postgresPoolConfig,
   postgresClientAnswered,
   probeSqlWithQuery,
@@ -17,10 +19,13 @@ import {
   queryFamilyBudgetWithClient,
   remainingMs,
   resetBudgetSqlPlans,
+  resetBudgetSqlPool,
+  resolveGitRevision,
   retrySqlConnect,
   shouldRetrySqlConnect,
   shouldSkipCashflowTimeline,
   snapshotAttempts,
+  CASHFLOW_RESPONSE_BUDGET_MS,
   SQL_CONNECTION_TIMEOUT_MS,
   SQL_CONNECT_RETRY_ATTEMPTS,
   SQL_DATE_RANGE_PREDICATE,
@@ -277,42 +282,66 @@ describe("postgres pool hardening", () => {
     expect(shouldSkipCashflowTimeline(0, 8_000, 1_500, 7_000)).toBe(true);
     expect(shouldSkipCashflowTimeline(0, 8_000, 1_500, 1_000)).toBe(false);
     expect(remainingMs(0, 8_000, 3_000)).toBe(5_000);
+    expect(CASHFLOW_RESPONSE_BUDGET_MS).toBeLessThan(12_000);
   });
 
-  it("reports db:true when Postgres is up", () => {
-    expect(healthHttpFromProbe({ db: true })).toEqual({ status: 200, body: { ok: true, db: true } });
-    expect(healthHttpFromProbe({ db: true }).body).not.toHaveProperty("degraded");
+  it("reports db:true when Postgres is up and always includes revision/gitSha", () => {
+    expect(healthHttpFromProbe({ db: true }, {})).toEqual({
+      status: 200,
+      body: { ok: true, db: true, revision: null, gitSha: null },
+    });
+    expect(healthHttpFromProbe({ db: true }, {}).body).not.toHaveProperty("degraded");
   });
 
   it("returns 200 degraded (not 503) when Docker DNS cannot resolve the DB host", () => {
-    const dns = healthHttpFromProbe({
-      db: false,
-      error: "getaddrinfo EAI_AGAIN supabase-db-c4w4kw0k4cogk8cgsckokg8c",
-      reason: "dns",
-    });
+    const dns = healthHttpFromProbe(
+      {
+        db: false,
+        error: "getaddrinfo EAI_AGAIN supabase-db-c4w4kw0k4cogk8cgsckokg8c",
+        reason: "dns",
+      },
+      {}
+    );
     expect(dns.status).toBe(200);
-    expect(dns.body).toMatchObject({ ok: true, db: false, degraded: true, reason: "dns" });
-    expect(healthHttpFromProbe({ db: false, error: "getaddrinfo EAI_AGAIN supabase-db-x" }).status).toBe(200);
+    expect(dns.body).toMatchObject({
+      ok: true,
+      db: false,
+      degraded: true,
+      reason: "dns",
+      revision: null,
+      gitSha: null,
+    });
+    expect(healthHttpFromProbe({ db: false, error: "getaddrinfo EAI_AGAIN supabase-db-x" }, {}).status).toBe(200);
   });
 
   it("returns 200 degraded on connect timeout so Coolify does not restart the app", () => {
-    const timedOut = healthHttpFromProbe({ db: false, error: "probe timed out" });
+    const timedOut = healthHttpFromProbe({ db: false, error: "probe timed out" }, {});
     expect(timedOut.status).toBe(200);
-    expect(timedOut.body).toMatchObject({ ok: true, db: false, degraded: true, reason: "timeout" });
+    expect(timedOut.body).toMatchObject({
+      ok: true,
+      db: false,
+      degraded: true,
+      reason: "timeout",
+      revision: null,
+      gitSha: null,
+    });
   });
 
   it("keeps 503 only when Postgres is reachable but the probe is truly dead", () => {
-    const fatal = healthHttpFromProbe({
-      db: false,
-      error: "password authentication failed for user \"postgres\"",
-      reason: "error",
-    });
+    const fatal = healthHttpFromProbe(
+      {
+        db: false,
+        error: "password authentication failed for user \"postgres\"",
+        reason: "error",
+      },
+      {}
+    );
     expect(fatal.status).toBe(503);
-    expect(fatal.body).toMatchObject({ ok: false, db: false });
+    expect(fatal.body).toMatchObject({ ok: false, db: false, revision: null, gitSha: null });
     expect(fatal.body.degraded).toBeUndefined();
-    expect(healthHttpFromProbe({ db: false, skipped: "DATABASE_URL not set" })).toEqual({
+    expect(healthHttpFromProbe({ db: false, skipped: "DATABASE_URL not set" }, {})).toEqual({
       status: 200,
-      body: { ok: true, db: false, skipped: "DATABASE_URL not set" },
+      body: { ok: true, db: false, skipped: "DATABASE_URL not set", revision: null, gitSha: null },
     });
   });
 
@@ -385,9 +414,9 @@ describe("postgres pool hardening", () => {
     });
     expect(fatal).toMatchObject({ db: false, reason: "error" });
     expect(authCalls).toBe(1);
-    expect(healthHttpFromProbe(up).status).toBe(200);
-    expect(healthHttpFromProbe(up).body.db).toBe(true);
-    expect(healthHttpFromProbe(fatal).status).toBe(503);
+    expect(healthHttpFromProbe(up, {}).status).toBe(200);
+    expect(healthHttpFromProbe(up, {}).body.db).toBe(true);
+    expect(healthHttpFromProbe(fatal, {}).status).toBe(503);
   });
 
   it("unwraps multi-statement node-pg arrays so snapshot payload is still found", () => {
@@ -396,5 +425,44 @@ describe("postgres pool hardening", () => {
       payload
     );
     expect(unwrapPgResult({ command: "SELECT", rowCount: 1 }).rows).toEqual([]);
+  });
+
+  it("puts GIT_COMMIT on the health body as revision and gitSha", () => {
+    const sha = "b117713abc";
+    const up = healthHttpFromProbe({ db: true }, { GIT_COMMIT: sha });
+    expect(up.body).toEqual({ ok: true, db: true, revision: sha, gitSha: sha });
+    expect(Object.keys(up.body).sort()).toEqual(["db", "gitSha", "ok", "revision"].sort());
+
+    const fromSource = healthHttpFromProbe({ db: true }, { SOURCE_COMMIT: "source1" });
+    expect(fromSource.body.revision).toBe("source1");
+    expect(fromSource.body.gitSha).toBe("source1");
+
+    const prefersGitCommit = healthHttpFromProbe(
+      { db: true },
+      { GIT_COMMIT: "git", SOURCE_COMMIT: "source", COOLIFY_HASH: "coolify", NEXT_PUBLIC_GIT_SHA: "next" }
+    );
+    expect(prefersGitCommit.body.revision).toBe("git");
+
+    const afterGit = healthHttpFromProbe(
+      { db: true },
+      { SOURCE_COMMIT: "source", COOLIFY_HASH: "coolify", NEXT_PUBLIC_GIT_SHA: "next" }
+    );
+    expect(afterGit.body.revision).toBe("source");
+    expect(healthHttpFromProbe({ db: true }, { COOLIFY_HASH: "coolify", NEXT_PUBLIC_GIT_SHA: "next" }).body.gitSha).toBe(
+      "coolify"
+    );
+    expect(healthHttpFromProbe({ db: true }, { NEXT_PUBLIC_GIT_SHA: "next" }).body.gitSha).toBe("next");
+    expect(resolveGitRevision({ GIT_COMMIT: "  ", SOURCE_COMMIT: "abc" })).toBe("abc");
+  });
+
+  it("clears the process-wide pool slot so health warmup is shared with cashflow", () => {
+    const g = globalThis as Record<string, unknown>;
+    g[PG_POOL_GLOBAL_KEY] = Promise.resolve(null);
+    resetBudgetSqlPool();
+    expect(g[PG_POOL_GLOBAL_KEY]).toBeUndefined();
+  });
+
+  it("beginSqlPoolWarmup is a no-op without DATABASE_URL", async () => {
+    await expect(beginSqlPoolWarmup({})).resolves.toBe(false);
   });
 });

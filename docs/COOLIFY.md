@@ -36,6 +36,7 @@ W Coolify → **Environment Variables** ustaw jako **Build Variable** (dostępne
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Powtórz (runtime) |
 | `NEXT_PUBLIC_APP_URL` | URL produkcyjny |
 | `DATABASE_URL` | Połączenie do Postgres (self-hosted Supabase w Coolify) |
+| `GIT_COMMIT` | SHA commita w `GET /api/health` (`revision` / `gitSha`). Coolify może też wstrzyknąć `SOURCE_COMMIT` przy buildzie. |
 
 ### Self-hosted Supabase w Coolify
 
@@ -99,7 +100,7 @@ Coolify działa po **HTTP** (`http://51.38.132.184:8000`), więc natywne webhook
 
 **Stan po merge PR #2 (2026-09-09):** push na `main` uruchomił workflow, ale sekret GitHub **`COOLIFY_TOKEN` jest pusty**. Job kończy się sukcesem i **pomija deploy** (`COOLIFY_TOKEN secret is not configured — skipping Coolify deploy.`). Live (`zso000wkg0gokc8040cc8cw8.51.38.132.184.sslip.io`) **nie** zaktualizuje się sam.
 
-**Manualny deploy (potrzebny teraz):** Coolify → aplikacja MyBudget (`uuid zso000wkg0gokc8040cc8cw8`) → branch **`main`** → **Deploy**.
+**Manualny deploy (potrzebny teraz):** Coolify → aplikacja MyBudget (`uuid zso000wkg0gokc8040cc8cw8`) → branch **`main`** → **Redeploy**. Krótka instrukcja: `docs/coolify-deploy.md`.
 
 ### Jednorazowa konfiguracja auto-deploy
 
