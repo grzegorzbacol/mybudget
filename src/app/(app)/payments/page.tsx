@@ -317,14 +317,15 @@ export default function PaymentsPage() {
                 onClick={async () => {
                   try {
                     const res = await fetch("/api/setup/repair-scheduled", { method: "POST" });
-                    const json = (await res.json()) as { ok?: boolean; error?: string };
-                    if (!res.ok || json.ok === false) {
+                    const json = (await res.json()) as { ok?: boolean; error?: string; notified?: boolean };
+                    if (json.ok) {
+                      toast.success("Odświeżono cache schematu — ładuję płatności");
+                    } else {
                       toast.error(
                         polishPaymentsWarning(json.error) ?? json.error ?? "Nie udało się naprawić schematu"
                       );
-                    } else {
-                      toast.success("Schemat zaktualizowany — odświeżam płatności");
                     }
+                    await new Promise((resolve) => setTimeout(resolve, 400));
                   } catch {
                     toast.error("Nie udało się naprawić schematu");
                   }

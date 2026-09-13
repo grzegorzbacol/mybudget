@@ -101,7 +101,7 @@ describe("applyEnsureSchema cache", () => {
 
     await applyEnsureSchema();
     expect(wasEnsureSchemaRecentlyApplied()).toBe(true);
-    await expect(applyScheduledIdSchemaRepair()).resolves.toEqual({ ok: true, applied: 2 });
+    await expect(applyScheduledIdSchemaRepair()).resolves.toMatchObject({ ok: true, applied: 2 });
     expect(ensureRuns).toBe(1);
     expect(scheduledRuns).toBe(1);
   });
@@ -112,6 +112,53 @@ describe("applyEnsureSchema cache", () => {
     await expect(applyScheduledIdSchemaRepair({})).resolves.toMatchObject({
       ok: false,
       skipped: "DATABASE_URL not set",
+    });
+  });
+
+  it("treats a catalog hit as success and skips ALTER when parent already added scheduled_id", async () => {
+    let ddlRuns = 0;
+    let notified = 0;
+    resetEnsureSchemaState(
+      undefined,
+      undefined,
+      async () => {
+        ddlRuns += 1;
+        return { ok: false, applied: 0, error: "must be owner of table transactions" };
+      },
+      async () => true,
+      async () => {
+        notified += 1;
+        return true;
+      }
+    );
+
+    await expect(applyScheduledIdSchemaRepair()).resolves.toMatchObject({
+      ok: true,
+      skipped: "already present",
+      columnPresent: true,
+      notified: true,
+    });
+    expect(ddlRuns).toBe(0);
+    expect(notified).toBe(1);
+  });
+
+  it("notifies PostgREST after owner-blocked ALTER when the column appears in the catalog", async () => {
+    let probes = 0;
+    resetEnsureSchemaState(
+      undefined,
+      undefined,
+      async () => ({ ok: false, applied: 0, error: "must be owner of table transactions" }),
+      async () => {
+        probes += 1;
+        return probes > 1;
+      },
+      async () => true
+    );
+
+    await expect(applyScheduledIdSchemaRepair()).resolves.toMatchObject({
+      ok: true,
+      columnPresent: true,
+      notified: true,
     });
   });
 

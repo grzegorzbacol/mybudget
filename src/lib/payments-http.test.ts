@@ -8,22 +8,23 @@ import {
 } from "./payments-http";
 
 describe("payments schema warning", () => {
-  it("replaces raw PostgREST English with a Polish repair message", () => {
+  it("replaces raw PostgREST English with a short Polish repair message", () => {
     const warning = polishPaymentsWarning("column transactions.scheduled_id does not exist");
     expect(warning).toContain("scheduled_id");
-    expect(warning).toMatch(/Brak kolumny|Napraw/i);
+    expect(warning).toMatch(/Napraw schemat/i);
     expect(warning).not.toMatch(/does not exist/i);
-    expect(warning).toContain("repair-scheduled");
+    expect(warning).not.toMatch(/SET ROLE|rolsuper|ADD COLUMN IF NOT EXISTS/i);
     expect(needsPaymentsSchemaRepair(warning)).toBe(true);
   });
 
-  it("does not select scheduled_id before a successful ensure", () => {
-    expect(shouldSelectScheduledId(null)).toBe(false);
-    expect(shouldSelectScheduledId({ ok: false, error: "must be owner of table transactions" })).toBe(false);
+  it("still selects scheduled_id after owner-blocked ALTER — the column may already exist", () => {
+    expect(shouldSelectScheduledId({ ok: false, error: "must be owner of table transactions" })).toBe(true);
     expect(
       shouldSelectScheduledId({ ok: false, error: "column transactions.scheduled_id does not exist" })
-    ).toBe(false);
+    ).toBe(true);
     expect(shouldSelectScheduledId({ ok: true })).toBe(true);
+    expect(shouldSelectScheduledId({ ok: false, columnPresent: false })).toBe(false);
+    expect(shouldSelectScheduledId({ ok: true, columnPresent: true })).toBe(true);
   });
 
   it("keeps the board usable without linked transactions", () => {
@@ -35,10 +36,16 @@ describe("payments schema warning", () => {
     ).toHaveLength(1);
   });
 
-  it("does not wrap an already Polish owner message", () => {
-    const polish = polishPaymentsWarning("must be owner of table transactions");
-    expect(polish).toContain("supabase_admin");
-    expect(polishPaymentsWarning(polish)).toBe(polish);
+  it("does not dump owner SQL into the payments banner", () => {
+    const dumped =
+      "Rola aplikacji postgres nie jest właścicielem public.transactions " +
+      "(właściciel to supabase_admin, rolsuper=f) — SET ROLE supabase_admin; " +
+      "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS scheduled_id uuid;";
+    const warning = polishPaymentsWarning(dumped);
+    expect(warning).toContain("Napraw schemat");
+    expect(warning).not.toContain("SET ROLE");
+    expect(warning).not.toContain("rolsuper");
+    expect(polishPaymentsWarning(warning)).toBe(warning);
   });
 
   it("merges warnings without leaking English PostgREST", () => {

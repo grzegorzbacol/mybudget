@@ -122,13 +122,12 @@ export function scheduledIdOwnerMessage(raw?: string | null): string {
   );
 }
 
-export function scheduledIdMissingMessage(raw?: string | null): string {
-  if (isTableOwnerError(raw)) return scheduledIdOwnerMessage(raw);
-  return (
-    "Brak kolumny transactions.scheduled_id — lista płatności działa bez powiązanych transakcji. " +
-    "Uruchom ALTER TABLE jako supabase_admin (DATABASE_OWNER_URL / SET ROLE supabase_admin) " +
-    "albo POST /api/setup/repair-scheduled, potem odśwież stronę."
-  );
+/** Short banner for /payments — never dump ALTER / SET ROLE SQL into the UI. */
+export const SCHEDULED_ID_UI_MESSAGE =
+  "Brak kolumny transactions.scheduled_id w widoku PostgREST. Kliknij „Napraw schemat”, żeby odświeżyć cache — lista płatności działa bez powiązanych transakcji.";
+
+export function scheduledIdMissingMessage(): string {
+  return SCHEDULED_ID_UI_MESSAGE;
 }
 
 /** Roles to try with SET ROLE before DDL on public.transactions. */

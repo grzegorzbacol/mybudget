@@ -49,7 +49,9 @@ describe("schema lag helpers", () => {
     ).toBe(true);
     expect(isScheduledIdSchemaError("column scheduled_occurrences.scheduled_id does not exist")).toBe(false);
     expect(scheduledIdMissingMessage()).toContain("scheduled_id");
+    expect(scheduledIdMissingMessage()).toContain("Napraw schemat");
     expect(scheduledIdMissingMessage()).not.toMatch(/column transactions\.scheduled_id does not exist/i);
+    expect(scheduledIdMissingMessage()).not.toMatch(/SET ROLE|rolsuper|ADD COLUMN IF NOT EXISTS/i);
     expect(scheduledIdOwnerMessage("must be owner of table transactions")).toContain("scheduled_id");
     expect(scheduledIdOwnerMessage("must be owner of table transactions")).toContain("supabase_admin");
     expect(SCHEDULED_ID_OWNER_SQL).toContain("NOTIFY pgrst");

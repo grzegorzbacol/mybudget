@@ -1,12 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { applyScheduledIdSchemaRepair } from "@/lib/ensure-schema";
-import {
-  isTableOwnerError,
-  resolveDatabaseUrl,
-  scheduledIdOwnerMessage,
-  SCHEDULED_ID_OWNER_SQL,
-} from "@/lib/schema";
+import { polishPaymentsWarning } from "@/lib/payments-http";
+import { SCHEDULED_ID_OWNER_SQL, SCHEDULED_ID_UI_MESSAGE } from "@/lib/schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,9 +16,9 @@ async function authorized(request: Request): Promise<boolean> {
 }
 
 /**
- * One-shot live repair: ADD COLUMN IF NOT EXISTS scheduled_id + NOTIFY pgrst.
- * Tries DATABASE_OWNER_URL / SUPABASE_DB_URL, then SET ROLE supabase_admin,
- * before the (often non-owner) app postgres DATABASE_URL.
+ * Reload PostgREST and ADD scheduled_id when the owner URL can ALTER.
+ * Catalog presence (parent already added the column) is success even if
+ * app postgres cannot ALTER public.transactions.
  */
 export async function POST(request: Request) {
   if (!(await authorized(request))) {
@@ -30,58 +26,15 @@ export async function POST(request: Request) {
   }
 
   const repair = await applyScheduledIdSchemaRepair();
-  const databaseUrl = resolveDatabaseUrl();
-  if (!databaseUrl) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "DATABASE_URL not set — cannot ADD COLUMN / NOTIFY on the PostgREST database",
-        repair,
-        ownerSql: SCHEDULED_ID_OWNER_SQL,
-      },
-      { status: 503 }
-    );
-  }
-
-  const { Client } = await import("pg");
-  const client = new Client({ connectionString: databaseUrl, connectionTimeoutMillis: 8000 });
-  try {
-    await client.connect();
-    const columns = await client.query<{ column_name: string }>(
-      `SELECT column_name
-         FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'transactions'
-          AND column_name = 'scheduled_id'`
-    );
-    const ok = columns.rows.some((row) => row.column_name === "scheduled_id");
-    const ownerBlocked = isTableOwnerError(repair.error);
-    return NextResponse.json({
-      ok,
-      repair,
-      columns: {
-        scheduled_id: ok,
-      },
-      notified: true,
-      error: ok
-        ? undefined
-        : ownerBlocked
-          ? scheduledIdOwnerMessage(repair.error)
-          : repair.error ?? "Kolumna transactions.scheduled_id nadal nie istnieje na bazie PostgREST",
-      ownerSql: ok ? undefined : SCHEDULED_ID_OWNER_SQL,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "repair-scheduled failed";
-    return NextResponse.json(
-      {
-        ok: false,
-        error: isTableOwnerError(message) ? scheduledIdOwnerMessage(message) : message,
-        repair,
-        ownerSql: SCHEDULED_ID_OWNER_SQL,
-      },
-      { status: 500 }
-    );
-  } finally {
-    await client.end().catch(() => undefined);
-  }
+  const present = repair.columnPresent === true || repair.ok;
+  return NextResponse.json({
+    ok: present,
+    repair,
+    columns: {
+      scheduled_id: present,
+    },
+    notified: Boolean(repair.notified),
+    error: present ? undefined : polishPaymentsWarning(repair.error) ?? SCHEDULED_ID_UI_MESSAGE,
+    ownerSql: present ? undefined : SCHEDULED_ID_OWNER_SQL,
+  });
 }
