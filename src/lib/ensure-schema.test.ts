@@ -3,6 +3,8 @@ import {
   applyEnsureSchema,
   applyEnsureSchemaForRead,
   applyTransferSchemaRepair,
+  ENSURE_SCHEMA_CONNECT_TIMEOUT_MS,
+  ensureSchemaClientConfig,
   markEnsureSchemaApplied,
   resetEnsureSchemaState,
   wasEnsureSchemaRecentlyApplied,
@@ -107,5 +109,13 @@ describe("applyEnsureSchema cache", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(finished).toBe(true);
     expect(wasEnsureSchemaRecentlyApplied()).toBe(true);
+  });
+
+  it("bounds pg connect and query time so repair cannot hang a transfer write", () => {
+    const config = ensureSchemaClientConfig("postgres://example");
+    expect(config.connectionTimeoutMillis).toBe(ENSURE_SCHEMA_CONNECT_TIMEOUT_MS);
+    expect(config.connectionTimeoutMillis).toBeLessThanOrEqual(4000);
+    expect(config.query_timeout).toBeGreaterThan(0);
+    expect(config.query_timeout).toBeLessThanOrEqual(8000);
   });
 });

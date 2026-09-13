@@ -350,4 +350,66 @@ describe("convertTransactionToTransfer", () => {
     expect(result.error).not.toBe(LIVE_TRANSFER_ACCOUNT_CACHE_ERROR);
     expect(result.error).toMatch(/DATABASE_URL|transfer_account_id|Coolify/i);
   });
+
+  it("does not replay REST insert after an ambiguous SQL COMMIT", async () => {
+    vi.resetModules();
+    vi.doMock("./ensure-schema", () => ({
+      applyTransferSchemaRepair: vi.fn(),
+      applyEnsureSchema: vi.fn(),
+    }));
+    const { convertTransactionToTransfer, shouldReplayConvertAfterSqlFailure } = await import(
+      "./transfer-write"
+    );
+
+    expect(shouldReplayConvertAfterSqlFailure("DATABASE_URL not set")).toBe(true);
+    expect(
+      shouldReplayConvertAfterSqlFailure("Connection terminated unexpectedly")
+    ).toBe(false);
+
+    const restUpdate = vi.fn();
+    const restInsert = vi.fn();
+    const result = await convertTransactionToTransfer(
+      {
+        existingId: "tx-exp",
+        familyId: "fam-1",
+        outgoing: { transfer_account_id: "acc-card", transfer_id: "pair-1" },
+        incoming: { transfer_account_id: "acc-main", transfer_id: "pair-1" },
+      },
+      {
+        updateOutgoing: restUpdate,
+        insertIncoming: restInsert,
+        sqlConvert: vi.fn().mockResolvedValue({ error: "Connection terminated unexpectedly" }),
+      }
+    );
+
+    expect(restUpdate).not.toHaveBeenCalled();
+    expect(restInsert).not.toHaveBeenCalled();
+    expect(result.data).toBeUndefined();
+    expect(result.error).toMatch(/terminated|Nie udało się zapisać transferu/i);
+  });
+});
+
+describe("insertTransferPair repair timing", () => {
+  it("does not open Postgres for schema repair before the first PostgREST write", async () => {
+    vi.resetModules();
+    const applyTransferSchemaRepair = vi.fn().mockResolvedValue({ ok: true, applied: 4 });
+    vi.doMock("./ensure-schema", () => ({
+      applyTransferSchemaRepair,
+      applyEnsureSchema: vi.fn(),
+    }));
+    const { insertTransferPair } = await import("./transfer-write");
+
+    let repairCallsBeforeFirstWrite = 0;
+    const result = await insertTransferPair(
+      async (rows) => {
+        repairCallsBeforeFirstWrite = applyTransferSchemaRepair.mock.calls.length;
+        return { data: rows.map((row, i) => ({ id: `ok-${i}`, ...row })), error: null };
+      },
+      [{ transfer_id: "pair-1", transfer_account_id: "acc-b" }]
+    );
+
+    expect(repairCallsBeforeFirstWrite).toBe(0);
+    expect(applyTransferSchemaRepair).not.toHaveBeenCalled();
+    expect(result.data).toHaveLength(1);
+  });
 });

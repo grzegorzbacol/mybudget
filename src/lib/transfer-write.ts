@@ -108,6 +108,28 @@ function shouldFallbackToSql(message?: string): boolean {
   return isTransferColumnSchemaError(message) || isSchemaLagError(message);
 }
 
+/** COMMIT ack lost / connection dropped after the transaction may already be durable. */
+export function isAmbiguousCommitError(message?: string): boolean {
+  if (!message) return false;
+  return /connection terminated|server closed the connection|cannot ROLLBACK|in failed sql transaction|Client has encountered a connection error|Connection ended unexpectedly/i.test(
+    message
+  );
+}
+
+/**
+ * REST replay after convert SQL is only safe when the transaction never committed.
+ * An ambiguous COMMIT + INSERT of the incoming leg would duplicate the pair.
+ */
+export function shouldReplayConvertAfterSqlFailure(message?: string): boolean {
+  if (!message) return false;
+  if (isAmbiguousCommitError(message)) return false;
+  return (
+    /DATABASE_URL not set|Nie znaleziono transakcji|SQL transfer connect|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout exceeded|getaddrinfo|column .+ does not exist|schema cache|PGRST204/i.test(
+      message
+    ) || shouldFallbackToSql(message)
+  );
+}
+
 function isRetryablePgConnect(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const code =
@@ -298,10 +320,23 @@ export async function convertTransferViaSql(
       return { error: "Nie znaleziono transakcji" };
     }
 
+    const transferId = String(input.outgoing.transfer_id ?? input.incoming.transfer_id ?? input.existingTransferId ?? "");
+    const existingPair = transferId
+      ? await client.query(
+          `SELECT id FROM public.transactions
+            WHERE family_id = $1::uuid AND transfer_id = $2::uuid AND id <> $3::uuid
+            LIMIT 1`,
+          [input.familyId, transferId, input.existingId]
+        )
+      : { rows: [] as Array<Record<string, unknown>> };
+    const existingPairId = existingPair.rows[0]?.id as string | undefined;
+
     let incomingRow: Record<string, unknown> | undefined;
-    if (input.existingTransferId) {
+    if (existingPairId || input.existingTransferId) {
       const pair = await client.query(
-        `UPDATE public.transactions SET
+        existingPairId
+          ? `${UPDATE_TRANSFER_SQL}`
+          : `UPDATE public.transactions SET
            account_id = COALESCE($3, account_id),
            transfer_account_id = $4,
            transfer_id = COALESCE($5, transfer_id),
@@ -313,7 +348,9 @@ export async function convertTransferViaSql(
            cleared = COALESCE($11, cleared)
          WHERE transfer_id = $12::uuid AND id <> $1::uuid AND family_id = $2::uuid
          RETURNING *`,
-        [...updateValues(input.existingId, input.familyId, input.incoming), input.existingTransferId]
+        existingPairId
+          ? updateValues(existingPairId, input.familyId, input.incoming)
+          : [...updateValues(input.existingId, input.familyId, input.incoming), input.existingTransferId]
       );
       incomingRow = pair.rows[0] as Record<string, unknown> | undefined;
     }
@@ -348,7 +385,7 @@ export async function insertTransferPair<T>(
   options?: SchemaWriteRetryOptions & { sqlFallback?: TransferSqlWriter; ensureBeforeWrite?: boolean }
 ): Promise<SchemaWriteResult<T[]>> {
   const records = rows as Record<string, unknown>[];
-  if (options?.ensureBeforeWrite !== false) {
+  if (options?.ensureBeforeWrite) {
     try {
       const { applyTransferSchemaRepair } = await import("./ensure-schema");
       await applyTransferSchemaRepair();
@@ -385,7 +422,7 @@ export async function updateTransferRow<T>(
     ensureBeforeWrite?: boolean;
   }
 ): Promise<SchemaWriteResult<T>> {
-  if (options?.ensureBeforeWrite !== false) {
+  if (options?.ensureBeforeWrite) {
     try {
       const { applyTransferSchemaRepair } = await import("./ensure-schema");
       await applyTransferSchemaRepair();
@@ -441,7 +478,11 @@ export async function convertTransactionToTransfer<T>(
     return { data: sql.data as T[] };
   }
 
-  if (options.ensureBeforeWrite !== false) {
+  if (!shouldReplayConvertAfterSqlFailure(sql.error)) {
+    return { error: userFacingTransferError(undefined, sql.error) };
+  }
+
+  if (options.ensureBeforeWrite) {
     try {
       const { applyTransferSchemaRepair } = await import("./ensure-schema");
       await applyTransferSchemaRepair();
