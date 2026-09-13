@@ -445,7 +445,75 @@ describe("convertTransactionToTransfer", () => {
     expect(restInsert).not.toHaveBeenCalled();
     expect(result.data).toBeUndefined();
     expect(result.error).toContain("ADD COLUMN IF NOT EXISTS transfer_account_id");
-    expect(result.error).toContain("właścicielem");
+    expect(result.error).toContain("supabase_admin");
+  });
+
+  it("still converts via SQL when SET ROLE supabase_admin is denied and columns exist", async () => {
+    vi.resetModules();
+    const previousUrl = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = "postgres://postgres@localhost/postgres";
+    vi.doMock("./ensure-schema", () => ({
+      applyTransferSchemaRepair: vi.fn().mockResolvedValue({
+        ok: false,
+        error: "must be owner of table transactions",
+      }),
+      applyEnsureSchema: vi.fn(),
+    }));
+    const queries: string[] = [];
+    const mockClient = {
+      connect: vi.fn().mockResolvedValue(undefined),
+      end: vi.fn().mockResolvedValue(undefined),
+      query: vi.fn(async (sql: string) => {
+        queries.push(sql);
+        if (/pg_tables/i.test(sql)) return { rows: [{ tableowner: "supabase_admin" }] };
+        if (/SET ROLE/i.test(sql)) {
+          throw new Error('permission denied to set role "supabase_admin"');
+        }
+        if (/ALTER TABLE|CREATE INDEX|NOTIFY/i.test(sql)) {
+          throw new Error("must be owner of table transactions");
+        }
+        if (/^BEGIN|^COMMIT|^ROLLBACK/i.test(sql)) return { rows: [] };
+        if (/UPDATE public\.transactions/i.test(sql)) {
+          return { rows: [{ id: "tx-exp", transfer_account_id: "acc-card", amount: -10 }] };
+        }
+        if (/SELECT id FROM public\.transactions/i.test(sql)) return { rows: [] };
+        if (/INSERT INTO public\.transactions/i.test(sql)) {
+          return { rows: [{ id: "tx-in", transfer_account_id: "acc-main", amount: 10 }] };
+        }
+        return { rows: [] };
+      }),
+    };
+    vi.doMock("pg", () => ({
+      Client: class {
+        constructor() {
+          return mockClient;
+        }
+      },
+    }));
+    const { convertTransactionToTransfer } = await import("./transfer-write");
+
+    try {
+      const result = await convertTransactionToTransfer(
+        {
+          existingId: "tx-exp",
+          familyId: "fam-1",
+          outgoing: { transfer_account_id: "acc-card", transfer_id: "pair-1", amount: -10 },
+          incoming: { transfer_account_id: "acc-main", transfer_id: "pair-1", amount: 10 },
+        },
+        {
+          updateOutgoing: vi.fn(),
+          insertIncoming: vi.fn(),
+        }
+      );
+
+      expect(queries.some((sql) => /SET ROLE/i.test(sql))).toBe(true);
+      expect(queries.some((sql) => /INSERT INTO public\.transactions/i.test(sql))).toBe(true);
+      expect(result.error).toBeUndefined();
+      expect(result.data).toHaveLength(2);
+    } finally {
+      if (previousUrl === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previousUrl;
+    }
   });
 });
 

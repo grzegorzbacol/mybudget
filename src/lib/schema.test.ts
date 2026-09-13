@@ -6,6 +6,9 @@ import {
   REQUIRED_SCHEMA_COLUMNS,
   REQUIRED_SCHEMA_TABLES,
   TRANSFER_SCHEMA_STATEMENTS,
+  TRANSACTIONS_DDL_OWNER_ROLE,
+  assumeTransactionsTableOwner,
+  ddlOwnerRoleCandidates,
   isMissingRelationError,
   isSchemaLagError,
   isTransferColumnSchemaError,
@@ -62,8 +65,42 @@ describe("schema lag helpers", () => {
     expect(transferColumnOwnerMessage("must be owner of table transactions")).toContain(
       "ADD COLUMN IF NOT EXISTS transfer_account_id"
     );
+    expect(transferColumnOwnerMessage("must be owner of table transactions")).toContain("supabase_admin");
+    expect(transferColumnOwnerMessage("must be owner of table transactions")).toContain(
+      "SET ROLE supabase_admin"
+    );
     expect(TRANSFER_COLUMN_OWNER_SQL).toContain("NOTIFY pgrst");
-    expect(schemaLagMessage("must be owner of table transactions")).toContain("właścicielem");
+    expect(TRANSFER_COLUMN_OWNER_SQL).toContain("SET ROLE supabase_admin");
+    expect(schemaLagMessage("must be owner of table transactions")).toContain("supabase_admin");
+  });
+
+  it("prefers the live table owner then supabase_admin for SET ROLE", () => {
+    expect(TRANSACTIONS_DDL_OWNER_ROLE).toBe("supabase_admin");
+    expect(ddlOwnerRoleCandidates(undefined)).toEqual(["supabase_admin"]);
+    expect(ddlOwnerRoleCandidates("supabase_admin")).toEqual(["supabase_admin"]);
+    expect(ddlOwnerRoleCandidates("postgres")).toEqual(["postgres", "supabase_admin"]);
+  });
+
+  it("SET ROLE failure is ignored so convert can write as the app role", async () => {
+    const sqls: string[] = [];
+    await assumeTransactionsTableOwner({
+      query: async (sql) => {
+        sqls.push(sql);
+        if (/pg_tables/i.test(sql)) {
+          return { rows: [{ tableowner: "supabase_admin" }] };
+        }
+        throw new Error('permission denied to set role "supabase_admin"');
+      },
+    });
+    expect(sqls.some((sql) => /SET ROLE "supabase_admin"/i.test(sql))).toBe(true);
+
+    await expect(
+      assumeTransactionsTableOwner({
+        query: async () => {
+          throw new Error("catalog unavailable");
+        },
+      })
+    ).resolves.toBeUndefined();
   });
 
   it("explains that Coolify must run migrations on the PostgREST database", () => {
@@ -98,6 +135,7 @@ describe("schema lag helpers", () => {
     expect(transferSql).toContain("ADD COLUMN IF NOT EXISTS transfer_account_id");
     expect(transferSql).toContain("ADD COLUMN IF NOT EXISTS transfer_id");
     expect(transferSql).toContain("NOTIFY pgrst");
+    expect(transferSql).not.toMatch(/SET ROLE/i);
     for (const column of REQUIRED_SCHEMA_COLUMNS) {
       expect(joined).toContain(column.split(".")[1]);
     }
@@ -185,5 +223,10 @@ describe("schema lag helpers", () => {
     expect(boot).toContain("NOTIFY pgrst");
     expect(boot).toContain("DATABASE_OWNER_URL");
     expect(boot).toContain("owner-add-transfer-columns.sql");
+    expect(boot).toContain("SET ROLE supabase_admin");
+    expect(bootTransferSql).toContain("SET ROLE supabase_admin");
+    const ownerSql = readFileSync(join(process.cwd(), "scripts/owner-add-transfer-columns.sql"), "utf8");
+    expect(ownerSql).toContain("SET ROLE supabase_admin");
+    expect(ownerSql).toContain("supabase-db-c4w4kw0k4cogk8cgsckokg8c");
   });
 });

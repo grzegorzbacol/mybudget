@@ -1,4 +1,5 @@
 import {
+  assumeTransactionsTableOwner,
   isSchemaLagError,
   isTableOwnerError,
   isTransferColumnSchemaError,
@@ -182,6 +183,7 @@ async function connectPg(
 }
 
 async function ensureTransferColumnsOnClient(client: PgClient): Promise<void> {
+  await assumeTransactionsTableOwner(client);
   for (const sql of TRANSFER_SCHEMA_STATEMENTS) {
     await client.query(sql);
   }

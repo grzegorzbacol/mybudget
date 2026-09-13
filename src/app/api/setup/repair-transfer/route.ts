@@ -21,7 +21,8 @@ async function authorized(request: Request): Promise<boolean> {
 
 /**
  * One-shot live repair: ADD COLUMN IF NOT EXISTS transfer_* + NOTIFY pgrst.
- * Tries DATABASE_OWNER_URL / SUPABASE_DB_URL before the (often non-owner) DATABASE_URL.
+ * Tries DATABASE_OWNER_URL / SUPABASE_DB_URL, then SET ROLE supabase_admin,
+ * before the (often non-owner) app postgres DATABASE_URL.
  */
 export async function POST(request: Request) {
   if (!(await authorized(request))) {
