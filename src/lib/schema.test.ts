@@ -6,10 +6,12 @@ import {
   REQUIRED_SCHEMA_COLUMNS,
   REQUIRED_SCHEMA_TABLES,
   TRANSFER_SCHEMA_STATEMENTS,
+  SCHEDULED_ID_SCHEMA_STATEMENTS,
   TRANSACTIONS_DDL_OWNER_ROLE,
   assumeTransactionsTableOwner,
   ddlOwnerRoleCandidates,
   isMissingRelationError,
+  isScheduledIdSchemaError,
   isSchemaLagError,
   isTransferColumnSchemaError,
   missingScheduledTableMessage,
@@ -18,7 +20,10 @@ import {
   schemaLagMessage,
   isTableOwnerError,
   transferColumnOwnerMessage,
+  scheduledIdMissingMessage,
+  scheduledIdOwnerMessage,
   TRANSFER_COLUMN_OWNER_SQL,
+  SCHEDULED_ID_OWNER_SQL,
   writeErrorMessage,
 } from "./schema";
 
@@ -38,6 +43,17 @@ describe("schema lag helpers", () => {
     expect(isTransferColumnSchemaError("Could not find the 'paid_by' column of 'transactions' in the schema cache")).toBe(
       false
     );
+    expect(isScheduledIdSchemaError("column transactions.scheduled_id does not exist")).toBe(true);
+    expect(
+      isScheduledIdSchemaError("Could not find the 'scheduled_id' column of 'transactions' in the schema cache")
+    ).toBe(true);
+    expect(isScheduledIdSchemaError("column scheduled_occurrences.scheduled_id does not exist")).toBe(false);
+    expect(scheduledIdMissingMessage()).toContain("scheduled_id");
+    expect(scheduledIdMissingMessage()).not.toMatch(/column transactions\.scheduled_id does not exist/i);
+    expect(scheduledIdOwnerMessage("must be owner of table transactions")).toContain("scheduled_id");
+    expect(scheduledIdOwnerMessage("must be owner of table transactions")).toContain("supabase_admin");
+    expect(SCHEDULED_ID_OWNER_SQL).toContain("NOTIFY pgrst");
+    expect(SCHEDULED_ID_OWNER_SQL).toContain("SET ROLE supabase_admin");
     expect(
       isTransferColumnSchemaError(
         "Could not find the 'transfer_account_id' column of 'scheduled_transactions' in the schema cache"
@@ -138,6 +154,10 @@ describe("schema lag helpers", () => {
     expect(transferSql).toContain("ADD COLUMN IF NOT EXISTS transfer_id");
     expect(transferSql).toContain("NOTIFY pgrst");
     expect(transferSql).not.toMatch(/SET ROLE/i);
+    const scheduledIdSql = SCHEDULED_ID_SCHEMA_STATEMENTS.join("\n");
+    expect(scheduledIdSql).toContain("ADD COLUMN IF NOT EXISTS scheduled_id");
+    expect(scheduledIdSql).toContain("NOTIFY pgrst");
+    expect(scheduledIdSql).not.toMatch(/SET ROLE/i);
     for (const column of REQUIRED_SCHEMA_COLUMNS) {
       expect(joined).toContain(column.split(".")[1]);
     }
@@ -232,15 +252,35 @@ describe("schema lag helpers", () => {
     const boot = readFileSync(join(process.cwd(), "scripts/docker-entrypoint.sh"), "utf8");
     expect(boot).toContain("transactions.transfer_account_id");
     expect(boot).toContain("transactions.transfer_id");
+    expect(boot).toContain("transactions.scheduled_id");
     expect(boot).toContain("ensure-transfer-columns.sql");
+    expect(boot).toContain("ensure-scheduled-id.sql");
     expect(boot).toContain("NOTIFY pgrst");
     expect(boot).toContain("DATABASE_OWNER_URL");
     expect(boot).toContain("owner-add-transfer-columns.sql");
+    expect(boot).toContain("owner-add-scheduled-id.sql");
     expect(boot).toContain("SET ROLE supabase_admin");
     expect(boot).toContain("scheduled_occurrences");
     expect(bootTransferSql).toContain("SET ROLE supabase_admin");
     const ownerSql = readFileSync(join(process.cwd(), "scripts/owner-add-transfer-columns.sql"), "utf8");
     expect(ownerSql).toContain("SET ROLE supabase_admin");
     expect(ownerSql).toContain("supabase-db-c4w4kw0k4cogk8cgsckokg8c");
+    const scheduledIdCacheSql = readFileSync(
+      join(process.cwd(), "supabase/migrations/014_scheduled_id_schema_cache.sql"),
+      "utf8"
+    );
+    const bootScheduledIdSql = readFileSync(join(process.cwd(), "scripts/ensure-scheduled-id.sql"), "utf8");
+    const ownerScheduledIdSql = readFileSync(
+      join(process.cwd(), "scripts/owner-add-scheduled-id.sql"),
+      "utf8"
+    );
+    for (const sql of [scheduledIdCacheSql, bootScheduledIdSql, ownerScheduledIdSql]) {
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS scheduled_id");
+      expect(sql).toContain("NOTIFY pgrst");
+    }
+    expect(bootScheduledIdSql).toContain("SET ROLE supabase_admin");
+    expect(bootScheduledIdSql).toContain("DATABASE_OWNER_URL");
+    expect(ownerScheduledIdSql).toContain("SET ROLE supabase_admin");
+    expect(ownerScheduledIdSql).toContain("supabase-db-c4w4kw0k4cogk8cgsckokg8c");
   });
 });

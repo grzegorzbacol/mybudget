@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { polishPaymentsWarning } from "@/lib/payments-http";
 import { markScheduledPaid } from "@/lib/payments-write";
+import { isScheduledIdSchemaError } from "@/lib/schema";
 import { paymentPaySchema } from "@/lib/validators";
 
 export async function POST(request: Request) {
@@ -37,8 +39,23 @@ export async function POST(request: Request) {
       createTransaction: parsed.data.create_transaction,
     });
   }
+  if (!result.ok && isScheduledIdSchemaError(result.error)) {
+    const { applyScheduledIdSchemaRepair } = await import("@/lib/ensure-schema");
+    await applyScheduledIdSchemaRepair(process.env);
+    result = await markScheduledPaid({
+      supabase: ctx.supabase,
+      familyId: ctx.family.id,
+      userId: ctx.user.id,
+      scheduledId: parsed.data.scheduled_id,
+      dueDate: parsed.data.due_date,
+      createTransaction: parsed.data.create_transaction,
+    });
+  }
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+    return NextResponse.json(
+      { error: polishPaymentsWarning(result.error) ?? result.error },
+      { status: result.status }
+    );
   }
 
   invalidateFamilyBudgetCache(ctx.family.id);

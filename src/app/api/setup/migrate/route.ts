@@ -2,7 +2,7 @@ import { readdir, readFile } from "fs/promises";
 import { join } from "path";
 import { NextResponse } from "next/server";
 import { Client } from "pg";
-import { applyEnsureSchema, applyTransferSchemaRepair } from "@/lib/ensure-schema";
+import { applyEnsureSchema, applyScheduledIdSchemaRepair, applyTransferSchemaRepair } from "@/lib/ensure-schema";
 import { resolveDatabaseUrl } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
@@ -56,6 +56,7 @@ export async function POST(request: Request) {
 
     const ensured = await applyEnsureSchema(process.env, { force: true });
     const transfer = await applyTransferSchemaRepair(process.env);
+    const scheduledId = await applyScheduledIdSchemaRepair(process.env);
 
     return NextResponse.json({
       ok: true,
@@ -63,6 +64,7 @@ export async function POST(request: Request) {
       applied: ran,
       ensureSchema: ensured,
       transferSchema: transfer,
+      scheduledIdSchema: scheduledId,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Migration failed";

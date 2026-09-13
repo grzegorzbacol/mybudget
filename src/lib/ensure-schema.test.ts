@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   applyEnsureSchema,
   applyEnsureSchemaForRead,
+  applyScheduledIdSchemaRepair,
   applyTransferSchemaRepair,
   ENSURE_SCHEMA_CONNECT_TIMEOUT_MS,
   ensureSchemaClientConfig,
@@ -81,6 +82,51 @@ describe("applyEnsureSchema cache", () => {
       ok: false,
       skipped: "DATABASE_URL not set",
     });
+  });
+
+  it("scheduled_id repair bypasses the recent-success cache", async () => {
+    let ensureRuns = 0;
+    let scheduledRuns = 0;
+    resetEnsureSchemaState(
+      async () => {
+        ensureRuns += 1;
+        return { ok: true, applied: 12 };
+      },
+      undefined,
+      async () => {
+        scheduledRuns += 1;
+        return { ok: true, applied: 2 };
+      }
+    );
+
+    await applyEnsureSchema();
+    expect(wasEnsureSchemaRecentlyApplied()).toBe(true);
+    await expect(applyScheduledIdSchemaRepair()).resolves.toEqual({ ok: true, applied: 2 });
+    expect(ensureRuns).toBe(1);
+    expect(scheduledRuns).toBe(1);
+  });
+
+  it("scheduled_id repair reports a missing DATABASE_URL instead of using the TTL", async () => {
+    resetEnsureSchemaState();
+    markEnsureSchemaApplied();
+    await expect(applyScheduledIdSchemaRepair({})).resolves.toMatchObject({
+      ok: false,
+      skipped: "DATABASE_URL not set",
+    });
+  });
+
+  it("returns scheduled_id owner SQL when every URL lacks ALTER privilege", async () => {
+    const { scheduledIdOwnerMessage } = await import("./schema");
+    const result = await runSqlStatementsAcrossDdlUrls(
+      ["postgres://app"],
+      ["ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS scheduled_id uuid"],
+      "scheduled-id-schema",
+      async () => ({ ok: false, applied: 0, error: "must be owner of table transactions" }),
+      scheduledIdOwnerMessage
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("ADD COLUMN IF NOT EXISTS scheduled_id");
+    expect(result.error).toContain("supabase_admin");
   });
 
   it("force bypasses the recent-success cache", async () => {

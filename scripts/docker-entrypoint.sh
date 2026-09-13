@@ -101,9 +101,26 @@ NOTIFY pgrst, 'reload schema';
       echo "NOTIFY pgrst, 'reload schema' sent (DDL as supabase_admin when SET ROLE / owner URL is available)."
     fi
 
+    # 002/006/009/014 skipped once marked applied. Always ADD scheduled_id as owner.
+    echo "Ensuring transactions.scheduled_id + PostgREST schema reload..."
+    if [ -f /app/scripts/ensure-scheduled-id.sql ]; then
+      if psql_ddl 0 -f /app/scripts/ensure-scheduled-id.sql; then
+        echo "NOTIFY pgrst, 'reload schema' sent for scheduled_id (DDL as supabase_admin when SET ROLE / owner URL is available)."
+      else
+        echo "WARNING: ensure-scheduled-id.sql failed. Run scripts/owner-add-scheduled-id.sql as supabase_admin (not app postgres)."
+      fi
+    else
+      psql_ddl 0 -c "
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS scheduled_id uuid;
+NOTIFY pgrst, 'reload schema';
+"
+      echo "NOTIFY pgrst, 'reload schema' sent for scheduled_id (DDL as supabase_admin when SET ROLE / owner URL is available)."
+    fi
+
     for spec in \
       "transactions.transfer_account_id" \
       "transactions.transfer_id" \
+      "transactions.scheduled_id" \
       "transactions.paid_by" \
       "budget_categories.kind" \
       "accounts.on_budget" \
@@ -113,7 +130,7 @@ NOTIFY pgrst, 'reload schema';
       col=${spec##*.}
       present=$(psql "$dburl" -tAc "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='$table' AND column_name='$col'" 2>/dev/null | tr -d ' ')
       if [ "$present" != "1" ]; then
-        echo "WARNING: $spec is still missing. App postgres is not owner (supabase_admin is). Run scripts/owner-add-transfer-columns.sql as supabase_admin, or set DATABASE_OWNER_URL."
+        echo "WARNING: $spec is still missing. App postgres is not owner (supabase_admin is). Run scripts/owner-add-transfer-columns.sql / owner-add-scheduled-id.sql as supabase_admin, or set DATABASE_OWNER_URL."
       fi
     done
 
