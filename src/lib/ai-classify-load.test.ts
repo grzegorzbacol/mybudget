@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { applyClassifyResult, classifyCategory } from "./ai-classify";
 import { CLASSIFY_CATALOG_LOAD_ERROR, loadClassifyCatalog } from "./ai-classify-load";
 import { resetFamilyBudgetCache } from "./budget-read";
 
@@ -70,5 +71,73 @@ describe("loadClassifyCatalog", () => {
     const supabase = supabaseSelect(() => ({ data: [], error: null }));
     const result = await loadClassifyCatalog(supabase as never, "f1");
     expect(result).toEqual({ catalog: [] });
+  });
+
+  it("Szczegóły: after catalog load, match assigns and parasol suggest_create creates then assigns", async () => {
+    const supabase = supabaseSelect((columns) =>
+      columns.includes("kind")
+        ? { data: null, error: { message: "Could not find the 'kind' column of 'budget_categories' in the schema cache" } }
+        : {
+            data: [
+              { id: FOOD, name: "Zakupy spożywcze", group_name: "Życie codzienne" },
+              { id: INCOME, name: "Wynagrodzenie", group_name: "Przychody" },
+            ],
+            error: null,
+          }
+    );
+    const loaded = await loadClassifyCatalog(supabase as never, "f1");
+    expect(loaded.error).toBeUndefined();
+
+    const match = await classifyCategory(
+      { text: "mleko", payee: "Biedronka" },
+      loaded.catalog,
+      async () =>
+        JSON.stringify({
+          action: "match",
+          category_id: FOOD,
+          confidence: 0.9,
+          reason: "Mleko to zakupy spożywcze.",
+        })
+    );
+    expect(match.action).toBe("match");
+    const matchAssigned: string[] = [];
+    await applyClassifyResult(match, {
+      createEnvelope: async () => ({ id: "should-not-create" }),
+      assign: async (id) => {
+        matchAssigned.push(id);
+      },
+    });
+    expect(matchAssigned).toEqual([FOOD]);
+
+    const suggestion = await classifyCategory(
+      { text: "parasol", payee: "AMAZON.PL" },
+      loaded.catalog,
+      async () =>
+        JSON.stringify({
+          action: "suggest_create",
+          name: "Parasol",
+          group_name: "Osobiste",
+          confidence: 0.68,
+          reason: "Parasol nie pasuje do zakupów spożywczych.",
+        })
+    );
+    expect(suggestion).toMatchObject({
+      action: "suggest_create",
+      name: "Parasol",
+      group_name: "Osobiste",
+    });
+    const createdId = "55555555-5555-4555-8555-555555555555";
+    const createdAssigned: string[] = [];
+    const applied = await applyClassifyResult(suggestion, {
+      createEnvelope: async (body) => {
+        expect(body).toEqual({ group_name: "Osobiste", name: "Parasol", kind: "expense" });
+        return { id: createdId };
+      },
+      assign: async (id) => {
+        createdAssigned.push(id);
+      },
+    });
+    expect(applied.created).toBe(true);
+    expect(createdAssigned).toEqual([createdId]);
   });
 });
