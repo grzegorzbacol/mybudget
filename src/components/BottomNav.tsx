@@ -17,6 +17,7 @@ import {
   Sparkles,
   Upload,
   ClipboardCheck,
+  Receipt,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -29,6 +30,7 @@ const navItems = [
 ];
 
 const moreItems = [
+  { href: "/payments", label: "Płatności", icon: Receipt },
   { href: "/review", label: "Przegląd", icon: ClipboardCheck },
   { href: "/accounts", label: "Konta", icon: Landmark },
   { href: "/wealth", label: "Majątek", icon: Scale },

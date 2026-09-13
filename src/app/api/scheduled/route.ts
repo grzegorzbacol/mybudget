@@ -55,6 +55,9 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
+  if (parsed.data.frequency === "custom" && !(parsed.data.interval_days ?? 0)) {
+    return NextResponse.json({ error: "Podaj liczbę dni dla własnej cykliczności" }, { status: 400 });
+  }
 
   const created = await insertRowWithSchemaRepair(
     async (row) => ctx.supabase.from("scheduled_transactions").insert(row).select().single(),
@@ -65,9 +68,30 @@ export async function POST(request: Request) {
       transfer_account_id: parsed.data.transfer_account_id ?? null,
       category_id: parsed.data.category_id ?? null,
       end_date: parsed.data.end_date ?? null,
+      interval_days: parsed.data.interval_days ?? null,
     },
-    ["transfer_account_id"]
+    ["transfer_account_id", "interval_days"]
   );
+
+  if (!created.data && parsed.data.frequency === "custom") {
+    const fallback = await insertRowWithSchemaRepair(
+      async (row) => ctx.supabase.from("scheduled_transactions").insert(row).select().single(),
+      {
+        ...parsed.data,
+        frequency: "monthly",
+        family_id: ctx.family.id,
+        memo: parsed.data.memo ?? "",
+        transfer_account_id: parsed.data.transfer_account_id ?? null,
+        category_id: parsed.data.category_id ?? null,
+        end_date: parsed.data.end_date ?? null,
+        interval_days: parsed.data.interval_days ?? null,
+      },
+      ["transfer_account_id", "interval_days"]
+    );
+    if (fallback.data) {
+      return NextResponse.json(fallback.data);
+    }
+  }
 
   if (!created.data) {
     return NextResponse.json({ error: created.error }, { status: 500 });

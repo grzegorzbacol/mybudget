@@ -7,6 +7,7 @@ const TABLES = [
   "budget_allocations",
   "transactions",
   "scheduled_transactions",
+  "scheduled_occurrences",
   "goals",
   "expense_splits",
   "settlements",

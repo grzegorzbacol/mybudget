@@ -38,6 +38,12 @@
       "name": "Przegląd tygodnia",
       "short_name": "Przegląd",
       "url": "/review"
+    },
+    {
+      "name": "Płatności",
+      "short_name": "Płatności",
+      "url": "/payments",
+      "description": "Rachunki cykliczne: do zapłaty, opłacone, zaległe"
     }
   ]
 }

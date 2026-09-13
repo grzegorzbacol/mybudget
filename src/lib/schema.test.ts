@@ -119,6 +119,8 @@ describe("schema lag helpers", () => {
     expect(joined).toContain("ADD COLUMN IF NOT EXISTS kind");
     expect(joined).toContain("ADD COLUMN IF NOT EXISTS priority");
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
+    expect(joined).toContain("CREATE TABLE IF NOT EXISTS scheduled_occurrences");
+    expect(joined).toContain("ADD COLUMN IF NOT EXISTS interval_days");
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS expense_splits");
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS settlements");
     expect(joined).toContain("CREATE TABLE IF NOT EXISTS transaction_category_splits");
@@ -195,6 +197,17 @@ describe("schema lag helpers", () => {
       expect(sql).toContain("idx_budget_categories_family");
       expect(sql).toContain("group_name IS DISTINCT FROM 'Przychody'");
     }
+    const occurrencesSql = readFileSync(
+      join(process.cwd(), "supabase/migrations/013_scheduled_occurrences.sql"),
+      "utf8"
+    );
+    expect(occurrencesSql).toContain("CREATE TABLE IF NOT EXISTS scheduled_occurrences");
+    expect(occurrencesSql).toContain("transaction_id uuid");
+    expect(occurrencesSql).not.toMatch(/REFERENCES\s+public\.transactions\b|REFERENCES\s+transactions\s*\(/);
+    expect(occurrencesSql).toContain("interval_days");
+    expect(occurrencesSql).toContain("DATABASE_OWNER_URL");
+    expect(ensureSql).toContain("CREATE TABLE IF NOT EXISTS scheduled_occurrences");
+    expect(ensureSql).toContain("ADD COLUMN IF NOT EXISTS interval_days");
     expect(scheduledSql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
     expect(accountSql).toContain("ADD COLUMN IF NOT EXISTS on_budget");
     expect(accountSql).toContain("accounts_type_check");
@@ -224,6 +237,7 @@ describe("schema lag helpers", () => {
     expect(boot).toContain("DATABASE_OWNER_URL");
     expect(boot).toContain("owner-add-transfer-columns.sql");
     expect(boot).toContain("SET ROLE supabase_admin");
+    expect(boot).toContain("scheduled_occurrences");
     expect(bootTransferSql).toContain("SET ROLE supabase_admin");
     const ownerSql = readFileSync(join(process.cwd(), "scripts/owner-add-transfer-columns.sql"), "utf8");
     expect(ownerSql).toContain("SET ROLE supabase_admin");

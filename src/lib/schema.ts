@@ -165,6 +165,7 @@ export const REQUIRED_SCHEMA_TABLES = [
   "scheduled_transactions",
   "expense_splits",
   "settlements",
+  "scheduled_occurrences",
 ] as const;
 
 /**
@@ -262,7 +263,30 @@ END $$`,
   `ALTER TABLE scheduled_transactions ADD COLUMN IF NOT EXISTS auto_enter boolean NOT NULL DEFAULT false`,
   `ALTER TABLE scheduled_transactions ADD COLUMN IF NOT EXISTS enabled boolean NOT NULL DEFAULT true`,
   `ALTER TABLE scheduled_transactions ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()`,
+  `ALTER TABLE scheduled_transactions ADD COLUMN IF NOT EXISTS interval_days integer`,
   `CREATE INDEX IF NOT EXISTS idx_scheduled_family_date ON scheduled_transactions(family_id, next_date)`,
+  `CREATE TABLE IF NOT EXISTS scheduled_occurrences (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  family_id uuid NOT NULL REFERENCES families(id) ON DELETE CASCADE,
+  scheduled_id uuid NOT NULL REFERENCES scheduled_transactions(id) ON DELETE CASCADE,
+  due_date date NOT NULL,
+  status text NOT NULL DEFAULT 'paid',
+  amount numeric,
+  transaction_id uuid,
+  paid_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (scheduled_id, due_date)
+)`,
+  `ALTER TABLE scheduled_occurrences ADD COLUMN IF NOT EXISTS family_id uuid`,
+  `ALTER TABLE scheduled_occurrences ADD COLUMN IF NOT EXISTS scheduled_id uuid`,
+  `ALTER TABLE scheduled_occurrences ADD COLUMN IF NOT EXISTS due_date date`,
+  `ALTER TABLE scheduled_occurrences ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'paid'`,
+  `ALTER TABLE scheduled_occurrences ADD COLUMN IF NOT EXISTS amount numeric`,
+  `ALTER TABLE scheduled_occurrences ADD COLUMN IF NOT EXISTS transaction_id uuid`,
+  `ALTER TABLE scheduled_occurrences ADD COLUMN IF NOT EXISTS paid_at timestamptz`,
+  `ALTER TABLE scheduled_occurrences ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_scheduled_occurrences_rule_due ON scheduled_occurrences(scheduled_id, due_date)`,
+  `CREATE INDEX IF NOT EXISTS idx_scheduled_occurrences_family_due ON scheduled_occurrences(family_id, due_date)`,
   `CREATE TABLE IF NOT EXISTS expense_splits (
   id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
   family_id uuid NOT NULL,
@@ -290,8 +314,13 @@ END $$`,
   `ALTER TABLE settlements ADD COLUMN IF NOT EXISTS to_user_id uuid`,
   `ALTER TABLE settlements ADD COLUMN IF NOT EXISTS amount numeric`,
   `ALTER TABLE scheduled_transactions ENABLE ROW LEVEL SECURITY`,
+  `ALTER TABLE scheduled_occurrences ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE expense_splits ENABLE ROW LEVEL SECURITY`,
   `ALTER TABLE settlements ENABLE ROW LEVEL SECURITY`,
+  `DROP POLICY IF EXISTS "Family scoped select" ON scheduled_occurrences`,
+  `DROP POLICY IF EXISTS "Family scoped insert" ON scheduled_occurrences`,
+  `DROP POLICY IF EXISTS "Family scoped update" ON scheduled_occurrences`,
+  `DROP POLICY IF EXISTS "Family scoped delete" ON scheduled_occurrences`,
   `DROP POLICY IF EXISTS "Family scoped select" ON scheduled_transactions`,
   `DROP POLICY IF EXISTS "Family scoped insert" ON scheduled_transactions`,
   `DROP POLICY IF EXISTS "Family scoped update" ON scheduled_transactions`,
@@ -305,6 +334,14 @@ BEGIN
   CREATE POLICY "Family scoped update" ON scheduled_transactions
     FOR UPDATE USING (family_id IN (SELECT get_user_family_ids()));
   CREATE POLICY "Family scoped delete" ON scheduled_transactions
+    FOR DELETE USING (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped select" ON scheduled_occurrences
+    FOR SELECT USING (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped insert" ON scheduled_occurrences
+    FOR INSERT WITH CHECK (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped update" ON scheduled_occurrences
+    FOR UPDATE USING (family_id IN (SELECT get_user_family_ids()));
+  CREATE POLICY "Family scoped delete" ON scheduled_occurrences
     FOR DELETE USING (family_id IN (SELECT get_user_family_ids()));
 EXCEPTION
   WHEN undefined_function THEN NULL;
@@ -344,6 +381,8 @@ END $$`,
   `DO $$
 BEGIN
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.scheduled_transactions
+    TO anon, authenticated, service_role;
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.scheduled_occurrences
     TO anon, authenticated, service_role;
   GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.expense_splits
     TO anon, authenticated, service_role;

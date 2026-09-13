@@ -11,7 +11,15 @@ import type {
   ScheduledTransaction,
 } from "./types";
 
-export function nextScheduleDate(date: string, frequency: ScheduledTransaction["frequency"]): string | null {
+export function nextScheduleDate(
+  date: string,
+  frequency: ScheduledTransaction["frequency"],
+  intervalDays?: number | null
+): string | null {
+  const customDays = Number(intervalDays);
+  if (Number.isInteger(customDays) && customDays > 0) {
+    return addDays(date, customDays);
+  }
   switch (frequency) {
     case "once":
       return null;
@@ -23,6 +31,8 @@ export function nextScheduleDate(date: string, frequency: ScheduledTransaction["
       return addMonthsToDate(date, 1);
     case "yearly":
       return addMonthsToDate(date, 12);
+    case "custom":
+      return null;
     default:
       return null;
   }
@@ -71,7 +81,7 @@ export function generateScheduleOccurrences(
           frequency: rule.frequency,
         });
       }
-      cursor = nextScheduleDate(cursor, rule.frequency);
+      cursor = nextScheduleDate(cursor, rule.frequency, rule.interval_days);
       guard += 1;
       if (rule.frequency === "once") break;
     }
