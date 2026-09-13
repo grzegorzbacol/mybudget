@@ -134,7 +134,7 @@ describe("insertTransferPair", () => {
 
     let attempts = 0;
     const result = await insertTransferPair(
-      async (rows) => {
+      async () => {
         attempts += 1;
         if (attempts === 1) {
           return { data: null, error: { message: LIVE_TRANSFER_CACHE_ERROR } };
