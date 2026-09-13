@@ -133,7 +133,7 @@ export function shouldReplayConvertAfterSqlFailure(message?: string): boolean {
   if (isAmbiguousCommitError(message)) return false;
   if (isTableOwnerError(message)) return false;
   return (
-    /DATABASE_URL not set|Nie znaleziono transakcji|SQL transfer connect|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout exceeded|getaddrinfo|column .+ does not exist|schema cache|PGRST204/i.test(
+    /DATABASE_URL not set|Nie znaleziono transakcji|SQL transfer connect|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout expired|timeout exceeded|connection timeout|getaddrinfo|column .+ does not exist|schema cache|PGRST204/i.test(
       message
     ) || shouldFallbackToSql(message)
   );

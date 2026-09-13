@@ -274,6 +274,35 @@ describe("convertTransactionToTransfer", () => {
     expect(result.data?.[0]).toMatchObject({ transfer_account_id: "acc-card" });
   });
 
+  it("falls back to REST when node-pg reports timeout expired before BEGIN", async () => {
+    vi.resetModules();
+    vi.doMock("./ensure-schema", () => ({
+      applyTransferSchemaRepair: vi.fn().mockResolvedValue({ ok: true, applied: 4 }),
+      applyEnsureSchema: vi.fn(),
+    }));
+    const { convertTransactionToTransfer } = await import("./transfer-write");
+
+    const result = await convertTransactionToTransfer(
+      {
+        existingId: "tx-exp",
+        familyId: "fam-1",
+        outgoing: { transfer_account_id: "acc-card", transfer_id: "pair-1", amount: -5615.43 },
+        incoming: { transfer_account_id: "acc-main", transfer_id: "pair-1", amount: 5615.43 },
+      },
+      {
+        updateOutgoing: async (row) => ({ data: { id: "tx-exp", ...row }, error: null }),
+        insertIncoming: async (rows) => ({
+          data: rows.map((row) => ({ id: "tx-in", ...row })),
+          error: null,
+        }),
+        sqlConvert: vi.fn().mockResolvedValue({ error: "timeout expired" }),
+      }
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.data).toHaveLength(2);
+  });
+
   it("falls back to REST+SQL when the first SQL convert cannot connect", async () => {
     vi.resetModules();
     vi.doMock("./ensure-schema", () => ({
@@ -362,6 +391,7 @@ describe("convertTransactionToTransfer", () => {
     );
 
     expect(shouldReplayConvertAfterSqlFailure("DATABASE_URL not set")).toBe(true);
+    expect(shouldReplayConvertAfterSqlFailure("timeout expired")).toBe(true);
     expect(
       shouldReplayConvertAfterSqlFailure("Connection terminated unexpectedly")
     ).toBe(false);
