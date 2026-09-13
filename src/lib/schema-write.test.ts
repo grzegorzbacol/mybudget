@@ -149,6 +149,37 @@ describe("updateRowWithSchemaRepair", () => {
     expect(result.data).toMatchObject({ transfer_account_id: "acc-card" });
   });
 
+  it("repairs transactions.scheduled_id via the owner-URL path", async () => {
+    vi.resetModules();
+    const applyScheduledIdSchemaRepair = vi.fn().mockResolvedValue({ ok: true, applied: 2 });
+    vi.doMock("./ensure-schema", () => ({
+      applyScheduledIdSchemaRepair,
+      applyTransferSchemaRepair: vi.fn(),
+      applyEnsureSchema: vi.fn(),
+    }));
+    const { insertRowWithSchemaRepair: insert } = await import("./schema-write");
+
+    let attempts = 0;
+    const result = await insert(
+      async (row) => {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            data: null,
+            error: { message: "column transactions.scheduled_id does not exist" },
+          };
+        }
+        return { data: { id: "tx-pay", ...row }, error: null };
+      },
+      { scheduled_id: "s-netflix", amount: -45 },
+      ["scheduled_id"]
+    );
+
+    expect(applyScheduledIdSchemaRepair).toHaveBeenCalled();
+    expect(attempts).toBe(2);
+    expect(result.data).toMatchObject({ scheduled_id: "s-netflix" });
+  });
+
   it("retries a PATCH after transfer_account_id is missing from the schema cache", async () => {
     vi.resetModules();
     const applyTransferSchemaRepair = vi.fn().mockResolvedValue({ ok: true, applied: 4 });

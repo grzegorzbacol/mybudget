@@ -30,6 +30,16 @@ export function isTransferColumnSchemaError(message?: string | null): boolean {
   return /of 'transactions'|column transactions\./i.test(message);
 }
 
+/** Live /payments: column transactions.scheduled_id does not exist (PostgREST / Postgres). */
+export function isScheduledIdSchemaError(message?: string | null): boolean {
+  if (!message || !isSchemaLagError(message)) return false;
+  if (!/\bscheduled_id\b/i.test(message)) return false;
+  if (/scheduled_occurrences|scheduled_transactions/i.test(message) && !/column transactions\.|of 'transactions'/i.test(message)) {
+    return false;
+  }
+  return /of 'transactions'|column transactions\./i.test(message);
+}
+
 export function isMissingRelationError(message?: string | null): boolean {
   if (!message) return false;
   return /relation .+ does not exist|could not find the table|schema cache/i.test(message);
@@ -88,6 +98,36 @@ export function transferColumnOwnerMessage(raw?: string | null): string {
     "albo ustaw DATABASE_OWNER_URL na supabase_admin tej samej bazy co PostgREST i zredeployuj.\n\n" +
     TRANSFER_COLUMN_OWNER_SQL +
     detail
+  );
+}
+
+/** Exact SQL to run as supabase_admin for payments linkage. */
+export const SCHEDULED_ID_OWNER_SQL = [
+  "SET ROLE supabase_admin;",
+  "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS scheduled_id uuid;",
+  "NOTIFY pgrst, 'reload schema';",
+].join("\n");
+
+export function scheduledIdOwnerMessage(raw?: string | null): string {
+  const detail = raw?.trim() ? ` (${raw.trim()})` : "";
+  return (
+    "Rola aplikacji postgres nie jest właścicielem public.transactions " +
+    "(właściciel to supabase_admin, rolsuper=f) — " +
+    "aplikacja nie może dodać transactions.scheduled_id. " +
+    "Uruchom ALTER TABLE jako supabase_admin (SET ROLE supabase_admin " +
+    "albo psql -U supabase_admin na supabase-db-c4w4kw0k4cogk8cgsckokg8c), " +
+    "albo ustaw DATABASE_OWNER_URL na supabase_admin tej samej bazy co PostgREST i zredeployuj.\n\n" +
+    SCHEDULED_ID_OWNER_SQL +
+    detail
+  );
+}
+
+export function scheduledIdMissingMessage(raw?: string | null): string {
+  if (isTableOwnerError(raw)) return scheduledIdOwnerMessage(raw);
+  return (
+    "Brak kolumny transactions.scheduled_id — lista płatności działa bez powiązanych transakcji. " +
+    "Uruchom ALTER TABLE jako supabase_admin (DATABASE_OWNER_URL / SET ROLE supabase_admin) " +
+    "albo POST /api/setup/repair-scheduled, potem odśwież stronę."
   );
 }
 
@@ -177,6 +217,12 @@ export const TRANSFER_SCHEMA_STATEMENTS = [
   `ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid`,
   `ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_id uuid`,
   `CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON public.transactions(transfer_id)`,
+  `NOTIFY pgrst, 'reload schema'`,
+] as const;
+
+/** Targeted repair for GET /api/payments when PostgREST lacks transactions.scheduled_id. */
+export const SCHEDULED_ID_SCHEMA_STATEMENTS = [
+  `ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS scheduled_id uuid`,
   `NOTIFY pgrst, 'reload schema'`,
 ] as const;
 

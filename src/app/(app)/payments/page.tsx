@@ -39,6 +39,7 @@ import { useMarkPaymentPaid, usePaymentsBoard, useUndoPaymentPaid } from "@/hook
 import { isExpenseCategory } from "@/lib/budget";
 import { formatCurrency, getCurrentYearMonth, todayIso } from "@/lib/format";
 import { frequencyLabel, PAYMENT_FREQ_LABEL, PAYMENT_STATUS_LABEL } from "@/lib/payments";
+import { needsPaymentsSchemaRepair, polishPaymentsWarning } from "@/lib/payments-http";
 import { createClient } from "@/lib/supabase/client";
 import type { PaymentItem, PaymentStatus, ScheduledTransaction } from "@/lib/types";
 import type { ScheduledInput } from "@/lib/validators";
@@ -294,7 +295,8 @@ export default function PaymentsPage() {
         <Card>
           <CardContent className="py-8 text-center text-sm">
             <p className="text-muted-foreground">
-              {error instanceof Error ? error.message : "Nie udało się wczytać płatności."}
+              {polishPaymentsWarning(error instanceof Error ? error.message : null) ??
+                "Nie udało się wczytać płatności."}
             </p>
             <Button className="mt-4" size="sm" variant="outline" disabled={isFetching} onClick={() => refetch()}>
               {isFetching ? "Wczytywanie…" : "Spróbuj ponownie"}
@@ -305,7 +307,34 @@ export default function PaymentsPage() {
 
       {data?.warning && (
         <Card className="border-amber-500/40">
-          <CardContent className="py-3 text-sm text-amber-800">{data.warning}</CardContent>
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm text-amber-800 dark:text-amber-200">
+            <p>{polishPaymentsWarning(data.warning) ?? data.warning}</p>
+            {needsPaymentsSchemaRepair(data.warning) && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isFetching}
+                onClick={async () => {
+                  try {
+                    const res = await fetch("/api/setup/repair-scheduled", { method: "POST" });
+                    const json = (await res.json()) as { ok?: boolean; error?: string };
+                    if (!res.ok || json.ok === false) {
+                      toast.error(
+                        polishPaymentsWarning(json.error) ?? json.error ?? "Nie udało się naprawić schematu"
+                      );
+                    } else {
+                      toast.success("Schemat zaktualizowany — odświeżam płatności");
+                    }
+                  } catch {
+                    toast.error("Nie udało się naprawić schematu");
+                  }
+                  await refetch();
+                }}
+              >
+                Napraw schemat
+              </Button>
+            )}
+          </CardContent>
         </Card>
       )}
 

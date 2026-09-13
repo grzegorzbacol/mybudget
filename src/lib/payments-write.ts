@@ -1,5 +1,7 @@
 import { nextScheduleDate } from "./cashflow";
-import { isMissingRelationError } from "./schema";
+import { polishPaymentsWarning } from "./payments-http";
+import { isMissingRelationError, isScheduledIdSchemaError, writeErrorMessage } from "./schema";
+import { insertRowWithSchemaRepair, insertRowsWithSchemaRepair } from "./schema-write";
 import { deleteFamilyTransaction } from "./transaction-delete";
 import { nextUnpaidDate, occurrenceKey, rewindNextDate } from "./payments";
 import type { ScheduledOccurrence, ScheduledTransaction } from "./types";
@@ -117,45 +119,63 @@ async function insertLedger(
   if (isTransfer) {
     const transferId = crypto.randomUUID();
     const abs = Math.abs(Number(rule.amount));
-    const result = await supabase.from("transactions").insert([
-      {
-        family_id: familyId,
-        account_id: rule.account_id,
-        transfer_account_id: rule.transfer_account_id,
-        transfer_id: transferId,
-        scheduled_id: rule.id,
-        category_id: rule.category_id,
-        amount: -abs,
-        payee: rule.payee,
-        memo: rule.memo ?? "",
-        date: dueDate,
-        source: "manual",
-        added_by: userId,
+    const result = await insertRowsWithSchemaRepair<{ id?: string; amount?: number }>(
+      async (rows) => {
+        const inserted = await supabase.from("transactions").insert(rows).select("id,amount");
+        return {
+          data: (inserted.data as Array<{ id?: string; amount?: number }> | null) ?? null,
+          error: inserted.error,
+        };
       },
-      {
-        family_id: familyId,
-        account_id: rule.transfer_account_id,
-        transfer_account_id: rule.account_id,
-        transfer_id: transferId,
-        scheduled_id: rule.id,
-        category_id: null,
-        amount: abs,
-        payee: rule.payee,
-        memo: rule.memo ?? "",
-        date: dueDate,
-        source: "manual",
-        added_by: userId,
-      },
-    ]);
-    if (result.error) return { transactionId: null, error: result.error.message };
-    const rows = result.data as Array<{ id?: string; amount?: number }> | null;
-    const outgoing = rows?.find((row) => Number(row.amount) < 0) ?? rows?.[0];
+      [
+        {
+          family_id: familyId,
+          account_id: rule.account_id,
+          transfer_account_id: rule.transfer_account_id,
+          transfer_id: transferId,
+          scheduled_id: rule.id,
+          category_id: rule.category_id,
+          amount: -abs,
+          payee: rule.payee,
+          memo: rule.memo ?? "",
+          date: dueDate,
+          source: "manual",
+          added_by: userId,
+        },
+        {
+          family_id: familyId,
+          account_id: rule.transfer_account_id,
+          transfer_account_id: rule.account_id,
+          transfer_id: transferId,
+          scheduled_id: rule.id,
+          category_id: null,
+          amount: abs,
+          payee: rule.payee,
+          memo: rule.memo ?? "",
+          date: dueDate,
+          source: "manual",
+          added_by: userId,
+        },
+      ],
+      ["scheduled_id"]
+    );
+    if (result.error) {
+      return { transactionId: null, error: polishPaymentsWarning(result.error) ?? result.error };
+    }
+    const rows = result.data ?? [];
+    const outgoing = rows.find((row) => Number(row.amount) < 0) ?? rows[0];
     return { transactionId: outgoing?.id ?? null };
   }
 
-  const result = await supabase
-    .from("transactions")
-    .insert({
+  const result = await insertRowWithSchemaRepair<{ id?: string }>(
+    async (row) => {
+      const inserted = await supabase.from("transactions").insert(row).select("id").single();
+      return {
+        data: (inserted.data as { id?: string } | null) ?? null,
+        error: inserted.error,
+      };
+    },
+    {
       family_id: familyId,
       account_id: rule.account_id,
       category_id: Number(rule.amount) > 0 ? null : rule.category_id,
@@ -166,12 +186,13 @@ async function insertLedger(
       date: dueDate,
       source: "manual",
       added_by: userId,
-    })
-    .select("id")
-    .single();
-  if (result.error) return { transactionId: null, error: result.error.message };
-  const id = (result.data as { id?: string } | null)?.id ?? null;
-  return { transactionId: id };
+    },
+    ["scheduled_id"]
+  );
+  if (result.error) {
+    return { transactionId: null, error: polishPaymentsWarning(result.error) ?? result.error };
+  }
+  return { transactionId: result.data?.id ?? null };
 }
 
 export function isUniqueViolation(message?: string | null): boolean {
@@ -214,7 +235,10 @@ async function findLedger(
     .eq("family_id", familyId)
     .eq("scheduled_id", scheduledId)
     .eq("date", dueDate)) as unknown as { data: Array<{ id: string }> | { id: string } | null; error: QueryError };
-  if (result.error) return null;
+  if (result.error) {
+    if (isScheduledIdSchemaError(writeErrorMessage(result.error))) return null;
+    return null;
+  }
   const rows = Array.isArray(result.data) ? result.data : result.data ? [result.data] : [];
   return rows[0]?.id ?? null;
 }

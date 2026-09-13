@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { polishPaymentsWarning } from "@/lib/payments-http";
 import { undoScheduledPaid } from "@/lib/payments-write";
 import { paymentUnpaySchema } from "@/lib/validators";
 
@@ -25,7 +26,10 @@ export async function POST(request: Request) {
   });
 
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: result.status });
+    return NextResponse.json(
+      { error: polishPaymentsWarning(result.error) ?? result.error },
+      { status: result.status }
+    );
   }
 
   invalidateFamilyBudgetCache(ctx.family.id);

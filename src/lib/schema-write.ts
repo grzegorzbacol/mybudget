@@ -1,5 +1,6 @@
 import {
   isMissingRelationError,
+  isScheduledIdSchemaError,
   isSchemaLagError,
   isTransferColumnSchemaError,
   writeErrorMessage,
@@ -111,6 +112,11 @@ async function repairSchemaIfLagging(message: string): Promise<SchemaRepairResul
   const schema = await import("./ensure-schema");
   if (isTransferColumnSchemaError(message) && typeof schema.applyTransferSchemaRepair === "function") {
     const result = await schema.applyTransferSchemaRepair();
+    const ran = Boolean(result?.applied) || (Boolean(result?.ok) && !result?.skipped);
+    return { attempted: true, reloaded: ran };
+  }
+  if (isScheduledIdSchemaError(message) && typeof schema.applyScheduledIdSchemaRepair === "function") {
+    const result = await schema.applyScheduledIdSchemaRepair();
     const ran = Boolean(result?.applied) || (Boolean(result?.ok) && !result?.skipped);
     return { attempted: true, reloaded: ran };
   }

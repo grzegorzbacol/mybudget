@@ -1,11 +1,13 @@
 import { Client } from "pg";
 import {
   ENSURE_SCHEMA_STATEMENTS,
+  SCHEDULED_ID_SCHEMA_STATEMENTS,
   TRANSFER_SCHEMA_STATEMENTS,
   assumeTransactionsTableOwner,
   isTableOwnerError,
   resolveDatabaseUrl,
   resolveDdlDatabaseUrls,
+  scheduledIdOwnerMessage,
   transferColumnOwnerMessage,
 } from "./schema";
 
@@ -42,15 +44,18 @@ let lastSuccessAt = 0;
 let inFlight: Promise<EnsureSchemaResult> | null = null;
 let runStatements: EnsureSchemaRunner = runEnsureSchemaUncached;
 let runTransferStatements: EnsureSchemaRunner = runTransferSchemaUncached;
+let runScheduledIdStatements: EnsureSchemaRunner = runScheduledIdSchemaUncached;
 
 export function resetEnsureSchemaState(
   runner?: EnsureSchemaRunner,
-  transferRunner?: EnsureSchemaRunner
+  transferRunner?: EnsureSchemaRunner,
+  scheduledIdRunner?: EnsureSchemaRunner
 ) {
   lastSuccessAt = 0;
   inFlight = null;
   runStatements = runner ?? runEnsureSchemaUncached;
   runTransferStatements = transferRunner ?? runTransferSchemaUncached;
+  runScheduledIdStatements = scheduledIdRunner ?? runScheduledIdSchemaUncached;
 }
 
 export function markEnsureSchemaApplied(at = Date.now()) {
@@ -107,7 +112,8 @@ export async function runSqlStatementsAcrossDdlUrls(
   statements: readonly string[],
   label: string,
   exec: (url: string) => Promise<EnsureSchemaResult> = (url) =>
-    runSqlStatementsOnUrl(url, statements, label)
+    runSqlStatementsOnUrl(url, statements, label),
+  ownerMessage: (raw?: string | null) => string = transferColumnOwnerMessage
 ): Promise<EnsureSchemaResult> {
   if (!urls.length) {
     return { ok: false, applied: 0, skipped: "DATABASE_URL not set" };
@@ -125,7 +131,7 @@ export async function runSqlStatementsAcrossDdlUrls(
     lastError = result.error ?? result.skipped;
   }
   if (lastOwner) {
-    return { ok: false, applied: 0, error: transferColumnOwnerMessage(lastOwner) };
+    return { ok: false, applied: 0, error: ownerMessage(lastOwner) };
   }
   return { ok: false, applied: 0, error: lastError };
 }
@@ -133,13 +139,20 @@ export async function runSqlStatementsAcrossDdlUrls(
 async function runSqlStatements(
   env: NodeJS.ProcessEnv | Record<string, string | undefined>,
   statements: readonly string[],
-  label = "ensure-schema"
+  label = "ensure-schema",
+  ownerMessage: (raw?: string | null) => string = transferColumnOwnerMessage
 ): Promise<EnsureSchemaResult> {
   const urls = resolveDdlDatabaseUrls(env);
   if (!urls.length && resolveDatabaseUrl(env)) {
     urls.push(resolveDatabaseUrl(env)!);
   }
-  return runSqlStatementsAcrossDdlUrls(urls, statements, label);
+  return runSqlStatementsAcrossDdlUrls(
+    urls,
+    statements,
+    label,
+    (url) => runSqlStatementsOnUrl(url, statements, label),
+    ownerMessage
+  );
 }
 
 async function runEnsureSchemaUncached(
@@ -154,6 +167,17 @@ async function runTransferSchemaUncached(
   return runSqlStatements(env, TRANSFER_SCHEMA_STATEMENTS, "transfer-schema");
 }
 
+async function runScheduledIdSchemaUncached(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>
+): Promise<EnsureSchemaResult> {
+  return runSqlStatements(
+    env,
+    SCHEDULED_ID_SCHEMA_STATEMENTS,
+    "scheduled-id-schema",
+    scheduledIdOwnerMessage
+  );
+}
+
 /**
  * Always ADD transfer_* columns and NOTIFY pgrst. Must not use the 10-minute
  * ensure-schema TTL — boot / budget reads can mark that cache hot while
@@ -163,6 +187,18 @@ export async function applyTransferSchemaRepair(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
 ): Promise<EnsureSchemaResult> {
   return runTransferStatements(env);
+}
+
+/**
+ * Always ADD transactions.scheduled_id and NOTIFY pgrst. Bypasses the
+ * ensure-schema TTL — boot/budget can mark that cache hot while PostgREST
+ * still lacks scheduled_id. Uses DATABASE_OWNER_URL / SUPABASE_DB_URL first;
+ * app DATABASE_URL is not owner of public.transactions.
+ */
+export async function applyScheduledIdSchemaRepair(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): Promise<EnsureSchemaResult> {
+  return runScheduledIdStatements(env);
 }
 
 export async function applyEnsureSchema(
