@@ -53,8 +53,24 @@ export function isTableOwnerError(message?: string | null): boolean {
   );
 }
 
-/** Exact SQL the table owner (postgres / supabase_admin) must run once. */
+/**
+ * Live Coolify (supabase-db-c4w4kw0k4cogk8cgsckokg8c): public.transactions is
+ * owned by supabase_admin. App DATABASE_URL user is `postgres` with rolsuper=f,
+ * so ALTER TABLE as the app role fails. Future DDL must SET ROLE or connect as
+ * this owner — INSERT/UPDATE as postgres still works once columns exist.
+ */
+export const TRANSACTIONS_DDL_OWNER_ROLE = "supabase_admin";
+
+export type SqlQueryable = {
+  query: (
+    sql: string,
+    values?: unknown[]
+  ) => Promise<{ rows: Array<Record<string, unknown>> }>;
+};
+
+/** Exact SQL to run as supabase_admin (or after SET ROLE supabase_admin). */
 export const TRANSFER_COLUMN_OWNER_SQL = [
+  "SET ROLE supabase_admin;",
   "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid;",
   "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_id uuid;",
   "CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON public.transactions(transfer_id);",
@@ -64,13 +80,59 @@ export const TRANSFER_COLUMN_OWNER_SQL = [
 export function transferColumnOwnerMessage(raw?: string | null): string {
   const detail = raw?.trim() ? ` (${raw.trim()})` : "";
   return (
-    "Rola z DATABASE_URL nie jest właścicielem public.transactions — " +
+    "Rola aplikacji postgres nie jest właścicielem public.transactions " +
+    "(właściciel to supabase_admin, rolsuper=f) — " +
     "aplikacja nie może dodać transfer_account_id / transfer_id. " +
-    "Uruchom raz jako właściciel tabeli (postgres / supabase_admin w Coolify → supabase-db), " +
-    "albo ustaw DATABASE_OWNER_URL / SUPABASE_DB_URL na to samo Postgres co PostgREST i zredeployuj.\n\n" +
+    "Uruchom ALTER TABLE jako supabase_admin (SET ROLE supabase_admin " +
+    "albo psql -U supabase_admin na supabase-db-c4w4kw0k4cogk8cgsckokg8c), " +
+    "albo ustaw DATABASE_OWNER_URL na supabase_admin tej samej bazy co PostgREST i zredeployuj.\n\n" +
     TRANSFER_COLUMN_OWNER_SQL +
     detail
   );
+}
+
+/** Roles to try with SET ROLE before DDL on public.transactions. */
+export function ddlOwnerRoleCandidates(tableOwner?: string | null): string[] {
+  const roles = [tableOwner?.trim(), TRANSACTIONS_DDL_OWNER_ROLE].filter(
+    (role): role is string => Boolean(role)
+  );
+  return [...new Set(roles)];
+}
+
+function quoteIdent(ident: string): string | null {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(ident)) return null;
+  return `"${ident.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Best-effort SET ROLE to the table owner so ALTER TABLE can succeed.
+ * Failure is ignored — convert must still write when columns already exist
+ * (INSERT/UPDATE do not require ownership). Never throws.
+ */
+export async function assumeTransactionsTableOwner(query: SqlQueryable): Promise<void> {
+  try {
+    const ownerResult = await query.query(
+      `SELECT tableowner FROM pg_tables
+       WHERE schemaname = 'public' AND tablename = 'transactions'
+       LIMIT 1`
+    );
+    const tableOwner =
+      typeof ownerResult.rows[0]?.tableowner === "string"
+        ? ownerResult.rows[0].tableowner
+        : undefined;
+    for (const role of ddlOwnerRoleCandidates(tableOwner)) {
+      const ident = quoteIdent(role);
+      if (!ident) continue;
+      try {
+        await query.query(`SET ROLE ${ident}`);
+        return;
+      } catch {
+        /* permission denied to set role — stay as current user */
+      }
+    }
+  } catch {
+    /* catalog lookup failed — stay as current user */
+  }
 }
 
 export function missingScheduledTableMessage(raw?: string | null): string {
@@ -345,8 +407,8 @@ export function resolveDatabaseUrl(
 }
 
 /**
- * Privilege-first URLs for ALTER TABLE. Live Coolify often has DATABASE_URL as a
- * non-owner (PostgREST/app) role while SUPABASE_DB_URL / postgres is the owner.
+ * Privilege-first URLs for ALTER TABLE. Live Coolify: DATABASE_URL is app
+ * `postgres` (rolsuper=f); owner of public.transactions is supabase_admin.
  * DATABASE_URL is last so a limited app role does not block DDL.
  */
 export const DDL_DATABASE_URL_KEYS = [

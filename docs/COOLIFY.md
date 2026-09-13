@@ -35,8 +35,8 @@ W Coolify → **Environment Variables** ustaw jako **Build Variable** (dostępne
 | `NEXT_PUBLIC_SUPABASE_URL` | Powtórz (runtime) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Powtórz (runtime) |
 | `NEXT_PUBLIC_APP_URL` | URL produkcyjny |
-| `DATABASE_URL` | Połączenie aplikacji / PostgREST (może być rola **bez** OWNER na `transactions`) |
-| `DATABASE_OWNER_URL` albo `SUPABASE_DB_URL` | **Właściciel** tabel (`postgres` / `supabase_admin`) — ta sama baza. Wymagane do `ALTER TABLE`. |
+| `DATABASE_URL` | Połączenie aplikacji / PostgREST. Live: rola **`postgres` z `rolsuper=f`** — **nie** jest właścicielem `transactions` (INSERT/UPDATE działają). |
+| `DATABASE_OWNER_URL` albo `SUPABASE_DB_URL` | **Właściciel** tabel: **`supabase_admin`** na tej samej bazie. Wymagane do `ALTER TABLE`. App spróbuje też `SET ROLE supabase_admin`. |
 | `GIT_COMMIT` | SHA commita w `GET /api/health` (`revision` / `gitSha`). Coolify może też wstrzyknąć `SOURCE_COMMIT` przy buildzie. |
 
 ### Self-hosted Supabase w Coolify
@@ -46,7 +46,8 @@ Jeśli Supabase działa jako usługa w tym samym środowisku Coolify:
 | Zmienna | Wartość |
 |---------|---------|
 | `NEXT_PUBLIC_SUPABASE_URL` | `http://supabasekong-<ID>.51.38.132.184.sslip.io` (bez `:8000`) |
-| `DATABASE_URL` | `postgresql://postgres:<HASLO>@supabase-db-<ID>:5432/postgres` |
+| `DATABASE_URL` | `postgresql://postgres:<HASLO>@supabase-db-c4w4kw0k4cogk8cgsckokg8c:5432/postgres` (rola app, nie owner) |
+| `DATABASE_OWNER_URL` | `postgresql://supabase_admin:<HASLO>@supabase-db-c4w4kw0k4cogk8cgsckokg8c:5432/postgres` (DDL) |
 
 Przy starcie kontenera (`scripts/docker-entrypoint.sh`) migracje z `supabase/migrations/` uruchamiają się automatycznie **oraz** `scripts/ensure-schema.sql` (zawsze, idempotentnie). Wymaga `DATABASE_URL` (albo `POSTGRES_URL` / `SUPABASE_DB_URL`) wskazującego **tę samą** bazę, z której korzysta PostgREST.
 
@@ -129,14 +130,15 @@ Po dodaniu HTTPS do panelu Coolify możesz włączyć **Auto Deploy** w ustawien
 - **`/api/health` `getaddrinfo EAI_AGAIN supabase-db-...`:** Docker DNS cannot resolve the Postgres hostname (container down or not on the same network). The app retries DNS 2–3 times with short backoff. If the host stays unreachable, **`GET /api/health` returns 200** `{ok:true, db:false, degraded:true}` so Coolify does **not** restart MyBudget while Kong/PostgREST may still work. Cashflow then loads via REST instead of hanging on SQL. Fix infra: start/reconnect the `supabase-db-*` container. Keep Coolify’s HTTP healthcheck on `/api/health` (liveness = 200). Treat `db:true` as SQL readiness, not a kill signal — do not require 503 for a DNS blip.
 - **Budżet pusty / 500 `transfer_account_id does not exist`:** Redeploy; w logach startu musi przejść `006_transfer_columns.sql` albo `ensure-schema.sql`. `DATABASE_URL` = baza PostgREST. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/006_transfer_columns.sql`
 - **Transfer 500 `Could not find the 'transfer_id' column … in the schema cache`:** kolumny są w Postgresie, ale PostgREST ma stary cache (albo 006/009 oznaczone applied). Redeploy (010 + `NOTIFY pgrst`); API transferu wymusza `ADD COLUMN IF NOT EXISTS`, `NOTIFY pgrst, 'reload schema'` i ponawia zapis. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/010_transfer_schema_cache.sql`
-- **Edytuj → Zapisz transfer 500 `transfer_account_id` … schema cache / `must be owner of table transactions`:** `public.transactions` należy do `postgres`/`supabase_admin`, a `DATABASE_URL` aplikacji **nie** jest właścicielem — `ALTER TABLE` z boot/`repair-transfer` nic nie doda (NOTIFY bez kolumn jest bezużyteczny). **Jednorazowo jako właściciel** (Coolify → supabase-db → terminal):
+- **DDL na `transactions` musi iść jako `supabase_admin`:** live Coolify DB `supabase-db-c4w4kw0k4cogk8cgsckokg8c` — właściciel tabeli to **`supabase_admin`**, rola aplikacji to **`postgres` (`rolsuper=f`)**. `INSERT`/`UPDATE` (convert → transfer) działa po dodaniu kolumn; kolejny `ALTER TABLE` z boot/`repair-transfer` jako `postgres` znów padnie `must be owner of table transactions`. Boot próbuje: (1) `DATABASE_OWNER_URL` / `POSTGRES_ADMIN_URL` / `SUPABASE_DB_URL`, (2) `SET ROLE supabase_admin` w tej samej sesji, (3) jasny komunikat PL + `ownerSql` (`SET ROLE supabase_admin` + `ALTER`). **Ręcznie:**
   ```sql
+  SET ROLE supabase_admin;
   ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid;
   ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_id uuid;
   CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON public.transactions(transfer_id);
   NOTIFY pgrst, 'reload schema';
   ```
-  albo `psql -U postgres -d postgres -f scripts/owner-add-transfer-columns.sql`. Żeby kolejny deploy sam dodał kolumny: ustaw `DATABASE_OWNER_URL` lub `SUPABASE_DB_URL` na użytkownika-właściciela **tej samej** bazy co PostgREST (nie na ograniczoną rolę z `DATABASE_URL`). `POST /api/setup/repair-transfer` próbuje te URL-e w tej kolejności i zwraca `ownerSql` gdy ALTER jest zablokowane.
+  `psql -U supabase_admin -d postgres -f scripts/owner-add-transfer-columns.sql`. Kolumny transferu są już na live (2026-09-13, dodane jako `supabase_admin`) — convert nie ruszać. Opcjonalnie ustaw `DATABASE_OWNER_URL` jako `supabase_admin` tej samej bazy. `POST /api/setup/repair-transfer` zwraca `ownerSql` gdy ALTER jest zablokowane.
 - **Cashflow 500 `scheduled_transactions` / schema cache:** Redeploy; w logach startu `007_scheduled_transactions.sql` albo `ensure-schema.sql` musi utworzyć tabelę. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/007_scheduled_transactions.sql`
 - **Nie da się utworzyć konta / „nie znaleziono konta” przy wydatku:** brak `accounts.on_budget` albo stary `accounts_type_check`. Redeploy; `008_account_columns.sql` + ensure-schema. UI idzie przez `POST /api/accounts` (retry bez kolumny / po naprawie constraintu).
 - **Wydatek 500 `paid_by` / cel 500 `kind`:** Redeploy; `009_live_schema_gaps.sql` + ensure-schema. API transakcji i kategorii retry po naprawie, a w ostateczności zapisuje bez tych kolumn.

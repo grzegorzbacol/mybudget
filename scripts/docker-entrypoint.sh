@@ -19,12 +19,33 @@ dburl="${DATABASE_URL:-${POSTGRES_URL:-${SUPABASE_DB_URL:-${DIRECT_URL:-}}}}"
 # non-owner PostgREST/app role — prefer an explicit owner URL when set.
 ddlurl="${DATABASE_OWNER_URL:-${POSTGRES_ADMIN_URL:-${SUPABASE_DB_URL:-${DIRECT_URL:-$dburl}}}}"
 
+# Same-session best-effort SET ROLE. Live Coolify: app `postgres` has
+# rolsuper=f; public.transactions is owned by supabase_admin. SET ROLE
+# failure must not abort — later INSERT/UPDATE as postgres still work.
+psql_ddl() {
+  stop="$1"
+  shift
+  {
+    echo "SET ROLE supabase_admin;"
+    if [ "$stop" = "1" ]; then
+      echo "\\set ON_ERROR_STOP on"
+    fi
+    if [ "$1" = "-f" ]; then
+      cat "$2"
+    else
+      echo "$2"
+    fi
+  } | psql "$ddlurl"
+}
+
 if [ -n "$dburl" ]; then
   echo "Applying pending database migrations..."
   if [ "$ddlurl" != "$dburl" ]; then
     echo "Using privileged DDL URL (DATABASE_OWNER_URL / SUPABASE_DB_URL) for ALTER TABLE; verifying columns on DATABASE_URL."
+  else
+    echo "No DATABASE_OWNER_URL — will SET ROLE supabase_admin when possible before DDL."
   fi
-  if psql "$ddlurl" -v ON_ERROR_STOP=1 -c "
+  if psql_ddl 1 -c "
 CREATE TABLE IF NOT EXISTS schema_migrations (
   id text PRIMARY KEY,
   applied_at timestamptz NOT NULL DEFAULT now()
@@ -43,11 +64,11 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
         continue
       fi
       echo "Applying $name..."
-      if psql "$ddlurl" -v ON_ERROR_STOP=1 -f "$file"; then
+      if psql_ddl 1 -f "$file"; then
         psql "$ddlurl" -c "INSERT INTO schema_migrations (id) VALUES ('$name')" >/dev/null
         echo "Applied $name"
       else
-        echo "WARNING: Migration $name failed. If you see 'must be owner of table', run scripts/owner-add-transfer-columns.sql as postgres/supabase_admin."
+        echo "WARNING: Migration $name failed. If you see 'must be owner of table', run scripts/owner-add-transfer-columns.sql as supabase_admin (or SET ROLE supabase_admin)."
       fi
     done
 
@@ -55,29 +76,29 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     # applied or aborted (auth.users FK / ALTER PUBLICATION) without the live schema.
     if [ -f /app/scripts/ensure-schema.sql ]; then
       echo "Ensuring schema repairs (scripts/ensure-schema.sql)..."
-      if psql "$ddlurl" -v ON_ERROR_STOP=0 -f /app/scripts/ensure-schema.sql; then
+      if psql_ddl 0 -f /app/scripts/ensure-schema.sql; then
         echo "ensure-schema finished"
       else
-        echo "WARNING: ensure-schema.sql reported errors. Need table-owner URL (DATABASE_OWNER_URL / SUPABASE_DB_URL), not a limited DATABASE_URL role."
+        echo "WARNING: ensure-schema.sql reported errors. Need DATABASE_OWNER_URL as supabase_admin, or SET ROLE supabase_admin — app postgres is not table owner."
       fi
     fi
 
     # 010/012 are skipped once marked applied. Always ADD transfer_* as owner.
     echo "Ensuring transfer columns + PostgREST schema reload..."
     if [ -f /app/scripts/ensure-transfer-columns.sql ]; then
-      if psql "$ddlurl" -v ON_ERROR_STOP=0 -f /app/scripts/ensure-transfer-columns.sql; then
-        echo "NOTIFY pgrst, 'reload schema' sent (DDL URL must be table owner on the PostgREST database)."
+      if psql_ddl 0 -f /app/scripts/ensure-transfer-columns.sql; then
+        echo "NOTIFY pgrst, 'reload schema' sent (DDL as supabase_admin when SET ROLE / owner URL is available)."
       else
-        echo "WARNING: ensure-transfer-columns.sql failed (must be owner of table transactions?). Run scripts/owner-add-transfer-columns.sql as postgres."
+        echo "WARNING: ensure-transfer-columns.sql failed. Run scripts/owner-add-transfer-columns.sql as supabase_admin (not app postgres)."
       fi
     else
-      psql "$ddlurl" -v ON_ERROR_STOP=0 -c "
+      psql_ddl 0 -c "
 ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid;
 ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_id uuid;
 CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON public.transactions(transfer_id);
 NOTIFY pgrst, 'reload schema';
 "
-      echo "NOTIFY pgrst, 'reload schema' sent (DDL URL must be table owner on the PostgREST database)."
+      echo "NOTIFY pgrst, 'reload schema' sent (DDL as supabase_admin when SET ROLE / owner URL is available)."
     fi
 
     for spec in \
@@ -92,7 +113,7 @@ NOTIFY pgrst, 'reload schema';
       col=${spec##*.}
       present=$(psql "$dburl" -tAc "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='$table' AND column_name='$col'" 2>/dev/null | tr -d ' ')
       if [ "$present" != "1" ]; then
-        echo "WARNING: $spec is still missing. DATABASE_URL role is not table owner, or URL is not the PostgREST database. Run scripts/owner-add-transfer-columns.sql as postgres/supabase_admin."
+        echo "WARNING: $spec is still missing. App postgres is not owner (supabase_admin is). Run scripts/owner-add-transfer-columns.sql as supabase_admin, or set DATABASE_OWNER_URL."
       fi
     done
 

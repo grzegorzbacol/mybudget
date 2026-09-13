@@ -2,6 +2,7 @@ import { Client } from "pg";
 import {
   ENSURE_SCHEMA_STATEMENTS,
   TRANSFER_SCHEMA_STATEMENTS,
+  assumeTransactionsTableOwner,
   isTableOwnerError,
   resolveDatabaseUrl,
   resolveDdlDatabaseUrls,
@@ -76,6 +77,7 @@ async function runSqlStatementsOnUrl(
     } catch {
       /* transaction poolers may reject SET; connect/query timeouts still apply */
     }
+    await assumeTransactionsTableOwner(client);
     for (const sql of statements) {
       try {
         await client.query(sql);

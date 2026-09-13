@@ -1,7 +1,10 @@
--- Run ONCE as the owner of public.transactions (postgres / supabase_admin),
--- not as the app DATABASE_URL role. Same database PostgREST uses.
--- Coolify: supabase-db → Terminal / Execute Command:
---   psql -U postgres -d postgres -f /path/to/owner-add-transfer-columns.sql
+-- Run ONCE as supabase_admin (owner of public.transactions), not as the app
+-- DATABASE_URL role (`postgres`, rolsuper=f on Coolify).
+-- Coolify DB: supabase-db-c4w4kw0k4cogk8cgsckokg8c
+--   psql -U supabase_admin -d postgres -f scripts/owner-add-transfer-columns.sql
+-- or: SET ROLE supabase_admin; then the ALTER statements below.
+
+SET ROLE supabase_admin;
 
 ALTER TABLE public.transactions
   ADD COLUMN IF NOT EXISTS transfer_account_id uuid;

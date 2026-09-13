@@ -147,6 +147,7 @@ describe("applyEnsureSchema cache", () => {
     );
     expect(result.ok).toBe(false);
     expect(result.error).toContain("ADD COLUMN IF NOT EXISTS transfer_account_id");
-    expect(result.error).toContain("właścicielem");
+    expect(result.error).toContain("supabase_admin");
+    expect(result.error).toContain("SET ROLE supabase_admin");
   });
 });
