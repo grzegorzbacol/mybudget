@@ -36,11 +36,39 @@ export function isMissingRelationError(message?: string | null): boolean {
 }
 
 export function schemaLagMessage(raw?: string | null): string {
+  if (isTableOwnerError(raw)) return transferColumnOwnerMessage(raw);
   const detail = raw?.trim() ? ` (${raw.trim()})` : "";
   return (
     "Brak kolumn transferów w bazie (np. transactions.transfer_account_id). " +
     "Zredeployuj Coolify z DATABASE_URL wskazującym na tę samą bazę co Supabase/PostgREST — " +
     "migracje i ensure-schema muszą się wykonać." +
+    detail
+  );
+}
+
+export function isTableOwnerError(message?: string | null): boolean {
+  if (!message) return false;
+  return /must be owner of table|must be owner of relation|not the owner of the table|permission denied for (table|relation) transactions/i.test(
+    message
+  );
+}
+
+/** Exact SQL the table owner (postgres / supabase_admin) must run once. */
+export const TRANSFER_COLUMN_OWNER_SQL = [
+  "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid;",
+  "ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_id uuid;",
+  "CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON public.transactions(transfer_id);",
+  "NOTIFY pgrst, 'reload schema';",
+].join("\n");
+
+export function transferColumnOwnerMessage(raw?: string | null): string {
+  const detail = raw?.trim() ? ` (${raw.trim()})` : "";
+  return (
+    "Rola z DATABASE_URL nie jest właścicielem public.transactions — " +
+    "aplikacja nie może dodać transfer_account_id / transfer_id. " +
+    "Uruchom raz jako właściciel tabeli (postgres / supabase_admin w Coolify → supabase-db), " +
+    "albo ustaw DATABASE_OWNER_URL / SUPABASE_DB_URL na to samo Postgres co PostgREST i zredeployuj.\n\n" +
+    TRANSFER_COLUMN_OWNER_SQL +
     detail
   );
 }
@@ -302,6 +330,7 @@ END $$`,
   `NOTIFY pgrst, 'reload schema'`,
 ] as const;
 
+/** App/pool URL first — used for reads and row writes. */
 export function resolveDatabaseUrl(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
 ): string | undefined {
@@ -313,4 +342,33 @@ export function resolveDatabaseUrl(
     env.POSTGRES_PRISMA_URL;
   const value = raw?.trim();
   return value || undefined;
+}
+
+/**
+ * Privilege-first URLs for ALTER TABLE. Live Coolify often has DATABASE_URL as a
+ * non-owner (PostgREST/app) role while SUPABASE_DB_URL / postgres is the owner.
+ * DATABASE_URL is last so a limited app role does not block DDL.
+ */
+export const DDL_DATABASE_URL_KEYS = [
+  "DATABASE_OWNER_URL",
+  "POSTGRES_ADMIN_URL",
+  "SUPABASE_DB_URL",
+  "DIRECT_URL",
+  "POSTGRES_URL",
+  "POSTGRES_PRISMA_URL",
+  "DATABASE_URL",
+] as const;
+
+export function resolveDdlDatabaseUrls(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): string[] {
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const key of DDL_DATABASE_URL_KEYS) {
+    const value = env[key]?.trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    urls.push(value);
+  }
+  return urls;
 }

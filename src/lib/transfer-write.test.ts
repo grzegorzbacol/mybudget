@@ -365,6 +365,7 @@ describe("convertTransactionToTransfer", () => {
     expect(
       shouldReplayConvertAfterSqlFailure("Connection terminated unexpectedly")
     ).toBe(false);
+    expect(shouldReplayConvertAfterSqlFailure("must be owner of table transactions")).toBe(false);
 
     const restUpdate = vi.fn();
     const restInsert = vi.fn();
@@ -386,6 +387,35 @@ describe("convertTransactionToTransfer", () => {
     expect(restInsert).not.toHaveBeenCalled();
     expect(result.data).toBeUndefined();
     expect(result.error).toMatch(/terminated|Nie udało się zapisać transferu/i);
+  });
+
+  it("returns owner ALTER SQL instead of replaying REST when the app role cannot ADD COLUMN", async () => {
+    vi.resetModules();
+    vi.doMock("./ensure-schema", () => ({
+      applyTransferSchemaRepair: vi.fn(),
+      applyEnsureSchema: vi.fn(),
+    }));
+    const { convertTransactionToTransfer } = await import("./transfer-write");
+
+    const restInsert = vi.fn();
+    const result = await convertTransactionToTransfer(
+      {
+        existingId: "tx-exp",
+        familyId: "fam-1",
+        outgoing: { transfer_account_id: "acc-card", transfer_id: "pair-1" },
+        incoming: { transfer_account_id: "acc-main", transfer_id: "pair-1" },
+      },
+      {
+        updateOutgoing: async () => ({ data: null, error: { message: "unused" } }),
+        insertIncoming: restInsert,
+        sqlConvert: vi.fn().mockResolvedValue({ error: "must be owner of table transactions" }),
+      }
+    );
+
+    expect(restInsert).not.toHaveBeenCalled();
+    expect(result.data).toBeUndefined();
+    expect(result.error).toContain("ADD COLUMN IF NOT EXISTS transfer_account_id");
+    expect(result.error).toContain("właścicielem");
   });
 });
 

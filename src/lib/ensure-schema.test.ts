@@ -7,6 +7,7 @@ import {
   ensureSchemaClientConfig,
   markEnsureSchemaApplied,
   resetEnsureSchemaState,
+  runSqlStatementsAcrossDdlUrls,
   wasEnsureSchemaRecentlyApplied,
 } from "./ensure-schema";
 
@@ -117,5 +118,35 @@ describe("applyEnsureSchema cache", () => {
     expect(config.connectionTimeoutMillis).toBeLessThanOrEqual(4000);
     expect(config.query_timeout).toBeGreaterThan(0);
     expect(config.query_timeout).toBeLessThanOrEqual(8000);
+  });
+
+  it("skips a non-owner DATABASE_URL and succeeds on the privileged URL", async () => {
+    const tried: string[] = [];
+    const result = await runSqlStatementsAcrossDdlUrls(
+      ["postgres://app", "postgres://owner"],
+      ["ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid"],
+      "transfer-schema",
+      async (url) => {
+        tried.push(url);
+        if (url.includes("app")) {
+          return { ok: false, applied: 0, error: "must be owner of table transactions" };
+        }
+        return { ok: true, applied: 4 };
+      }
+    );
+    expect(tried).toEqual(["postgres://app", "postgres://owner"]);
+    expect(result).toEqual({ ok: true, applied: 4 });
+  });
+
+  it("returns the owner SQL when every URL lacks ALTER privilege", async () => {
+    const result = await runSqlStatementsAcrossDdlUrls(
+      ["postgres://app"],
+      ["ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid"],
+      "transfer-schema",
+      async () => ({ ok: false, applied: 0, error: "must be owner of table transactions" })
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("ADD COLUMN IF NOT EXISTS transfer_account_id");
+    expect(result.error).toContain("właścicielem");
   });
 });
