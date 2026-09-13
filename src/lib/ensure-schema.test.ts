@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   applyEnsureSchema,
   applyEnsureSchemaForRead,
+  applyTransferSchemaRepair,
+  markEnsureSchemaApplied,
   resetEnsureSchemaState,
   wasEnsureSchemaRecentlyApplied,
 } from "./ensure-schema";
@@ -38,6 +40,38 @@ describe("applyEnsureSchema cache", () => {
     resetEnsureSchemaState(async () => ({ ok: false, applied: 4, error: "column missing" }));
     await applyEnsureSchema();
     expect(wasEnsureSchemaRecentlyApplied()).toBe(false);
+  });
+
+  it("transfer-column repair bypasses the recent-success cache", async () => {
+    let ensureRuns = 0;
+    let transferRuns = 0;
+    resetEnsureSchemaState(
+      async () => {
+        ensureRuns += 1;
+        return { ok: true, applied: 12 };
+      },
+      async () => {
+        transferRuns += 1;
+        return { ok: true, applied: 4 };
+      }
+    );
+
+    await applyEnsureSchema();
+    expect(wasEnsureSchemaRecentlyApplied()).toBe(true);
+    await expect(applyEnsureSchema()).resolves.toMatchObject({ skipped: "recently applied" });
+
+    await expect(applyTransferSchemaRepair()).resolves.toEqual({ ok: true, applied: 4 });
+    expect(ensureRuns).toBe(1);
+    expect(transferRuns).toBe(1);
+  });
+
+  it("transfer-column repair reports a missing DATABASE_URL instead of using the TTL", async () => {
+    resetEnsureSchemaState();
+    markEnsureSchemaApplied();
+    await expect(applyTransferSchemaRepair({})).resolves.toMatchObject({
+      ok: false,
+      skipped: "DATABASE_URL not set",
+    });
   });
 
   it("force bypasses the recent-success cache", async () => {

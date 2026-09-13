@@ -5,8 +5,10 @@ import {
   ENSURE_SCHEMA_STATEMENTS,
   REQUIRED_SCHEMA_COLUMNS,
   REQUIRED_SCHEMA_TABLES,
+  TRANSFER_SCHEMA_STATEMENTS,
   isMissingRelationError,
   isSchemaLagError,
+  isTransferColumnSchemaError,
   missingScheduledTableMessage,
   resolveDatabaseUrl,
   schemaLagMessage,
@@ -17,6 +19,15 @@ describe("schema lag helpers", () => {
     expect(isSchemaLagError("column transactions.transfer_account_id does not exist")).toBe(true);
     expect(isSchemaLagError("Could not find the 'transfer_id' column of 'transactions' in the schema cache")).toBe(
       true
+    );
+    expect(
+      isTransferColumnSchemaError("Could not find the 'transfer_id' column of 'transactions' in the schema cache")
+    ).toBe(true);
+    expect(
+      isTransferColumnSchemaError("Could not find the 'transfer_account_id' column of 'transactions' in the schema cache")
+    ).toBe(true);
+    expect(isTransferColumnSchemaError("Could not find the 'paid_by' column of 'transactions' in the schema cache")).toBe(
+      false
     );
     expect(isSchemaLagError("Unauthorized")).toBe(false);
     expect(isMissingRelationError('relation "scheduled_transactions" does not exist')).toBe(true);
@@ -58,6 +69,10 @@ describe("schema lag helpers", () => {
     expect(joined).toContain("idx_allocations_family");
     expect(joined).toContain("idx_budget_categories_family");
     expect(joined).toContain("group_name IS DISTINCT FROM 'Przychody'");
+    const transferSql = TRANSFER_SCHEMA_STATEMENTS.join("\n");
+    expect(transferSql).toContain("ADD COLUMN IF NOT EXISTS transfer_account_id");
+    expect(transferSql).toContain("ADD COLUMN IF NOT EXISTS transfer_id");
+    expect(transferSql).toContain("NOTIFY pgrst");
     for (const column of REQUIRED_SCHEMA_COLUMNS) {
       expect(joined).toContain(column.split(".")[1]);
     }
@@ -86,6 +101,13 @@ describe("schema lag helpers", () => {
       join(process.cwd(), "supabase/migrations/008_account_columns.sql"),
       "utf8"
     );
+    const transferCacheSql = readFileSync(
+      join(process.cwd(), "supabase/migrations/010_transfer_schema_cache.sql"),
+      "utf8"
+    );
+    expect(transferCacheSql).toContain("ADD COLUMN IF NOT EXISTS transfer_account_id");
+    expect(transferCacheSql).toContain("ADD COLUMN IF NOT EXISTS transfer_id");
+    expect(transferCacheSql).toContain("NOTIFY pgrst");
     for (const sql of [ensureSql, liveSql]) {
       expect(sql).toContain("ADD COLUMN IF NOT EXISTS paid_by");
       expect(sql).toContain("ADD COLUMN IF NOT EXISTS kind");
@@ -106,5 +128,8 @@ describe("schema lag helpers", () => {
     expect(scheduledSql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
     expect(accountSql).toContain("ADD COLUMN IF NOT EXISTS on_budget");
     expect(accountSql).toContain("accounts_type_check");
+    const boot = readFileSync(join(process.cwd(), "scripts/docker-entrypoint.sh"), "utf8");
+    expect(boot).toContain("transactions.transfer_account_id");
+    expect(boot).toContain("transactions.transfer_id");
   });
 });

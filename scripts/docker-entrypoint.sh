@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
     for spec in \
       "transactions.transfer_account_id" \
+      "transactions.transfer_id" \
       "transactions.paid_by" \
       "budget_categories.kind" \
       "accounts.on_budget" \

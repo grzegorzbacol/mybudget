@@ -1,4 +1,8 @@
-import { isMissingRelationError, isSchemaLagError } from "./schema";
+import {
+  isMissingRelationError,
+  isSchemaLagError,
+  isTransferColumnSchemaError,
+} from "./schema";
 
 export const OPTIONAL_WRITE_COLUMNS = [
   "paid_by",
@@ -11,6 +15,12 @@ export const OPTIONAL_WRITE_COLUMNS = [
   "scheduled_id",
 ] as const;
 
+/** Pairing columns must stay on transfer inserts after a schema-cache miss. */
+export const TRANSFER_REQUIRED_COLUMNS = ["transfer_account_id", "transfer_id"] as const;
+
+/** Wait for PostgREST to apply NOTIFY pgrst, 'reload schema' before retrying. */
+export const SCHEMA_CACHE_RETRY_DELAYS_MS = [250, 600] as const;
+
 export type SchemaWriteResult<T> = {
   data?: T;
   warning?: string;
@@ -18,6 +28,19 @@ export type SchemaWriteResult<T> = {
 };
 
 type WriteError = { message?: string } | null;
+
+type SchemaRepairResult = {
+  attempted: boolean;
+  reloaded: boolean;
+};
+
+export type SchemaWriteSleep = (ms: number) => Promise<void>;
+
+export type SchemaWriteRetryOptions = {
+  requiredColumns?: readonly string[];
+  retryDelaysMs?: readonly number[];
+  sleep?: SchemaWriteSleep;
+};
 
 function mentionedOptionalColumns(
   message: string,
@@ -56,13 +79,72 @@ function stripColumnsFromRows(
   return { next, stripped };
 }
 
-async function repairSchemaIfLagging(message: string): Promise<boolean> {
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function columnsToStrip(
+  message: string,
+  rows: Record<string, unknown>[],
+  optionalColumns: readonly string[],
+  requiredColumns: readonly string[]
+): string[] {
+  const required = new Set(requiredColumns);
+  const optional = optionalColumns.filter((col) => !required.has(col));
+  const mentioned = mentionedOptionalColumns(message, optional);
+  const present = optional.filter((col) => rows.some((row) => col in row));
+  return mentioned.length ? mentioned : present;
+}
+
+async function repairSchemaIfLagging(message: string): Promise<SchemaRepairResult> {
   if (!isSchemaLagError(message) && !isMissingRelationError(message)) {
-    return false;
+    return { attempted: false, reloaded: false };
   }
-  const { applyEnsureSchema } = await import("./ensure-schema");
-  await applyEnsureSchema();
-  return true;
+
+  const schema = await import("./ensure-schema");
+  if (isTransferColumnSchemaError(message) && typeof schema.applyTransferSchemaRepair === "function") {
+    const result = await schema.applyTransferSchemaRepair();
+    return { attempted: true, reloaded: Boolean(result?.ok) && !result?.skipped };
+  }
+
+  const result = await schema.applyEnsureSchema(process.env, { force: true });
+  return { attempted: true, reloaded: Boolean(result?.ok) && !result?.skipped };
+}
+
+async function retryAfterSchemaReload<T>(
+  writeOnce: () => Promise<{ data: T | null; error: WriteError }>,
+  repair: SchemaRepairResult,
+  options?: SchemaWriteRetryOptions
+): Promise<{ data: T | null; error: WriteError }> {
+  let result = await writeOnce();
+  if (!result.error && result.data) {
+    return result;
+  }
+
+  if (!repair.reloaded) {
+    return result;
+  }
+
+  const message = result.error?.message ?? "";
+  if (!isSchemaLagError(message) && !isMissingRelationError(message)) {
+    return result;
+  }
+
+  const delays = options?.retryDelaysMs ?? SCHEMA_CACHE_RETRY_DELAYS_MS;
+  const sleep = options?.sleep ?? delay;
+  for (const wait of delays) {
+    await sleep(wait);
+    result = await writeOnce();
+    if (!result.error && result.data) {
+      return result;
+    }
+    const nextMessage = result.error?.message ?? "";
+    if (!isSchemaLagError(nextMessage) && !isMissingRelationError(nextMessage)) {
+      return result;
+    }
+  }
+
+  return result;
 }
 
 /**
@@ -74,7 +156,8 @@ export async function insertRowWithSchemaRepair<T>(
     row: Record<string, unknown>
   ) => Promise<{ data: T | null; error: WriteError }>,
   row: Record<string, unknown>,
-  optionalColumns: readonly string[] = OPTIONAL_WRITE_COLUMNS
+  optionalColumns: readonly string[] = OPTIONAL_WRITE_COLUMNS,
+  options?: SchemaWriteRetryOptions
 ): Promise<SchemaWriteResult<T>> {
   let result = await insertOnce(row);
   if (!result.error && result.data) {
@@ -82,8 +165,9 @@ export async function insertRowWithSchemaRepair<T>(
   }
 
   const firstMessage = result.error?.message ?? "";
-  if (await repairSchemaIfLagging(firstMessage)) {
-    result = await insertOnce(row);
+  const repair = await repairSchemaIfLagging(firstMessage);
+  if (repair.attempted) {
+    result = await retryAfterSchemaReload(() => insertOnce(row), repair, options);
     if (!result.error && result.data) {
       return { data: result.data };
     }
@@ -91,8 +175,7 @@ export async function insertRowWithSchemaRepair<T>(
 
   const message = result.error?.message ?? firstMessage;
   if (isSchemaLagError(message)) {
-    const mentioned = mentionedOptionalColumns(message, optionalColumns);
-    const toStrip = mentioned.length ? mentioned : optionalColumns.filter((col) => col in row);
+    const toStrip = columnsToStrip(message, [row], optionalColumns, options?.requiredColumns ?? []);
     const { next, stripped } = stripColumns(row, toStrip);
     if (stripped.length) {
       const retry = await insertOnce(next);
@@ -114,7 +197,8 @@ export async function insertRowsWithSchemaRepair<T>(
     rows: Record<string, unknown>[]
   ) => Promise<{ data: T[] | null; error: WriteError }>,
   rows: Record<string, unknown>[],
-  optionalColumns: readonly string[] = OPTIONAL_WRITE_COLUMNS
+  optionalColumns: readonly string[] = OPTIONAL_WRITE_COLUMNS,
+  options?: SchemaWriteRetryOptions
 ): Promise<SchemaWriteResult<T[]>> {
   let result = await insertOnce(rows);
   if (!result.error && result.data) {
@@ -122,8 +206,9 @@ export async function insertRowsWithSchemaRepair<T>(
   }
 
   const firstMessage = result.error?.message ?? "";
-  if (await repairSchemaIfLagging(firstMessage)) {
-    result = await insertOnce(rows);
+  const repair = await repairSchemaIfLagging(firstMessage);
+  if (repair.attempted) {
+    result = await retryAfterSchemaReload(() => insertOnce(rows), repair, options);
     if (!result.error && result.data) {
       return { data: result.data };
     }
@@ -131,9 +216,7 @@ export async function insertRowsWithSchemaRepair<T>(
 
   const message = result.error?.message ?? firstMessage;
   if (isSchemaLagError(message)) {
-    const mentioned = mentionedOptionalColumns(message, optionalColumns);
-    const present = optionalColumns.filter((col) => rows.some((row) => col in row));
-    const toStrip = mentioned.length ? mentioned : present;
+    const toStrip = columnsToStrip(message, rows, optionalColumns, options?.requiredColumns ?? []);
     const { next, stripped } = stripColumnsFromRows(rows, toStrip);
     if (stripped.length) {
       const retry = await insertOnce(next);

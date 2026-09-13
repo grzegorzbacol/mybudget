@@ -3,6 +3,12 @@ export function isSchemaLagError(message?: string | null): boolean {
   return /column .+ does not exist|could not find the '.+' column|schema cache/i.test(message);
 }
 
+/** Live transfer toast: Could not find the 'transfer_id' column of 'transactions' in the schema cache. */
+export function isTransferColumnSchemaError(message?: string | null): boolean {
+  if (!message || !isSchemaLagError(message)) return false;
+  return /\btransfer_id\b|\btransfer_account_id\b/i.test(message);
+}
+
 export function isMissingRelationError(message?: string | null): boolean {
   if (!message) return false;
   return /relation .+ does not exist|could not find the table|schema cache/i.test(message);
@@ -44,6 +50,18 @@ export const REQUIRED_SCHEMA_TABLES = [
   "scheduled_transactions",
   "expense_splits",
   "settlements",
+] as const;
+
+/**
+ * Targeted repair for POST /api/transactions/transfer when PostgREST's cache
+ * lags behind Postgres (columns exist or were just added, REST still 500s).
+ * Always ends with NOTIFY so Kong/PostgREST reloads without a bounce.
+ */
+export const TRANSFER_SCHEMA_STATEMENTS = [
+  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid`,
+  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_id uuid`,
+  `CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON transactions(transfer_id)`,
+  `NOTIFY pgrst, 'reload schema'`,
 ] as const;
 
 /** Additive statements applied by docker-entrypoint (ensure-schema.sql) and POST /api/setup/migrate. */
