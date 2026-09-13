@@ -1,6 +1,25 @@
+export type WriteErrorLike = {
+  message?: string | null;
+  details?: string | null;
+  hint?: string | null;
+  code?: string | null;
+} | string | null | undefined;
+
+/** PostgREST/supabase-js may put PGRST204 text in details/hint instead of message. */
+export function writeErrorMessage(error?: WriteErrorLike): string {
+  if (!error) return "";
+  if (typeof error === "string") return error;
+  const parts = [error.message, error.details, error.hint].filter(
+    (part): part is string => typeof part === "string" && part.trim().length > 0
+  );
+  if (parts.length) return parts.join(" ");
+  if (error.code && /PGRST204|42703/i.test(error.code)) return "schema cache";
+  return "";
+}
+
 export function isSchemaLagError(message?: string | null): boolean {
   if (!message) return false;
-  return /column .+ does not exist|could not find the '.+' column|schema cache/i.test(message);
+  return /column .+ does not exist|could not find the '.+' column|schema cache|PGRST204/i.test(message);
 }
 
 /** Live transfer toast: Could not find the 'transfer_id'/'transfer_account_id' column of 'transactions'. */
@@ -60,9 +79,9 @@ export const REQUIRED_SCHEMA_TABLES = [
  * Always ends with NOTIFY so Kong/PostgREST reloads without a bounce.
  */
 export const TRANSFER_SCHEMA_STATEMENTS = [
-  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid`,
-  `ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_id uuid`,
-  `CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON transactions(transfer_id)`,
+  `ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid`,
+  `ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_id uuid`,
+  `CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON public.transactions(transfer_id)`,
   `NOTIFY pgrst, 'reload schema'`,
 ] as const;
 

@@ -12,6 +12,7 @@ import {
   missingScheduledTableMessage,
   resolveDatabaseUrl,
   schemaLagMessage,
+  writeErrorMessage,
 } from "./schema";
 
 describe("schema lag helpers", () => {
@@ -45,6 +46,14 @@ describe("schema lag helpers", () => {
     );
     expect(missingScheduledTableMessage("x")).toContain("007_scheduled_transactions.sql");
     expect(isMissingRelationError("Unauthorized")).toBe(false);
+    expect(
+      writeErrorMessage({
+        code: "PGRST204",
+        details: "Could not find the 'transfer_account_id' column of 'transactions' in the schema cache",
+      })
+    ).toContain("transfer_account_id");
+    expect(writeErrorMessage({ code: "PGRST204" })).toMatch(/schema cache/i);
+    expect(isSchemaLagError(writeErrorMessage({ code: "PGRST204" }))).toBe(true);
   });
 
   it("explains that Coolify must run migrations on the PostgREST database", () => {
@@ -134,6 +143,10 @@ describe("schema lag helpers", () => {
     expect(scheduledSql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
     expect(accountSql).toContain("ADD COLUMN IF NOT EXISTS on_budget");
     expect(accountSql).toContain("accounts_type_check");
+    const forceTransferSql = readFileSync(
+      join(process.cwd(), "supabase/migrations/012_force_transfer_columns_notify.sql"),
+      "utf8"
+    );
     const transferAccountSql = readFileSync(
       join(process.cwd(), "supabase/migrations/011_transfer_account_id_schema_cache.sql"),
       "utf8"
@@ -142,11 +155,12 @@ describe("schema lag helpers", () => {
       join(process.cwd(), "scripts/ensure-transfer-columns.sql"),
       "utf8"
     );
-    for (const sql of [transferAccountSql, bootTransferSql]) {
+    for (const sql of [transferAccountSql, bootTransferSql, forceTransferSql]) {
       expect(sql).toContain("ADD COLUMN IF NOT EXISTS transfer_account_id");
       expect(sql).toContain("ADD COLUMN IF NOT EXISTS transfer_id");
       expect(sql).toContain("NOTIFY pgrst");
     }
+    expect(forceTransferSql).toContain("public.transactions");
     const boot = readFileSync(join(process.cwd(), "scripts/docker-entrypoint.sh"), "utf8");
     expect(boot).toContain("transactions.transfer_account_id");
     expect(boot).toContain("transactions.transfer_id");

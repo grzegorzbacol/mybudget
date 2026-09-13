@@ -67,9 +67,9 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
       fi
     else
       psql "$dburl" -v ON_ERROR_STOP=0 -c "
-ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid;
-ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_id uuid;
-CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON transactions(transfer_id);
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid;
+ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_id uuid;
+CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON public.transactions(transfer_id);
 NOTIFY pgrst, 'reload schema';
 "
       echo "NOTIFY pgrst, 'reload schema' sent on DATABASE_URL (must match PostgREST)."

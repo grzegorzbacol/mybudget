@@ -77,7 +77,7 @@ describe("insertTransferPair", () => {
       }
     );
 
-    expect(applyTransferSchemaRepair).toHaveBeenCalledTimes(1);
+    expect(applyTransferSchemaRepair).toHaveBeenCalled();
     expect(applyEnsureSchema).not.toHaveBeenCalled();
     expect(waits).toEqual([40]);
     expect(batches).toHaveLength(3);
@@ -119,7 +119,8 @@ describe("insertTransferPair", () => {
     );
 
     expect(result.data).toBeUndefined();
-    expect(result.error).toBe(LIVE_TRANSFER_CACHE_ERROR);
+    expect(result.error).not.toBe(LIVE_TRANSFER_CACHE_ERROR);
+    expect(result.error).toMatch(/DATABASE_URL|transfer_id|Coolify/i);
     expect(batches.length).toBeGreaterThan(1);
     expect(batches.every((batch) => batch.every((row) => row.transfer_id === "pair-1"))).toBe(true);
     expect(batches.every((batch) => batch.every((row) => "transfer_account_id" in row))).toBe(true);
@@ -207,5 +208,146 @@ describe("updateTransferRow", () => {
     expect(applyTransferSchemaRepair).toHaveBeenCalled();
     expect(attempts).toBe(2);
     expect(result.data).toMatchObject({ transfer_account_id: "acc-card" });
+  });
+
+  it("falls back to SQL and does not return the PostgREST cache toast", async () => {
+    vi.resetModules();
+    vi.doMock("./ensure-schema", () => ({
+      applyTransferSchemaRepair: vi.fn().mockResolvedValue({ ok: true, applied: 4 }),
+      applyEnsureSchema: vi.fn(),
+    }));
+    const { updateTransferRow } = await import("./transfer-write");
+
+    const sqlFallback = vi.fn().mockResolvedValue({
+      data: { id: "tx-1", transfer_account_id: "acc-card", transfer_id: "pair-1" },
+    });
+    const result = await updateTransferRow(
+      async () => ({ data: null, error: { message: LIVE_TRANSFER_ACCOUNT_CACHE_ERROR } }),
+      { transfer_account_id: "acc-card", transfer_id: "pair-1", amount: -5615.43 },
+      { id: "tx-1", familyId: "fam-1", retryDelaysMs: [5], sleep: async () => undefined, sqlFallback }
+    );
+
+    expect(sqlFallback).toHaveBeenCalled();
+    expect(result.error).toBeUndefined();
+    expect(result.data).toMatchObject({ transfer_account_id: "acc-card" });
+  });
+});
+
+describe("convertTransactionToTransfer", () => {
+  it("writes both legs via SQL first so convert never hits PostgREST", async () => {
+    vi.resetModules();
+    const applyTransferSchemaRepair = vi.fn().mockResolvedValue({ ok: true, applied: 4 });
+    vi.doMock("./ensure-schema", () => ({
+      applyTransferSchemaRepair,
+      applyEnsureSchema: vi.fn(),
+    }));
+    const { convertTransactionToTransfer } = await import("./transfer-write");
+
+    const restUpdate = vi.fn();
+    const restInsert = vi.fn();
+    const sqlConvert = vi.fn().mockResolvedValue({
+      data: [
+        { id: "tx-exp", transfer_account_id: "acc-card", amount: -5615.43 },
+        { id: "tx-in", transfer_account_id: "acc-main", amount: 5615.43 },
+      ],
+    });
+
+    const result = await convertTransactionToTransfer(
+      {
+        existingId: "tx-exp",
+        familyId: "fam-1",
+        outgoing: { transfer_account_id: "acc-card", transfer_id: "pair-1", amount: -5615.43 },
+        incoming: { transfer_account_id: "acc-main", transfer_id: "pair-1", amount: 5615.43 },
+      },
+      {
+        updateOutgoing: restUpdate,
+        insertIncoming: restInsert,
+        sqlConvert,
+      }
+    );
+
+    expect(sqlConvert).toHaveBeenCalledTimes(1);
+    expect(restUpdate).not.toHaveBeenCalled();
+    expect(restInsert).not.toHaveBeenCalled();
+    expect(result.error).toBeUndefined();
+    expect(result.data).toHaveLength(2);
+    expect(result.data?.[0]).toMatchObject({ transfer_account_id: "acc-card" });
+  });
+
+  it("falls back to REST+SQL when the first SQL convert cannot connect", async () => {
+    vi.resetModules();
+    vi.doMock("./ensure-schema", () => ({
+      applyTransferSchemaRepair: vi.fn().mockResolvedValue({ ok: true, applied: 4 }),
+      applyEnsureSchema: vi.fn(),
+    }));
+    const { convertTransactionToTransfer } = await import("./transfer-write");
+
+    let restAttempts = 0;
+    const result = await convertTransactionToTransfer(
+      {
+        existingId: "tx-exp",
+        familyId: "fam-1",
+        outgoing: { transfer_account_id: "acc-card", transfer_id: "pair-1", amount: -5615.43 },
+        incoming: { transfer_account_id: "acc-main", transfer_id: "pair-1", amount: 5615.43 },
+      },
+      {
+        updateOutgoing: async (row) => {
+          restAttempts += 1;
+          if (restAttempts === 1) {
+            return { data: null, error: { code: "PGRST204", details: LIVE_TRANSFER_ACCOUNT_CACHE_ERROR } };
+          }
+          return { data: { id: "tx-exp", ...row }, error: null };
+        },
+        insertIncoming: async (rows) => ({
+          data: rows.map((row) => ({ id: "tx-in", ...row })),
+          error: null,
+        }),
+        sqlConvert: vi.fn().mockResolvedValue({ error: "DATABASE_URL not set" }),
+        retryDelaysMs: [5],
+        sleep: async () => undefined,
+      }
+    );
+
+    expect(restAttempts).toBeGreaterThan(1);
+    expect(result.data).toHaveLength(2);
+    expect(result.error).toBeUndefined();
+  });
+
+  it("never returns the English schema-cache toast when both REST and SQL miss", async () => {
+    vi.resetModules();
+    vi.doMock("./ensure-schema", () => ({
+      applyTransferSchemaRepair: vi.fn().mockResolvedValue({ ok: false, skipped: "DATABASE_URL not set" }),
+      applyEnsureSchema: vi.fn(),
+    }));
+    const { convertTransactionToTransfer } = await import("./transfer-write");
+
+    const result = await convertTransactionToTransfer(
+      {
+        existingId: "tx-exp",
+        familyId: "fam-1",
+        outgoing: { transfer_account_id: "acc-card", transfer_id: "pair-1" },
+        incoming: { transfer_account_id: "acc-main", transfer_id: "pair-1" },
+      },
+      {
+        updateOutgoing: async () => ({
+          data: null,
+          error: { message: LIVE_TRANSFER_ACCOUNT_CACHE_ERROR },
+        }),
+        insertIncoming: async () => ({
+          data: null,
+          error: { message: LIVE_TRANSFER_ACCOUNT_CACHE_ERROR },
+        }),
+        sqlConvert: vi.fn().mockResolvedValue({ error: "DATABASE_URL not set" }),
+        sqlFallback: vi.fn().mockResolvedValue({ error: "DATABASE_URL not set" }),
+        sqlWriter: vi.fn().mockResolvedValue({ error: "DATABASE_URL not set" }),
+        retryDelaysMs: [],
+        sleep: async () => undefined,
+      }
+    );
+
+    expect(result.data).toBeUndefined();
+    expect(result.error).toBeTruthy();
+    expect(result.error).not.toBe(LIVE_TRANSFER_ACCOUNT_CACHE_ERROR);
+    expect(result.error).toMatch(/DATABASE_URL|transfer_account_id|Coolify/i);
   });
 });

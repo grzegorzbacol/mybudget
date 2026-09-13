@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
-import { buildTransferLegs, insertTransferPair, updateTransferRow } from "@/lib/transfer-write";
+import { buildTransferLegs, convertTransactionToTransfer, insertTransferPair } from "@/lib/transfer-write";
 import { transferSchema } from "@/lib/validators";
+
+export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   const ctx = await getAuthContext();
@@ -97,25 +99,25 @@ export async function POST(request: Request) {
       ...legs[1],
       transfer_id: outgoing.transfer_id,
     };
-    const updated = await updateTransferRow(
-      async (row) =>
-        ctx.supabase
-          .from("transactions")
-          .update(row)
-          .eq("id", replace_transaction_id)
-          .eq("family_id", ctx.family.id)
-          .select()
-          .maybeSingle(),
-      outgoing,
-      { id: replace_transaction_id, familyId: ctx.family.id }
-    );
-    if (!updated.data) {
-      return NextResponse.json({ error: updated.error }, { status: 500 });
-    }
 
-    if (existingTransferId) {
-      await updateTransferRow(
-        async (row) =>
+    const converted = await convertTransactionToTransfer(
+      {
+        existingId: replace_transaction_id,
+        familyId: ctx.family.id,
+        outgoing,
+        incoming,
+        existingTransferId,
+      },
+      {
+        updateOutgoing: async (row) =>
+          ctx.supabase
+            .from("transactions")
+            .update(row)
+            .eq("id", replace_transaction_id)
+            .eq("family_id", ctx.family.id)
+            .select()
+            .maybeSingle(),
+        updateIncoming: async (row) =>
           ctx.supabase
             .from("transactions")
             .update(row)
@@ -124,22 +126,16 @@ export async function POST(request: Request) {
             .eq("family_id", ctx.family.id)
             .select()
             .maybeSingle(),
-        incoming
-      );
-      invalidateFamilyBudgetCache(ctx.family.id);
-      return NextResponse.json([updated.data]);
-    }
-
-    const created = await insertTransferPair(
-      async (rows) => ctx.supabase.from("transactions").insert(rows).select(),
-      [incoming]
+        insertIncoming: async (rows) => ctx.supabase.from("transactions").insert(rows).select(),
+      }
     );
-    if (!created.data) {
-      return NextResponse.json({ error: created.error }, { status: 500 });
+
+    if (!converted.data) {
+      return NextResponse.json({ error: converted.error }, { status: 500 });
     }
 
     invalidateFamilyBudgetCache(ctx.family.id);
-    return NextResponse.json([updated.data, ...created.data]);
+    return NextResponse.json(converted.data);
   }
 
   const created = await insertTransferPair(
