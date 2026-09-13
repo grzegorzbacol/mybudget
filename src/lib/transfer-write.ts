@@ -1,5 +1,4 @@
-import { Client } from "pg";
-import { isSchemaLagError, isTransferColumnSchemaError, resolveDatabaseUrl } from "./schema";
+import { isSchemaLagError, isTransferColumnSchemaError, resolveDatabaseUrl, schemaLagMessage, TRANSFER_SCHEMA_STATEMENTS } from "./schema";
 import {
   TRANSFER_REQUIRED_COLUMNS,
   insertRowsWithSchemaRepair,
@@ -9,6 +8,7 @@ import {
 } from "./schema-write";
 
 const TRANSFER_OPTIONAL_COLUMNS = ["scheduled_id"] as const;
+const PG_CONNECT_ATTEMPTS = 2;
 
 export { TRANSFER_REQUIRED_COLUMNS };
 
@@ -36,6 +36,24 @@ export type TransferSqlUpdater = (
   familyId: string,
   row: Record<string, unknown>
 ) => Promise<SchemaWriteResult<Record<string, unknown>>>;
+
+export type TransferSqlConverter = (
+  input: ConvertTransferInput
+) => Promise<SchemaWriteResult<Record<string, unknown>[]>>;
+
+export type ConvertTransferInput = {
+  existingId: string;
+  familyId: string;
+  outgoing: Record<string, unknown>;
+  incoming: Record<string, unknown>;
+  existingTransferId?: string | null;
+};
+
+type PgClient = {
+  connect: () => Promise<void>;
+  query: (sql: string, values?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
+  end: () => Promise<void>;
+};
 
 export function buildTransferLegs(input: {
   familyId: string;
@@ -90,71 +108,65 @@ function shouldFallbackToSql(message?: string): boolean {
   return isTransferColumnSchemaError(message) || isSchemaLagError(message);
 }
 
-export async function insertTransferRowsViaSql(
-  rows: Record<string, unknown>[],
-  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
-): Promise<SchemaWriteResult<Record<string, unknown>[]>> {
-  const { applyTransferSchemaRepair } = await import("./ensure-schema");
-  await applyTransferSchemaRepair(env);
-  const databaseUrl = resolveDatabaseUrl(env);
-  if (!databaseUrl) {
-    return { error: "DATABASE_URL not set" };
-  }
+function isRetryablePgConnect(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const code =
+    typeof error === "object" && error && "code" in error
+      ? String((error as { code?: unknown }).code ?? "")
+      : "";
+  return /EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ECONNRESET|ETIMEDOUT|timeout|getaddrinfo/i.test(
+    `${code} ${message}`
+  );
+}
 
-  const client = new Client({ connectionString: databaseUrl });
-  try {
-    await client.connect();
-    const inserted: Record<string, unknown>[] = [];
-    for (const row of rows) {
-      const result = await client.query(
-        `INSERT INTO transactions (
-           family_id, account_id, transfer_account_id, transfer_id,
-           category_id, amount, payee, memo, date, cleared, source, added_by
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-         RETURNING *`,
-        [
-          row.family_id,
-          row.account_id,
-          row.transfer_account_id,
-          row.transfer_id,
-          row.category_id ?? null,
-          row.amount,
-          row.payee ?? "",
-          row.memo ?? "",
-          row.date,
-          row.cleared ?? false,
-          row.source ?? "manual",
-          row.added_by ?? null,
-        ]
-      );
-      inserted.push(result.rows[0] as Record<string, unknown>);
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function connectPg(
+  databaseUrl: string,
+  attempts = PG_CONNECT_ATTEMPTS
+): Promise<PgClient> {
+  const { Client } = await import("pg");
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const client = new Client({
+      connectionString: databaseUrl,
+      connectionTimeoutMillis: 4000,
+    }) as unknown as PgClient;
+    try {
+      await client.connect();
+      return client;
+    } catch (error) {
+      lastError = error;
+      await client.end().catch(() => undefined);
+      if (attempt < attempts && isRetryablePgConnect(error)) {
+        await delay(200 * attempt);
+        continue;
+      }
+      throw error;
     }
-    return { data: inserted };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : "SQL transfer insert failed" };
-  } finally {
-    await client.end().catch(() => undefined);
+  }
+  throw lastError ?? new Error("SQL transfer connect failed");
+}
+
+async function ensureTransferColumnsOnClient(client: PgClient): Promise<void> {
+  for (const sql of TRANSFER_SCHEMA_STATEMENTS) {
+    await client.query(sql);
   }
 }
 
-export async function updateTransferRowViaSql(
-  id: string,
-  familyId: string,
-  row: Record<string, unknown>,
-  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
-): Promise<SchemaWriteResult<Record<string, unknown>>> {
-  const { applyTransferSchemaRepair } = await import("./ensure-schema");
-  await applyTransferSchemaRepair(env);
-  const databaseUrl = resolveDatabaseUrl(env);
-  if (!databaseUrl) {
-    return { error: "DATABASE_URL not set" };
+function userFacingTransferError(restError?: string, sqlError?: string): string {
+  const rest = restError?.trim() ?? "";
+  const sql = sqlError?.trim() ?? "";
+  if (sql && !shouldFallbackToSql(sql)) return sql;
+  if (shouldFallbackToSql(rest) || shouldFallbackToSql(sql)) {
+    return schemaLagMessage(sql || rest);
   }
+  return rest || sql || "Nie udało się zapisać transferu";
+}
 
-  const client = new Client({ connectionString: databaseUrl });
-  try {
-    await client.connect();
-    const result = await client.query(
-      `UPDATE transactions SET
+const UPDATE_TRANSFER_SQL = `UPDATE public.transactions SET
          account_id = COALESCE($3, account_id),
          transfer_account_id = $4,
          transfer_id = COALESCE($5, transfer_id),
@@ -165,27 +177,161 @@ export async function updateTransferRowViaSql(
          date = COALESCE($10, date),
          cleared = COALESCE($11, cleared)
        WHERE id = $1::uuid AND family_id = $2::uuid
-       RETURNING *`,
-      [
-        id,
-        familyId,
-        row.account_id ?? null,
-        row.transfer_account_id ?? null,
-        row.transfer_id ?? null,
-        row.category_id ?? null,
-        row.amount ?? null,
-        row.payee ?? null,
-        row.memo ?? null,
-        row.date ?? null,
-        row.cleared ?? null,
-      ]
-    );
+       RETURNING *`;
+
+const INSERT_TRANSFER_SQL = `INSERT INTO public.transactions (
+           family_id, account_id, transfer_account_id, transfer_id,
+           category_id, amount, payee, memo, date, cleared, source, added_by
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         RETURNING *`;
+
+function insertValues(row: Record<string, unknown>): unknown[] {
+  return [
+    row.family_id,
+    row.account_id,
+    row.transfer_account_id,
+    row.transfer_id,
+    row.category_id ?? null,
+    row.amount,
+    row.payee ?? "",
+    row.memo ?? "",
+    row.date,
+    row.cleared ?? false,
+    row.source ?? "manual",
+    row.added_by ?? null,
+  ];
+}
+
+function updateValues(id: string, familyId: string, row: Record<string, unknown>): unknown[] {
+  return [
+    id,
+    familyId,
+    row.account_id ?? null,
+    row.transfer_account_id ?? null,
+    row.transfer_id ?? null,
+    row.category_id ?? null,
+    row.amount ?? null,
+    row.payee ?? null,
+    row.memo ?? null,
+    row.date ?? null,
+    row.cleared ?? null,
+  ];
+}
+
+export async function insertTransferRowsViaSql(
+  rows: Record<string, unknown>[],
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): Promise<SchemaWriteResult<Record<string, unknown>[]>> {
+  const databaseUrl = resolveDatabaseUrl(env);
+  if (!databaseUrl) {
+    return { error: "DATABASE_URL not set" };
+  }
+
+  let client: PgClient | undefined;
+  try {
+    client = await connectPg(databaseUrl);
+    await ensureTransferColumnsOnClient(client);
+    const inserted: Record<string, unknown>[] = [];
+    for (const row of rows) {
+      const result = await client.query(INSERT_TRANSFER_SQL, insertValues(row));
+      inserted.push(result.rows[0] as Record<string, unknown>);
+    }
+    return { data: inserted };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "SQL transfer insert failed" };
+  } finally {
+    await client?.end().catch(() => undefined);
+  }
+}
+
+export async function updateTransferRowViaSql(
+  id: string,
+  familyId: string,
+  row: Record<string, unknown>,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): Promise<SchemaWriteResult<Record<string, unknown>>> {
+  const databaseUrl = resolveDatabaseUrl(env);
+  if (!databaseUrl) {
+    return { error: "DATABASE_URL not set" };
+  }
+
+  let client: PgClient | undefined;
+  try {
+    client = await connectPg(databaseUrl);
+    await ensureTransferColumnsOnClient(client);
+    const result = await client.query(UPDATE_TRANSFER_SQL, updateValues(id, familyId, row));
     const data = result.rows[0] as Record<string, unknown> | undefined;
     return data ? { data } : { error: "Nie znaleziono transakcji" };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "SQL transfer update failed" };
   } finally {
-    await client.end().catch(() => undefined);
+    await client?.end().catch(() => undefined);
+  }
+}
+
+/**
+ * Convert an existing expense (or update an existing transfer) in one Postgres
+ * transaction. ADD COLUMN + write share the same connection so PostgREST cache
+ * cannot block Edytuj → Transfer → Zapisz transfer.
+ */
+export async function convertTransferViaSql(
+  input: ConvertTransferInput,
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): Promise<SchemaWriteResult<Record<string, unknown>[]>> {
+  const databaseUrl = resolveDatabaseUrl(env);
+  if (!databaseUrl) {
+    return { error: "DATABASE_URL not set" };
+  }
+
+  let client: PgClient | undefined;
+  try {
+    client = await connectPg(databaseUrl);
+    await ensureTransferColumnsOnClient(client);
+    await client.query("BEGIN");
+    const updated = await client.query(
+      UPDATE_TRANSFER_SQL,
+      updateValues(input.existingId, input.familyId, input.outgoing)
+    );
+    const outgoingRow = updated.rows[0] as Record<string, unknown> | undefined;
+    if (!outgoingRow) {
+      await client.query("ROLLBACK");
+      return { error: "Nie znaleziono transakcji" };
+    }
+
+    let incomingRow: Record<string, unknown> | undefined;
+    if (input.existingTransferId) {
+      const pair = await client.query(
+        `UPDATE public.transactions SET
+           account_id = COALESCE($3, account_id),
+           transfer_account_id = $4,
+           transfer_id = COALESCE($5, transfer_id),
+           category_id = $6,
+           amount = COALESCE($7, amount),
+           payee = COALESCE($8, payee),
+           memo = COALESCE($9, memo),
+           date = COALESCE($10, date),
+           cleared = COALESCE($11, cleared)
+         WHERE transfer_id = $12::uuid AND id <> $1::uuid AND family_id = $2::uuid
+         RETURNING *`,
+        [...updateValues(input.existingId, input.familyId, input.incoming), input.existingTransferId]
+      );
+      incomingRow = pair.rows[0] as Record<string, unknown> | undefined;
+    }
+    if (!incomingRow) {
+      const inserted = await client.query(INSERT_TRANSFER_SQL, insertValues(input.incoming));
+      incomingRow = inserted.rows[0] as Record<string, unknown> | undefined;
+    }
+    if (!incomingRow) {
+      await client.query("ROLLBACK");
+      return { error: "Nie udało się zapisać drugiej nogi transferu" };
+    }
+    await client.query("COMMIT");
+    return { data: [outgoingRow, incomingRow] };
+  } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => undefined);
+    return { error: error instanceof Error ? error.message : "SQL transfer convert failed" };
+  } finally {
+    await client?.end().catch(() => undefined);
   }
 }
 
@@ -197,49 +343,149 @@ export async function updateTransferRowViaSql(
 export async function insertTransferPair<T>(
   insertOnce: (
     rows: Record<string, unknown>[]
-  ) => Promise<{ data: T[] | null; error: { message?: string } | null }>,
+  ) => Promise<{ data: T[] | null; error: { message?: string; details?: string; hint?: string; code?: string } | null }>,
   rows: TransferLeg[] | Record<string, unknown>[],
-  options?: SchemaWriteRetryOptions & { sqlFallback?: TransferSqlWriter }
+  options?: SchemaWriteRetryOptions & { sqlFallback?: TransferSqlWriter; ensureBeforeWrite?: boolean }
 ): Promise<SchemaWriteResult<T[]>> {
   const records = rows as Record<string, unknown>[];
+  if (options?.ensureBeforeWrite !== false) {
+    try {
+      const { applyTransferSchemaRepair } = await import("./ensure-schema");
+      await applyTransferSchemaRepair();
+    } catch {
+      /* REST / SQL fallback still run */
+    }
+  }
   const rest = await insertRowsWithSchemaRepair(insertOnce, records, TRANSFER_OPTIONAL_COLUMNS, {
     requiredColumns: TRANSFER_REQUIRED_COLUMNS,
     ...options,
   });
-  if (rest.data || !shouldFallbackToSql(rest.error)) {
+  if (rest.data) {
+    return rest;
+  }
+  if (!shouldFallbackToSql(rest.error)) {
     return rest;
   }
   const sql = await (options?.sqlFallback ?? insertTransferRowsViaSql)(records);
   if (sql.data) {
     return { data: sql.data as T[] };
   }
-  return rest;
+  return { error: userFacingTransferError(rest.error, sql.error) };
 }
 
 export async function updateTransferRow<T>(
   updateOnce: (
     row: Record<string, unknown>
-  ) => Promise<{ data: T | null; error: { message?: string } | null }>,
+  ) => Promise<{ data: T | null; error: { message?: string; details?: string; hint?: string; code?: string } | null }>,
   row: Record<string, unknown>,
   options?: SchemaWriteRetryOptions & {
     id?: string;
     familyId?: string;
     sqlFallback?: TransferSqlUpdater;
+    ensureBeforeWrite?: boolean;
   }
 ): Promise<SchemaWriteResult<T>> {
+  if (options?.ensureBeforeWrite !== false) {
+    try {
+      const { applyTransferSchemaRepair } = await import("./ensure-schema");
+      await applyTransferSchemaRepair();
+    } catch {
+      /* REST / SQL fallback still run */
+    }
+  }
   const rest = await updateRowWithSchemaRepair(updateOnce, row, TRANSFER_OPTIONAL_COLUMNS, {
     requiredColumns: TRANSFER_REQUIRED_COLUMNS,
     ...options,
   });
-  if (rest.data || !shouldFallbackToSql(rest.error)) {
+  if (rest.data) {
+    return rest;
+  }
+  if (!shouldFallbackToSql(rest.error)) {
     return rest;
   }
   if (!options?.id || !options.familyId) {
-    return rest;
+    return { error: userFacingTransferError(rest.error) };
   }
   const sql = await (options.sqlFallback ?? updateTransferRowViaSql)(options.id, options.familyId, row);
   if (sql.data) {
     return { data: sql.data as T };
   }
-  return rest;
+  return { error: userFacingTransferError(rest.error, sql.error) };
+}
+
+/**
+ * Edytuj transakcję → Transfer → Zapisz transfer.
+ * SQL-first: ADD COLUMN + both legs on one Postgres connection so a stale
+ * PostgREST cache cannot 500. REST is only a fallback when SQL cannot connect.
+ */
+export async function convertTransactionToTransfer<T>(
+  input: ConvertTransferInput,
+  options: SchemaWriteRetryOptions & {
+    updateOutgoing: (
+      row: Record<string, unknown>
+    ) => Promise<{ data: T | null; error: { message?: string; details?: string; hint?: string; code?: string } | null }>;
+    updateIncoming?: (
+      row: Record<string, unknown>
+    ) => Promise<{ data: T | null; error: { message?: string; details?: string; hint?: string; code?: string } | null }>;
+    insertIncoming: (
+      rows: Record<string, unknown>[]
+    ) => Promise<{ data: T[] | null; error: { message?: string; details?: string; hint?: string; code?: string } | null }>;
+    sqlConvert?: TransferSqlConverter;
+    sqlFallback?: TransferSqlUpdater;
+    sqlWriter?: TransferSqlWriter;
+    ensureBeforeWrite?: boolean;
+  }
+): Promise<SchemaWriteResult<T[]>> {
+  const sql = await (options.sqlConvert ?? convertTransferViaSql)(input);
+  if (sql.data?.length) {
+    return { data: sql.data as T[] };
+  }
+
+  if (options.ensureBeforeWrite !== false) {
+    try {
+      const { applyTransferSchemaRepair } = await import("./ensure-schema");
+      await applyTransferSchemaRepair();
+    } catch {
+      /* REST still runs */
+    }
+  }
+
+  const updated = await updateTransferRow(options.updateOutgoing, input.outgoing, {
+    id: input.existingId,
+    familyId: input.familyId,
+    ensureBeforeWrite: false,
+    retryDelaysMs: options.retryDelaysMs,
+    sleep: options.sleep,
+    sqlFallback: options.sqlFallback,
+  });
+  if (!updated.data) {
+    return { error: userFacingTransferError(updated.error, sql.error) };
+  }
+
+  if (input.existingTransferId && options.updateIncoming) {
+    const pair = await updateTransferRow(options.updateIncoming, input.incoming, {
+      ensureBeforeWrite: false,
+      retryDelaysMs: options.retryDelaysMs,
+      sleep: options.sleep,
+      sqlFallback: options.sqlFallback,
+    });
+    if (pair.data) {
+      return { data: [updated.data, pair.data] };
+    }
+  }
+
+  const created = await insertTransferPair(options.insertIncoming, [input.incoming], {
+    ensureBeforeWrite: false,
+    retryDelaysMs: options.retryDelaysMs,
+    sleep: options.sleep,
+    sqlFallback: options.sqlWriter,
+  });
+  if (!created.data) {
+    const retrySql = await (options.sqlConvert ?? convertTransferViaSql)(input);
+    if (retrySql.data?.length) {
+      return { data: retrySql.data as T[] };
+    }
+    return { error: userFacingTransferError(created.error, retrySql.error || sql.error) };
+  }
+  return { data: [updated.data, ...created.data] };
 }

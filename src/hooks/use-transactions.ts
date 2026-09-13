@@ -157,12 +157,21 @@ export function useCreateTransfer() {
 
   return useMutation({
     mutationFn: async (input: TransferInput) => {
-      const res = await fetch("/api/transactions/transfer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
-      });
-      const data = await res.json();
+      const post = async () => {
+        const res = await fetch("/api/transactions/transfer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        });
+        const data = await res.json();
+        return { res, data };
+      };
+      let { res, data } = await post();
+      const err = typeof data.error === "string" ? data.error : "";
+      if (!res.ok && /transfer_account_id|transfer_id|schema cache|PGRST204/i.test(err)) {
+        await fetch("/api/setup/repair-transfer", { method: "POST" }).catch(() => undefined);
+        ({ res, data } = await post());
+      }
       if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "Błąd transferu");
       return data;
     },

@@ -2,6 +2,7 @@ import {
   isMissingRelationError,
   isSchemaLagError,
   isTransferColumnSchemaError,
+  writeErrorMessage,
 } from "./schema";
 
 export const OPTIONAL_WRITE_COLUMNS = [
@@ -27,7 +28,12 @@ export type SchemaWriteResult<T> = {
   error?: string;
 };
 
-type WriteError = { message?: string } | null;
+type WriteError = {
+  message?: string;
+  details?: string;
+  hint?: string;
+  code?: string;
+} | null;
 
 type SchemaRepairResult = {
   attempted: boolean;
@@ -104,7 +110,8 @@ async function repairSchemaIfLagging(message: string): Promise<SchemaRepairResul
   const schema = await import("./ensure-schema");
   if (isTransferColumnSchemaError(message) && typeof schema.applyTransferSchemaRepair === "function") {
     const result = await schema.applyTransferSchemaRepair();
-    return { attempted: true, reloaded: Boolean(result?.ok) && !result?.skipped };
+    const ran = Boolean(result?.applied) || (Boolean(result?.ok) && !result?.skipped);
+    return { attempted: true, reloaded: ran };
   }
 
   const result = await schema.applyEnsureSchema(process.env, { force: true });
@@ -125,7 +132,7 @@ async function retryAfterSchemaReload<T>(
     return result;
   }
 
-  const message = result.error?.message ?? "";
+  const message = writeErrorMessage(result.error);
   if (!isSchemaLagError(message) && !isMissingRelationError(message)) {
     return result;
   }
@@ -138,7 +145,7 @@ async function retryAfterSchemaReload<T>(
     if (!result.error && result.data) {
       return result;
     }
-    const nextMessage = result.error?.message ?? "";
+    const nextMessage = writeErrorMessage(result.error);
     if (!isSchemaLagError(nextMessage) && !isMissingRelationError(nextMessage)) {
       return result;
     }
@@ -164,7 +171,7 @@ export async function insertRowWithSchemaRepair<T>(
     return { data: result.data };
   }
 
-  const firstMessage = result.error?.message ?? "";
+  const firstMessage = writeErrorMessage(result.error);
   const repair = await repairSchemaIfLagging(firstMessage);
   if (repair.attempted) {
     result = await retryAfterSchemaReload(() => insertOnce(row), repair, options);
@@ -173,7 +180,7 @@ export async function insertRowWithSchemaRepair<T>(
     }
   }
 
-  const message = result.error?.message ?? firstMessage;
+  const message = writeErrorMessage(result.error) || firstMessage;
   if (isSchemaLagError(message)) {
     const toStrip = columnsToStrip(message, [row], optionalColumns, options?.requiredColumns ?? []);
     const { next, stripped } = stripColumns(row, toStrip);
@@ -185,7 +192,7 @@ export async function insertRowWithSchemaRepair<T>(
           warning: `Zapisano bez kolumn ${stripped.join(", ")} — zredeployuj Coolify, żeby dociągnąć schemat.`,
         };
       }
-      return { error: retry.error?.message ?? message };
+      return { error: writeErrorMessage(retry.error) || message };
     }
   }
 
@@ -205,7 +212,7 @@ export async function insertRowsWithSchemaRepair<T>(
     return { data: result.data };
   }
 
-  const firstMessage = result.error?.message ?? "";
+  const firstMessage = writeErrorMessage(result.error);
   const repair = await repairSchemaIfLagging(firstMessage);
   if (repair.attempted) {
     result = await retryAfterSchemaReload(() => insertOnce(rows), repair, options);
@@ -214,7 +221,7 @@ export async function insertRowsWithSchemaRepair<T>(
     }
   }
 
-  const message = result.error?.message ?? firstMessage;
+  const message = writeErrorMessage(result.error) || firstMessage;
   if (isSchemaLagError(message)) {
     const toStrip = columnsToStrip(message, rows, optionalColumns, options?.requiredColumns ?? []);
     const { next, stripped } = stripColumnsFromRows(rows, toStrip);
@@ -226,7 +233,7 @@ export async function insertRowsWithSchemaRepair<T>(
           warning: `Zapisano bez kolumn ${stripped.join(", ")} — zredeployuj Coolify, żeby dociągnąć schemat.`,
         };
       }
-      return { error: retry.error?.message ?? message };
+      return { error: writeErrorMessage(retry.error) || message };
     }
   }
 
