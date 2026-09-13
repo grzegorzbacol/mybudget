@@ -187,6 +187,40 @@ export function sanitizeCategoryName(name: string, fallback: string): string {
   return (cleaned || fallback).slice(0, 60);
 }
 
+export type ClassifyCreateBody = {
+  group_name: string;
+  name: string;
+  kind: "expense";
+};
+
+/** POST /api/categories body for the detail-sheet „Utwórz i przypisz” button. */
+export function classifyCreateBody(result: ClassifySuggestCreateResult): ClassifyCreateBody {
+  return {
+    group_name: result.group_name?.trim() || CLASSIFY_DEFAULT_GROUP,
+    name: result.name,
+    kind: "expense",
+  };
+}
+
+export async function applyClassifyResult<TCreated extends { id?: string }>(
+  result: ClassifyResult,
+  deps: {
+    createEnvelope: (body: ClassifyCreateBody) => Promise<TCreated>;
+    assign: (categoryId: string) => void | Promise<void>;
+  }
+): Promise<{ categoryId: string; created: boolean; name: string }> {
+  if (result.action === "match") {
+    await deps.assign(result.category_id);
+    return { categoryId: result.category_id, created: false, name: result.category_name };
+  }
+  const created = await deps.createEnvelope(classifyCreateBody(result));
+  if (!created.id) {
+    throw new Error("Nie udało się utworzyć koperty.");
+  }
+  await deps.assign(created.id);
+  return { categoryId: created.id, created: true, name: result.name };
+}
+
 export function resolveClassifyResult(
   raw: ClassifyLlmRaw,
   catalog: ClassifyCatalogItem[],
@@ -261,13 +295,14 @@ export function buildClassifySystemPrompt(catalog: ClassifyCatalogItem[]): strin
 Dostaniesz opis zakupu (tekst i/lub zdjęcie paragonu albo produktu) oraz listę ISTNIEJĄCYCH kopert użytkownika.
 
 Zasady:
-1. Jeśli zakup pasuje do istniejącej koperty — action "match" i jej category_id z listy. NIE wymyślaj UUID.
-2. Dopasuj do konkretnej koperty (name), nie tylko grupy. Wybierz najbliższą semantycznie.
-3. Tylko gdy żadna koperta nie jest wystarczająco bliska — action "suggest_create" z krótką nazwą po polsku i opcjonalną group_name (lepiej użyj istniejącej grupy).
-4. Preferuj match przy rozsądnym dopasowaniu (parasol → Ubrania; kawa na mieście → Restauracje; benzyna → Paliwo).
-5. Nie proponuj przychodów ani „Do rozdzielenia”.
-6. reason: jedno zdanie po polsku, konkretne.
-7. confidence: liczba 0–1.
+1. Jeśli zakup JASNO pasuje do istniejącej koperty — action "match" i jej category_id z listy. NIE wymyślaj UUID.
+2. Dopasuj do konkretnej koperty (name), nie tylko grupy.
+3. Nie naciągaj dopasowania. Gdy żadna koperta nie jest wystarczająco bliska — action "suggest_create" z krótką nazwą po polsku i group_name (lepiej użyj istniejącej grupy).
+4. Przykłady match: mleko → Zakupy spożywcze; kurtka → Ubrania; benzyna → Paliwo; kawa na mieście → Restauracje.
+5. Przykłady suggest_create: parasol (to nie Ubrania); prezent urodzinowy (to nie Zakupy spożywcze) — zaproponuj nową kopertę.
+6. Nie proponuj przychodów ani „Do rozdzielenia”.
+7. reason: jedno zdanie po polsku, konkretne.
+8. confidence: liczba 0–1.
 
 Istniejące koperty:
 ${list}

@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import {
   CLASSIFY_DEFAULT_GROUP,
   CLASSIFY_TIMEOUT_MS,
+  applyClassifyResult,
+  type ClassifyCreateBody,
   type ClassifyResult,
 } from "@/lib/ai-classify";
 import { parseResponseJson } from "@/lib/http";
@@ -108,42 +110,42 @@ export function AiCategoryPanel({
     }
   };
 
-  const applyMatch = async () => {
-    if (!result || result.action !== "match") return;
-    try {
-      await onAssign(result.category_id);
-      if (announce) toast.success(`Przypisano: ${result.category_name}`);
-    } catch {
-      /* parent mutation surfaces the error */
+  const applyResult = async () => {
+    if (!result || creating) return;
+    if (result.action === "suggest_create") {
+      setCreating(true);
+      setError(null);
     }
-  };
-
-  const createAndAssign = async () => {
-    if (!result || result.action !== "suggest_create" || creating) return;
-    setCreating(true);
-    setError(null);
     try {
-      const res = await fetch("/api/categories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          group_name: result.group_name?.trim() || CLASSIFY_DEFAULT_GROUP,
-          name: result.name,
-          kind: "expense",
-        }),
+      const applied = await applyClassifyResult(result, {
+        createEnvelope: async (body: ClassifyCreateBody) => {
+          const res = await fetch("/api/categories", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          const created = await parseResponseJson<{ id?: string; error?: unknown }>(res);
+          if (!res.ok || !created.id) {
+            throw new Error(
+              typeof created.error === "string" ? created.error : "Nie udało się utworzyć koperty."
+            );
+          }
+          await queryClient.invalidateQueries({ queryKey: ["categories"] });
+          await queryClient.invalidateQueries({ queryKey: ["budget"] });
+          return created;
+        },
+        assign: onAssign,
       });
-      const created = await parseResponseJson<{ id?: string; error?: unknown }>(res);
-      if (!res.ok || !created.id) {
-        throw new Error(
-          typeof created.error === "string" ? created.error : "Nie udało się utworzyć koperty."
+      if (announce) {
+        toast.success(
+          applied.created ? `Utworzono i przypisano: ${applied.name}` : `Przypisano: ${applied.name}`
         );
       }
-      await queryClient.invalidateQueries({ queryKey: ["categories"] });
-      await queryClient.invalidateQueries({ queryKey: ["budget"] });
-      await onAssign(created.id);
-      if (announce) toast.success(`Utworzono i przypisano: ${result.name}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Nie udało się utworzyć koperty.");
+      if (result.action === "suggest_create") {
+        setError(err instanceof Error ? err.message : "Nie udało się utworzyć koperty.");
+      }
+      /* match errors are surfaced by the parent mutation */
     } finally {
       setCreating(false);
     }
@@ -192,6 +194,7 @@ export function AiCategoryPanel({
           size="sm"
           className="shrink-0 bg-violet-600 hover:bg-violet-700"
           disabled={disabled || loading}
+          data-testid="ai-classify-submit"
           onClick={() => void classify()}
         >
           {loading ? "Analiza…" : "Dobierz"}
@@ -234,7 +237,7 @@ export function AiCategoryPanel({
         </p>
       )}
       {result?.action === "match" && (
-        <div className="space-y-2 rounded-md border bg-background/80 p-2">
+        <div className="space-y-2 rounded-md border bg-background/80 p-2" data-testid="ai-classify-match">
           <div className="flex items-start justify-between gap-2">
             <div>
               <p className="text-sm font-medium">
@@ -255,13 +258,22 @@ export function AiCategoryPanel({
               {Math.round(result.confidence * 100)}%
             </span>
           </div>
-          <Button type="button" size="sm" className="w-full" onClick={() => void applyMatch()}>
+          <Button
+            type="button"
+            size="sm"
+            className="w-full"
+            data-testid="ai-classify-assign"
+            onClick={() => void applyResult()}
+          >
             Przypisz: {result.category_name}
           </Button>
         </div>
       )}
       {result?.action === "suggest_create" && (
-        <div className="space-y-2 rounded-md border bg-background/80 p-2">
+        <div
+          className="space-y-2 rounded-md border bg-background/80 p-2"
+          data-testid="ai-classify-suggest-create"
+        >
           <div className="flex items-start justify-between gap-2">
             <div>
               <p className="text-sm font-medium">Nowa koperta: {result.name}</p>
@@ -281,7 +293,8 @@ export function AiCategoryPanel({
             size="sm"
             className="w-full"
             disabled={creating}
-            onClick={() => void createAndAssign()}
+            data-testid="ai-classify-create-assign"
+            onClick={() => void applyResult()}
           >
             {creating ? "Tworzenie…" : "Utwórz i przypisz"}
           </Button>

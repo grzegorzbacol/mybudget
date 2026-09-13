@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  applyClassifyResult,
   buildClassifySystemPrompt,
   buildClassifyUserPrompt,
   clampConfidence,
   classifyCategory,
+  classifyCreateBody,
   ClassifyInputError,
   findCatalogMatch,
   hasClassifyInput,
@@ -261,5 +263,98 @@ describe("prompts", () => {
     expect(system).toContain("Ubrania");
     expect(system).toContain("suggest_create");
     expect(buildClassifyUserPrompt({ text: "kawa" }, false)).toBe("Opis: kawa");
+  });
+
+  it("teaches suggest_create for parasol instead of stretching to Ubrania", () => {
+    const system = buildClassifySystemPrompt(catalog);
+    expect(system).toMatch(/parasol[\s\S]*suggest_create|suggest_create[\s\S]*parasol/i);
+    expect(system).toContain("to nie Ubrania");
+    expect(system).not.toMatch(/parasol\s*→\s*Ubrania/);
+    expect(system).toContain("mleko");
+    expect(system).toContain("Zakupy spożywcze");
+  });
+});
+
+describe("applyClassifyResult (Szczegóły transakcji)", () => {
+  it("match assigns the existing envelope and does not create", async () => {
+    const assigned: string[] = [];
+    const createEnvelope = vi.fn();
+    const applied = await applyClassifyResult(
+      {
+        action: "match",
+        category_id: FOOD,
+        category_name: "Zakupy spożywcze",
+        group_name: "Życie codzienne",
+        confidence: 0.9,
+        reason: "Mleko.",
+      },
+      {
+        createEnvelope,
+        assign: async (id) => {
+          assigned.push(id);
+        },
+      }
+    );
+    expect(applied).toEqual({ categoryId: FOOD, created: false, name: "Zakupy spożywcze" });
+    expect(assigned).toEqual([FOOD]);
+    expect(createEnvelope).not.toHaveBeenCalled();
+  });
+
+  it("suggest_create posts a new envelope then assigns it (parasol)", async () => {
+    const assigned: string[] = [];
+    const createdId = "55555555-5555-4555-8555-555555555555";
+    const suggestion = {
+      action: "suggest_create" as const,
+      name: "Parasol",
+      group_name: "Osobiste",
+      confidence: 0.7,
+      reason: "Brak koperty na parasol.",
+    };
+    expect(classifyCreateBody(suggestion)).toEqual({
+      group_name: "Osobiste",
+      name: "Parasol",
+      kind: "expense",
+    });
+    const applied = await applyClassifyResult(suggestion, {
+      createEnvelope: async (body) => {
+        expect(body).toEqual({ group_name: "Osobiste", name: "Parasol", kind: "expense" });
+        return { id: createdId };
+      },
+      assign: async (id) => {
+        assigned.push(id);
+      },
+    });
+    expect(applied).toEqual({ categoryId: createdId, created: true, name: "Parasol" });
+    expect(assigned).toEqual([createdId]);
+  });
+
+  it("uses Życie codzienne when suggest_create omits a group", () => {
+    expect(
+      classifyCreateBody({
+        action: "suggest_create",
+        name: "Parasol",
+        group_name: null,
+        confidence: 0.6,
+        reason: "Nowa koperta.",
+      }).group_name
+    ).toBe("Życie codzienne");
+  });
+
+  it("fails in Polish when create does not return an id", async () => {
+    await expect(
+      applyClassifyResult(
+        {
+          action: "suggest_create",
+          name: "Parasol",
+          group_name: "Osobiste",
+          confidence: 0.6,
+          reason: "Nowa koperta.",
+        },
+        {
+          createEnvelope: async () => ({}),
+          assign: async () => undefined,
+        }
+      )
+    ).rejects.toThrow("Nie udało się utworzyć koperty.");
   });
 });
