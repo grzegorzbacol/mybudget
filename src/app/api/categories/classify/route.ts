@@ -9,11 +9,10 @@ import {
   hasClassifyInput,
   openAiClassifyLlm,
   parseClassifyFields,
-  toClassifyCatalog,
 } from "@/lib/ai-classify";
+import { loadClassifyCatalog } from "@/lib/ai-classify-load";
 import { getOpenAIClient } from "@/lib/openai-client";
 import { sniffReceiptImage } from "@/lib/receipts";
-import type { BudgetCategory } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -99,20 +98,11 @@ export async function POST(request: Request) {
     );
   }
 
-  const { data: familyCategories, error: catError } = await ctx.supabase
-    .from("budget_categories")
-    .select("id, name, group_name, kind")
-    .eq("family_id", ctx.family.id)
-    .order("sort_order");
-
-  if (catError) {
-    return NextResponse.json(
-      { error: "Nie udało się wczytać kopert budżetu." },
-      { status: 500 }
-    );
+  const loaded = await loadClassifyCatalog(ctx.supabase, ctx.family.id);
+  if (loaded.error) {
+    return NextResponse.json({ error: loaded.error }, { status: 500 });
   }
-
-  const catalog = toClassifyCatalog((familyCategories ?? []) as BudgetCategory[]);
+  const catalog = loaded.catalog;
 
   try {
     const result = await withTimeout(
