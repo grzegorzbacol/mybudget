@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
-import { deleteCategoryRow, isCategoryId, updateCategoryRow } from "@/lib/categories";
+import { deleteCategoryRow, isCategoryId } from "@/lib/categories";
+import { updateCategoryRow } from "@/lib/categories-write";
 import { categoryPatchSchema } from "@/lib/validators";
 
 async function routeId(

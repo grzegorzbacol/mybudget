@@ -18,8 +18,8 @@ import {
   planCategoryReorder,
   reorderCategoryRows,
   uniqueGroupNames,
-  updateCategoryRow,
 } from "./categories";
+import { updateCategoryRow } from "./categories-write";
 import type { BudgetCategory, BudgetCategoryRow, BudgetMonthData } from "./types";
 
 const UUID = "2c1d3e4f-5a6b-4789-8abc-def012345678";
