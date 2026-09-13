@@ -30,12 +30,12 @@ import {
   type ExpenseSplitView,
   type TransactionDetailView,
 } from "@/lib/transaction-detail";
+import { useCategories } from "@/hooks/use-categories";
 import { useDeleteTransaction, useUpdateTransaction } from "@/hooks/use-transactions";
 import { TransactionForm } from "./TransactionForm";
 import { AiCategoryPanel } from "./AiCategoryPanel";
 import { ReceiptPhoto } from "@/components/ReceiptPhoto";
-import { useFamily, useFamilyMembers } from "@/hooks/use-family";
-import { createClient } from "@/lib/supabase/client";
+import { useFamilyMembers } from "@/hooks/use-family";
 import { useQuery } from "@tanstack/react-query";
 
 interface TransactionDetailProps {
@@ -53,26 +53,13 @@ export function TransactionDetail({
   const updateTx = useUpdateTransaction();
   const deleteTx = useDeleteTransaction();
   const [editing, setEditing] = useState(false);
-  const { data: familyData } = useFamily();
   const { data: members } = useFamilyMembers();
-  const supabase = createClient();
+  const { data: categoryList } = useCategories(!!id);
+  const categories = categoryList?.categories ?? [];
 
   useEffect(() => {
     setEditing(false);
   }, [id]);
-
-  const { data: categories } = useQuery({
-    queryKey: ["categories", familyData?.family.id],
-    enabled: !!familyData?.family.id && !!id,
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("budget_categories")
-        .select("*")
-        .eq("family_id", familyData!.family.id)
-        .order("sort_order");
-      return data ?? [];
-    },
-  });
 
   const { data: hydrated } = useQuery({
     queryKey: ["transaction-detail", id],
