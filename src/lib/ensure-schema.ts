@@ -18,6 +18,18 @@ export const ENSURE_SCHEMA_TTL_MS = 10 * 60 * 1000;
 /** Don't block first paint longer than this while DDL + NOTIFY pgrst run. */
 export const ENSURE_SCHEMA_READ_WAIT_MS = 800;
 
+/** Bound repair so a blackholed DATABASE_URL cannot stall a healthy PostgREST write. */
+export const ENSURE_SCHEMA_CONNECT_TIMEOUT_MS = 4000;
+export const ENSURE_SCHEMA_STATEMENT_TIMEOUT_MS = 8000;
+
+export function ensureSchemaClientConfig(connectionString: string) {
+  return {
+    connectionString,
+    connectionTimeoutMillis: ENSURE_SCHEMA_CONNECT_TIMEOUT_MS,
+    query_timeout: ENSURE_SCHEMA_STATEMENT_TIMEOUT_MS,
+  };
+}
+
 let lastSuccessAt = 0;
 let inFlight: Promise<EnsureSchemaResult> | null = null;
 let runStatements: EnsureSchemaRunner = runEnsureSchemaUncached;
@@ -51,11 +63,17 @@ async function runSqlStatements(
     return { ok: false, applied: 0, skipped: "DATABASE_URL not set" };
   }
 
-  const client = new Client({ connectionString: databaseUrl });
+  const client = new Client(ensureSchemaClientConfig(databaseUrl));
   let applied = 0;
   const errors: string[] = [];
   try {
     await client.connect();
+    try {
+      await client.query("SET lock_timeout = '3s'");
+      await client.query("SET statement_timeout = '8s'");
+    } catch {
+      /* transaction poolers may reject SET; connect/query timeouts still apply */
+    }
     for (const sql of statements) {
       try {
         await client.query(sql);
