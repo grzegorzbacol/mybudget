@@ -16,7 +16,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const result = await markScheduledPaid({
+  let result = await markScheduledPaid({
     supabase: ctx.supabase,
     familyId: ctx.family.id,
     userId: ctx.user.id,
@@ -28,6 +28,14 @@ export async function POST(request: Request) {
   if (!result.ok && result.missingOccurrencesTable) {
     const { applyEnsureSchema } = await import("@/lib/ensure-schema");
     await applyEnsureSchema(process.env, { force: true });
+    result = await markScheduledPaid({
+      supabase: ctx.supabase,
+      familyId: ctx.family.id,
+      userId: ctx.user.id,
+      scheduledId: parsed.data.scheduled_id,
+      dueDate: parsed.data.due_date,
+      createTransaction: parsed.data.create_transaction,
+    });
   }
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });

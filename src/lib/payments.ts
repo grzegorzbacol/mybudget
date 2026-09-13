@@ -32,6 +32,17 @@ export type LinkedScheduledTx = {
   payee?: string;
 };
 
+export const CUSTOM_INTERVAL_MISSING_MESSAGE =
+  "Nie zapisano własnej cykliczności — brak kolumny interval_days. Uruchom migrację 013 jako właściciel tabeli (DATABASE_OWNER_URL / SET ROLE supabase_admin).";
+
+export function customIntervalLost(
+  requestedDays: number | null | undefined,
+  stored: { interval_days?: unknown } | null | undefined
+): boolean {
+  if (!(Number(requestedDays) > 0)) return false;
+  return !(Number(stored?.interval_days) > 0);
+}
+
 export function occurrenceKey(scheduledId: string, dueDate: string): string {
   return `${scheduledId}:${dueDate}`;
 }
