@@ -35,6 +35,19 @@ function createMemoryClient(tables: Record<string, MemoryRow[]>): PaymentsWriteC
         const rows = store[table] ?? [];
         if (action === "insert") {
           const incoming = Array.isArray(payload) ? payload : [payload];
+          if (table === "scheduled_occurrences") {
+            const dup = incoming.find((row) =>
+              rows.some((item) => item.scheduled_id === row.scheduled_id && item.due_date === row.due_date)
+            );
+            if (dup) {
+              return {
+                data: null,
+                error: {
+                  message: 'duplicate key value violates unique constraint "idx_scheduled_occurrences_rule_due"',
+                },
+              };
+            }
+          }
           const created = incoming.map((row) => ({
             id: typeof row.id === "string" ? row.id : crypto.randomUUID(),
             ...row,
@@ -241,6 +254,130 @@ describe("markScheduledPaid / undoScheduledPaid", () => {
     expect(undone.ok).toBe(true);
     expect(db.store.scheduled_occurrences).toHaveLength(0);
     expect(db.store.transactions).toHaveLength(0);
+    expect(db.store.scheduled_transactions[0]?.next_date).toBe("2026-09-05");
+  });
+
+  it("is idempotent: a second pay does not insert another transaction", async () => {
+    const db = createMemoryClient({
+      scheduled_transactions: [{ ...rule }],
+      scheduled_occurrences: [],
+      transactions: [],
+    });
+    const first = await markScheduledPaid({
+      supabase: db,
+      familyId: "fam",
+      userId: "user-1",
+      scheduledId: "s-netflix",
+      createTransaction: true,
+    });
+    expect(first.ok).toBe(true);
+    const second = await markScheduledPaid({
+      supabase: db,
+      familyId: "fam",
+      userId: "user-1",
+      scheduledId: "s-netflix",
+      dueDate: "2026-09-05",
+      createTransaction: true,
+    });
+    expect(second.ok).toBe(false);
+    if (second.ok) return;
+    expect(second.status).toBe(409);
+    expect(db.store.transactions).toHaveLength(1);
+    expect(db.store.scheduled_occurrences).toHaveLength(1);
+  });
+
+  it("recovers a claimed occurrence without a second ledger row", async () => {
+    const db = createMemoryClient({
+      scheduled_transactions: [{ ...rule }],
+      scheduled_occurrences: [
+        {
+          id: "occ-1",
+          family_id: "fam",
+          scheduled_id: "s-netflix",
+          due_date: "2026-09-05",
+          status: "paid",
+          transaction_id: "tx-1",
+          amount: -45,
+        },
+      ],
+      transactions: [
+        {
+          id: "tx-1",
+          family_id: "fam",
+          scheduled_id: "s-netflix",
+          date: "2026-09-05",
+          amount: -45,
+        },
+      ],
+    });
+    const paid = await markScheduledPaid({
+      supabase: db,
+      familyId: "fam",
+      userId: "user-1",
+      scheduledId: "s-netflix",
+      createTransaction: true,
+    });
+    expect(paid.ok).toBe(true);
+    if (!paid.ok) return;
+    expect(paid.rule.next_date).toBe("2026-10-05");
+    expect(paid.transactionId).toBe("tx-1");
+    expect(db.store.transactions).toHaveLength(1);
+  });
+
+  it("does not advance when the occurrences table is missing and ledger write is off", async () => {
+    const db = createMemoryClient({
+      scheduled_transactions: [{ ...rule }],
+      transactions: [],
+    });
+    const paid = await markScheduledPaid({
+      supabase: db,
+      familyId: "fam",
+      userId: "user-1",
+      scheduledId: "s-netflix",
+      createTransaction: false,
+    });
+    expect(paid.ok).toBe(false);
+    if (paid.ok) return;
+    expect(paid.missingOccurrencesTable).toBe(true);
+    expect(db.store.scheduled_transactions[0]?.next_date).toBe("2026-09-05");
+    expect(db.store.transactions).toHaveLength(0);
+  });
+
+  it("re-enables a recurring rule auto-disabled after its last payment", async () => {
+    const db = createMemoryClient({
+      scheduled_transactions: [
+        { ...rule, next_date: "2026-09-05", enabled: false, end_date: "2026-09-05" },
+      ],
+      scheduled_occurrences: [
+        {
+          id: "occ-1",
+          family_id: "fam",
+          scheduled_id: "s-netflix",
+          due_date: "2026-09-05",
+          status: "paid",
+          transaction_id: "tx-1",
+          amount: -45,
+        },
+      ],
+      transactions: [
+        {
+          id: "tx-1",
+          family_id: "fam",
+          scheduled_id: "s-netflix",
+          date: "2026-09-05",
+          amount: -45,
+          transfer_id: null,
+        },
+      ],
+    });
+    const undone = await undoScheduledPaid({
+      supabase: db,
+      familyId: "fam",
+      scheduledId: "s-netflix",
+      dueDate: "2026-09-05",
+    });
+    expect(undone.ok).toBe(true);
+    expect(db.store.scheduled_transactions[0]?.enabled).toBe(true);
     expect(db.store.scheduled_transactions[0]?.next_date).toBe("2026-09-05");
   });
 });

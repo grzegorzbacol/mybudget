@@ -174,20 +174,100 @@ async function insertLedger(
   return { transactionId: id };
 }
 
-async function upsertOccurrence(
+export function isUniqueViolation(message?: string | null): boolean {
+  if (!message) return false;
+  return /duplicate key|unique constraint|already exists/i.test(message);
+}
+
+async function findOccurrence(
+  supabase: PaymentsWriteClient,
+  familyId: string,
+  scheduledId: string,
+  dueDate: string
+): Promise<{ row: Partial<ScheduledOccurrence> | null; missingTable: boolean; error?: string }> {
+  const result = (await supabase
+    .from("scheduled_occurrences")
+    .select("*")
+    .eq("family_id", familyId)
+    .eq("scheduled_id", scheduledId)
+    .eq("due_date", dueDate)) as unknown as {
+    data: Partial<ScheduledOccurrence>[] | Partial<ScheduledOccurrence> | null;
+    error: QueryError;
+  };
+  if (result.error && isMissingRelationError(result.error.message)) {
+    return { row: null, missingTable: true };
+  }
+  if (result.error) return { row: null, missingTable: false, error: result.error.message };
+  const rows = Array.isArray(result.data) ? result.data : result.data ? [result.data] : [];
+  return { row: rows[0] ?? null, missingTable: false };
+}
+
+async function findLedger(
+  supabase: PaymentsWriteClient,
+  familyId: string,
+  scheduledId: string,
+  dueDate: string
+): Promise<string | null> {
+  const result = (await supabase
+    .from("transactions")
+    .select("id")
+    .eq("family_id", familyId)
+    .eq("scheduled_id", scheduledId)
+    .eq("date", dueDate)) as unknown as { data: Array<{ id: string }> | { id: string } | null; error: QueryError };
+  if (result.error) return null;
+  const rows = Array.isArray(result.data) ? result.data : result.data ? [result.data] : [];
+  return rows[0]?.id ?? null;
+}
+
+async function claimOccurrence(
   supabase: PaymentsWriteClient,
   row: Record<string, unknown>
-): Promise<{ data: Partial<ScheduledOccurrence> | null; missingTable: boolean; error?: string }> {
-  const result = await supabase
-    .from("scheduled_occurrences")
-    .upsert(row, { onConflict: "scheduled_id,due_date" })
+): Promise<{ data: Partial<ScheduledOccurrence> | null; missingTable: boolean; conflict: boolean; error?: string }> {
+  const result = await supabase.from("scheduled_occurrences").insert(row).select("*").single();
+  if (result.error && isMissingRelationError(result.error.message)) {
+    return { data: null, missingTable: true, conflict: false };
+  }
+  if (result.error && isUniqueViolation(result.error.message)) {
+    return { data: null, missingTable: false, conflict: true };
+  }
+  if (result.error) return { data: null, missingTable: false, conflict: false, error: result.error.message };
+  return {
+    data: (result.data as Partial<ScheduledOccurrence> | null) ?? row,
+    missingTable: false,
+    conflict: false,
+  };
+}
+
+async function advanceAfterPay(
+  supabase: PaymentsWriteClient,
+  rule: ScheduledTransaction,
+  familyId: string,
+  dueDate: string
+): Promise<{ rule: ScheduledTransaction; error?: string }> {
+  const paid = await loadPaidDates(supabase, familyId, rule.id);
+  const paidDates = new Set(paid.dates);
+  paidDates.add(dueDate);
+  const next = nextUnpaidDate({
+    afterDate: dueDate,
+    frequency: rule.frequency,
+    intervalDays: rule.interval_days,
+    endDate: rule.end_date,
+    paidDates,
+  });
+  if (rule.next_date !== dueDate) {
+    return { rule };
+  }
+  const updated = await supabase
+    .from("scheduled_transactions")
+    .update(next ? { next_date: next } : { enabled: false })
+    .eq("id", rule.id)
+    .eq("family_id", familyId)
     .select("*")
     .single();
-  if (result.error && isMissingRelationError(result.error.message)) {
-    return { data: null, missingTable: true };
-  }
-  if (result.error) return { data: null, missingTable: false, error: result.error.message };
-  return { data: (result.data as Partial<ScheduledOccurrence> | null) ?? row, missingTable: false };
+  if (updated.error) return { rule, error: updated.error.message };
+  return {
+    rule: asRule(updated.data) ?? { ...rule, next_date: next ?? rule.next_date, enabled: Boolean(next) },
+  };
 }
 
 export async function markScheduledPaid(input: MarkPaidInput): Promise<MarkPaidResult> {
@@ -206,50 +286,87 @@ export async function markScheduledPaid(input: MarkPaidInput): Promise<MarkPaidR
     };
   }
 
-  let transactionId: string | null = null;
-  if (input.createTransaction !== false) {
-    const created = await insertLedger(db, input.familyId, input.userId, rule, dueDate);
-    if (created.error) return { ok: false, status: 500, error: created.error };
-    transactionId = created.transactionId;
+  const existingOcc = await findOccurrence(db, input.familyId, rule.id, dueDate);
+  if (existingOcc.error) return { ok: false, status: 500, error: existingOcc.error };
+  const existingTx = await findLedger(db, input.familyId, rule.id, dueDate);
+
+  const finish = async (
+    occurrence: Partial<ScheduledOccurrence> | null,
+    transactionId: string | null,
+    missingOccurrencesTable?: boolean
+  ): Promise<MarkPaidResult> => {
+    const advanced = await advanceAfterPay(db, rule, input.familyId, dueDate);
+    if (advanced.error) return { ok: false, status: 500, error: advanced.error, missingOccurrencesTable };
+    return {
+      ok: true,
+      rule: advanced.rule,
+      occurrence,
+      transactionId,
+      missingOccurrencesTable,
+    };
+  };
+
+  if (existingOcc.row?.status === "paid") {
+    return finish(existingOcc.row, existingOcc.row.transaction_id ?? existingTx, existingOcc.missingTable);
   }
 
-  const paid = await loadPaidDates(db, input.familyId, rule.id);
-  const occurrence = await upsertOccurrence(db, {
-    family_id: input.familyId,
-    scheduled_id: rule.id,
-    due_date: dueDate,
-    status: "paid",
-    amount: Number(rule.amount),
-    transaction_id: transactionId,
-    paid_at: new Date().toISOString(),
-  });
-  if (occurrence.error) return { ok: false, status: 500, error: occurrence.error };
+  const claimed = existingOcc.missingTable
+    ? { data: null, missingTable: true, conflict: false }
+    : await claimOccurrence(db, {
+        family_id: input.familyId,
+        scheduled_id: rule.id,
+        due_date: dueDate,
+        status: "paid",
+        amount: Number(rule.amount),
+        transaction_id: existingTx,
+        paid_at: new Date().toISOString(),
+      });
 
-  const paidDates = new Set(paid.dates);
-  paidDates.add(dueDate);
-  const next = nextUnpaidDate({
-    afterDate: dueDate,
-    frequency: rule.frequency,
-    intervalDays: rule.interval_days,
-    endDate: rule.end_date,
-    paidDates,
-  });
-  const updated = await db
-    .from("scheduled_transactions")
-    .update(next ? { next_date: next } : { enabled: false })
-    .eq("id", rule.id)
-    .eq("family_id", input.familyId)
-    .select("*")
-    .single();
-  if (updated.error) return { ok: false, status: 500, error: updated.error.message };
+  if (claimed.error) return { ok: false, status: 500, error: claimed.error };
+  if (claimed.conflict) {
+    const again = await findOccurrence(db, input.familyId, rule.id, dueDate);
+    return finish(again.row, again.row?.transaction_id ?? existingTx, again.missingTable);
+  }
 
-  return {
-    ok: true,
-    rule: asRule(updated.data) ?? { ...rule, next_date: next ?? rule.next_date, enabled: Boolean(next) },
-    occurrence: occurrence.data,
-    transactionId,
-    missingOccurrencesTable: paid.missingTable || occurrence.missingTable,
-  };
+  if (claimed.missingTable) {
+    if (existingTx) return finish(null, existingTx, true);
+    if (input.createTransaction === false) {
+      return {
+        ok: false,
+        status: 500,
+        missingOccurrencesTable: true,
+        error:
+          "Nie można oznaczyć jako opłacone bez zapisu — brak tabeli scheduled_occurrences. Włącz zapis transakcji albo uruchom migrację 013.",
+      };
+    }
+    const created = await insertLedger(db, input.familyId, input.userId, rule, dueDate);
+    if (created.error) return { ok: false, status: 500, error: created.error, missingOccurrencesTable: true };
+    return finish(null, created.transactionId, true);
+  }
+
+  let transactionId = existingTx;
+  if (input.createTransaction !== false && !transactionId) {
+    const created = await insertLedger(db, input.familyId, input.userId, rule, dueDate);
+    if (created.error) {
+      if (claimed.data?.id) {
+        await db.from("scheduled_occurrences").delete().eq("id", claimed.data.id).eq("family_id", input.familyId);
+      }
+      return { ok: false, status: 500, error: created.error };
+    }
+    transactionId = created.transactionId;
+    if (claimed.data?.id && transactionId) {
+      await db
+        .from("scheduled_occurrences")
+        .update({ transaction_id: transactionId })
+        .eq("id", claimed.data.id)
+        .eq("family_id", input.familyId);
+    }
+  }
+
+  return finish(
+    transactionId && claimed.data ? { ...claimed.data, transaction_id: transactionId } : claimed.data,
+    transactionId
+  );
 }
 
 export async function undoScheduledPaid(input: UnpayInput): Promise<UnpayResult> {
@@ -308,11 +425,12 @@ export async function undoScheduledPaid(input: UnpayInput): Promise<UnpayResult>
   }
 
   const nextDate = rewindNextDate(rule.next_date, input.dueDate);
+  const autoDisabled = rule.enabled === false && rule.next_date === input.dueDate;
   const updated = await db
     .from("scheduled_transactions")
     .update({
       next_date: nextDate,
-      enabled: rule.frequency === "once" ? true : rule.enabled,
+      enabled: rule.enabled || autoDisabled || rule.frequency === "once",
     })
     .eq("id", rule.id)
     .eq("family_id", input.familyId)

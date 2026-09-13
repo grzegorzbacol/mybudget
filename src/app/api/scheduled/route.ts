@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
+import { CUSTOM_INTERVAL_MISSING_MESSAGE, customIntervalLost } from "@/lib/payments";
 import { isMissingRelationError } from "@/lib/schema";
 import { insertRowWithSchemaRepair } from "@/lib/schema-write";
 import { scheduledSchema } from "@/lib/validators";
@@ -59,6 +60,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Podaj liczbę dni dla własnej cykliczności" }, { status: 400 });
   }
 
+  const wantsCustomInterval =
+    parsed.data.frequency === "custom" || (parsed.data.interval_days ?? 0) > 0;
   const created = await insertRowWithSchemaRepair(
     async (row) => ctx.supabase.from("scheduled_transactions").insert(row).select().single(),
     {
@@ -70,31 +73,22 @@ export async function POST(request: Request) {
       end_date: parsed.data.end_date ?? null,
       interval_days: parsed.data.interval_days ?? null,
     },
-    ["transfer_account_id", "interval_days"]
+    wantsCustomInterval ? ["transfer_account_id"] : ["transfer_account_id", "interval_days"]
   );
 
-  if (!created.data && parsed.data.frequency === "custom") {
-    const fallback = await insertRowWithSchemaRepair(
-      async (row) => ctx.supabase.from("scheduled_transactions").insert(row).select().single(),
-      {
-        ...parsed.data,
-        frequency: "monthly",
-        family_id: ctx.family.id,
-        memo: parsed.data.memo ?? "",
-        transfer_account_id: parsed.data.transfer_account_id ?? null,
-        category_id: parsed.data.category_id ?? null,
-        end_date: parsed.data.end_date ?? null,
-        interval_days: parsed.data.interval_days ?? null,
-      },
-      ["transfer_account_id", "interval_days"]
-    );
-    if (fallback.data) {
-      return NextResponse.json(fallback.data);
+  if (!created.data) {
+    if (wantsCustomInterval && /interval_days|frequency/i.test(created.error ?? "")) {
+      return NextResponse.json({ error: CUSTOM_INTERVAL_MISSING_MESSAGE }, { status: 500 });
     }
+    return NextResponse.json({ error: created.error }, { status: 500 });
   }
 
-  if (!created.data) {
-    return NextResponse.json({ error: created.error }, { status: 500 });
+  if (customIntervalLost(parsed.data.interval_days, created.data as { interval_days?: unknown })) {
+    const id = (created.data as { id?: string }).id;
+    if (id) {
+      await ctx.supabase.from("scheduled_transactions").delete().eq("id", id).eq("family_id", ctx.family.id);
+    }
+    return NextResponse.json({ error: CUSTOM_INTERVAL_MISSING_MESSAGE }, { status: 500 });
   }
 
   return NextResponse.json(created.data);

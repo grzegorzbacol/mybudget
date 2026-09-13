@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { nextScheduleDate } from "./cashflow";
 import {
   buildPaymentBoard,
+  customIntervalLost,
   frequencyLabel,
   nextUnpaidDate,
   occurrenceKey,
@@ -266,6 +267,13 @@ describe("payments board", () => {
       paidCount: 1,
       paidAmount: 45,
     });
+  });
+
+  it("detects a custom interval that was stripped from the stored row", () => {
+    expect(customIntervalLost(10, { interval_days: 10 })).toBe(false);
+    expect(customIntervalLost(10, { interval_days: null })).toBe(true);
+    expect(customIntervalLost(10, {})).toBe(true);
+    expect(customIntervalLost(null, {})).toBe(false);
   });
 
   it("builds a stable occurrence key", () => {
