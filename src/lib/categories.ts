@@ -1,6 +1,5 @@
 import { envelopeRowsFromBudget } from "@/lib/budget";
 import { isMissingRelationError, isSchemaLagError } from "@/lib/schema";
-import { updateRowWithSchemaRepair } from "@/lib/schema-write";
 import {
   categoryHasActivity,
   decideCategoryDelete,
@@ -460,82 +459,6 @@ export async function deleteCategoryRow(
   }
 
   return { ...decision, category };
-}
-
-export type CategoryUpdateResult =
-  | { ok: true; category: BudgetCategory }
-  | { ok: false; status: number; error: string };
-
-export async function updateCategoryRow(
-  supabase: CategoryClient,
-  input: { familyId: string; categoryId: string; patch: CategoryPatchInput }
-): Promise<CategoryUpdateResult> {
-  if (!isCategoryId(input.categoryId)) {
-    return { ok: false, status: 400, error: "Nieprawidłowe id koperty" };
-  }
-
-  const patch = buildCategoryPatch(input.patch);
-  if (patch.name !== undefined && !patch.name) {
-    return { ok: false, status: 400, error: "Podaj nazwę koperty" };
-  }
-  if (patch.group_name !== undefined && !patch.group_name) {
-    return { ok: false, status: 400, error: "Wybierz grupę" };
-  }
-  if (!Object.keys(patch).length) {
-    return { ok: false, status: 400, error: "Brak zmian" };
-  }
-
-  const loaded = await supabase
-    .from("budget_categories")
-    .select("id, family_id, group_name, name, icon, color, sort_order, kind")
-    .eq("id", input.categoryId)
-    .eq("family_id", input.familyId)
-    .maybeSingle();
-
-  if (loaded.error) {
-    return { ok: false, status: 500, error: loaded.error.message };
-  }
-
-  const current = (loaded.data as BudgetCategory | null) ?? null;
-  if (!current) {
-    return { ok: false, status: 404, error: "Nie znaleziono koperty" };
-  }
-
-  const payload: Record<string, unknown> = { ...patch };
-  if (patch.group_name && patch.group_name !== current.group_name && patch.sort_order === undefined) {
-    const siblings = await supabase
-      .from("budget_categories")
-      .select("sort_order")
-      .eq("family_id", input.familyId)
-      .eq("group_name", patch.group_name);
-    if (siblings.error) {
-      return { ok: false, status: 500, error: siblings.error.message };
-    }
-    const max = ((siblings.data ?? []) as Array<{ sort_order?: number }>).reduce(
-      (highest, row) => Math.max(highest, Number(row.sort_order) || 0),
-      0
-    );
-    payload.sort_order = max + 10;
-  }
-
-  const updated = await updateRowWithSchemaRepair(
-    async (row) =>
-      supabase
-        .from("budget_categories")
-        .update(row)
-        .eq("id", input.categoryId)
-        .eq("family_id", input.familyId)
-        .select()
-        .single(),
-    payload,
-    ["kind"]
-  );
-
-  if (!updated.data) {
-    return { ok: false, status: 500, error: updated.error ?? "Nie udało się zapisać koperty" };
-  }
-
-  return { ok: true, category: updated.data as BudgetCategory };
 }
 
 export type CategoryReorderResult =
