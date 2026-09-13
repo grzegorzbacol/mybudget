@@ -1,10 +1,8 @@
 import OpenAI from "openai";
 import { z } from "zod";
+import { getOpenAIClient, VISION_MODEL as OCR_MODEL } from "./openai-client";
 import { ocrResultSchema } from "./validators";
 import type { OcrReceiptResult } from "./types";
-
-// gpt-4o-mini notorycznie myli cenę jednostkową z wartością linii na paragonach
-const OCR_MODEL = process.env.OCR_MODEL?.trim() || "gpt-4o";
 
 function buildCategoryRule(categoryNames?: string[]): string {
   return categoryNames && categoryNames.length > 0
@@ -337,12 +335,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
         reject(err);
       });
   });
-}
-
-function getOpenAIClient(): OpenAI | null {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!apiKey) return null;
-  return new OpenAI({ apiKey });
 }
 
 async function parseReceiptJson(content: string, rawText?: string): Promise<OcrReceiptResult> {

@@ -32,6 +32,7 @@ import { customSplits, equalSplits, splitsMatchTotal } from "@/lib/splits";
 import { buildPayeeCategoryRules, suggestCategoryForPayee } from "@/lib/categorize";
 import { RECEIPTS_BUCKET, receiptObjectPath, sniffReceiptImage } from "@/lib/receipts";
 import { ReceiptPhoto } from "@/components/ReceiptPhoto";
+import { AiCategoryPanel } from "@/components/transactions/AiCategoryPanel";
 import { cn } from "@/lib/utils";
 
 interface TransactionFormProps {
@@ -504,20 +505,31 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction }
           )}
 
           {(type === "expense" || trackingTransfer) && !envelopeSplit && (
-            <div>
-              <Label>{trackingTransfer ? "Kategoria (wyjście z budżetu)" : "Kategoria"}</Label>
-              <Select value={categoryId} onValueChange={setCategoryId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Wybierz kategorię" />
-                </SelectTrigger>
-                <SelectContent>
-                  {expenseCategories.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.icon} {c.group_name} / {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="space-y-2">
+              <div>
+                <Label>{trackingTransfer ? "Kategoria (wyjście z budżetu)" : "Kategoria"}</Label>
+                <Select value={categoryId} onValueChange={setCategoryId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Wybierz kategorię" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {expenseCategories.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>
+                        {c.icon} {c.group_name} / {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {type === "expense" && (
+                <AiCategoryPanel
+                  payee={payee}
+                  memo={memo}
+                  amount={Math.abs(parseFloat(amount) || 0) || null}
+                  disabled={pending}
+                  onAssign={(id) => setCategoryId(id)}
+                />
+              )}
             </div>
           )}
 
@@ -576,6 +588,24 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction }
                 >
                   Dodaj kopertę
                 </Button>
+              )}
+              {envelopeSplit && (
+                <AiCategoryPanel
+                  payee={payee}
+                  memo={memo}
+                  amount={Math.abs(parseFloat(amount) || 0) || null}
+                  disabled={pending}
+                  onAssign={(id) => {
+                    setCategoryId(id);
+                    setCategoryLines((lines) => {
+                      const next = [...lines];
+                      const empty = next.findIndex((line) => !line.category_id);
+                      const index = empty >= 0 ? empty : 0;
+                      next[index] = { ...next[index], category_id: id };
+                      return next;
+                    });
+                  }}
+                />
               )}
             </div>
           )}
