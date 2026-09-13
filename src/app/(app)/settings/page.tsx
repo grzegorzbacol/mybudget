@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Download, LogOut, Plus } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Copy, Download, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -12,9 +12,9 @@ import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import type { BudgetCategory } from "@/lib/types";
 import Link from "next/link";
 import { RepairPayeesButton } from "@/components/transactions/RepairPayeesButton";
+import { EnvelopesSettings } from "@/components/settings/EnvelopesSettings";
 
 export default function SettingsPage() {
   const { data: familyData } = useFamily();
@@ -23,27 +23,12 @@ export default function SettingsPage() {
   const supabase = createClient();
   const queryClient = useQueryClient();
   const [inviteCode, setInviteCode] = useState(familyData?.family.invite_code ?? "");
-  const [groupName, setGroupName] = useState("Życie codzienne");
-  const [catName, setCatName] = useState("");
 
   useEffect(() => {
     if (familyData?.family.invite_code) {
       setInviteCode(familyData.family.invite_code);
     }
   }, [familyData?.family.invite_code]);
-
-  const { data: categories } = useQuery({
-    queryKey: ["categories", familyData?.family.id],
-    enabled: !!familyData?.family.id,
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("budget_categories")
-        .select("*")
-        .eq("family_id", familyData!.family.id)
-        .order("sort_order");
-      return (data ?? []) as BudgetCategory[];
-    },
-  });
 
   const generateInvite = useMutation({
     mutationFn: async () => {
@@ -164,58 +149,7 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Koperty (kategorie)</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="max-h-64 space-y-1 overflow-y-auto text-sm">
-            {categories?.map((c) => (
-              <div key={c.id} className="flex justify-between rounded border px-3 py-1.5">
-                <span>
-                  {c.icon} {c.group_name} / {c.name}
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  {c.kind === "income" ? "przychód" : "wydatek"}
-                </span>
-              </div>
-            ))}
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <Label>Grupa</Label>
-              <Input value={groupName} onChange={(e) => setGroupName(e.target.value)} />
-            </div>
-            <div>
-              <Label>Nazwa koperty</Label>
-              <Input value={catName} onChange={(e) => setCatName(e.target.value)} />
-            </div>
-          </div>
-          <Button
-            variant="outline"
-            className="w-full"
-            disabled={!catName || !groupName}
-            onClick={async () => {
-              const res = await fetch("/api/categories", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ group_name: groupName, name: catName }),
-              });
-              if (!res.ok) {
-                toast.error("Nie udało się dodać kategorii");
-                return;
-              }
-              toast.success("Dodano kopertę");
-              setCatName("");
-              queryClient.invalidateQueries({ queryKey: ["categories"] });
-              queryClient.invalidateQueries({ queryKey: ["budget"] });
-            }}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Dodaj kategorię
-          </Button>
-        </CardContent>
-      </Card>
+      <EnvelopesSettings />
 
       <Card>
         <CardHeader>

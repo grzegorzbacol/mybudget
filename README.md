@@ -107,6 +107,18 @@ Tylko zalogowany członek gospodarstwa (to samo auth + `family_id` co reszta API
 | Nazwa `QA-…` / `QA_…` (np. leftover `QA-CTO-Account-20260909-postdeploy`) | Traktowane jako dane testowe — kaskada **bez** `force`. |
 
 Konta z listy **Konta** to konta gospodarstwa (RLS). Kosz jest przy każdym z nich; UI zawsze pyta o potwierdzenie i przy konflikcie 409 ponawia z `force`.
+
+### Koperty / kategorie (`GET|POST /api/categories`, `DELETE /api/categories/[id]`)
+
+Ustawienia → **Koperty (kategorie)**. Grupa przy tworzeniu jest **wybierana z już istniejących** (select), albo **Utwórz nową grupę** — bez wolnego pola, które mnoży literówki. Każda koperta wydatków pokazuje statystyki **bieżącego miesiąca** (przydzielone / aktywność / dostępne) z `GET /api/budget/{year}/{month}` (ten sam silnik `budget-read`), nie z placeholderów.
+
+| Stan | Zachowanie |
+| --- | --- |
+| Koperta bez transakcji, podziałów, harmonogramu i celów | Usuwana po potwierdzeniu (`mode: "empty"`). Przydziały CASCADE — środki wracają do **Do rozdzielenia**. |
+| Koperta z transakcjami / podziałami / zaplanowanymi płatnościami / celami | `409` + `code: "HAS_ACTIVITY"` i liczby. Komunikat po polsku. Soft-block (YNAB-like): nie kasujemy historii. |
+| `force=true` (body JSON albo `?force=1`) po drugim potwierdzeniu w UI | **Odkategoryzowanie**: `transactions.category_id = NULL` (inbox bez kategorii), usunięcie linii `transaction_category_splits` tej koperty, `scheduled_transactions.category_id = NULL`, usunięcie celów i przydziałów, potem sama kategoria (`mode: "uncategorize"`). |
+
+Nie tworzymy osobnej koperty „Bez kategorii” — `NULL` to istniejący inbox (`uncategorizedCount` na budżecie).
 - **Majątek** — cały majątek: aktywa, zobowiązania, wartość netto i trend; mieszkanie/auto/inwestycje ręcznie; kredyty i hipoteki
 - **Budżet rodzinny / wspólny** — wielu użytkowników, role (właściciel / członek), zaproszenie kodem lub linkiem (`/household`); cele oszczędnościowe są wspólne
 - **Podział wydatków** — kto zapłacił, równo albo własne kwoty/%; koperta schodzi w całości; rozliczenia „kto komu”
@@ -127,7 +139,7 @@ npx playwright install
 npm run test:e2e
 ```
 
-Silnik pieniędzy: `src/lib/budget.test.ts`, `savings.test.ts`, `splits.test.ts`, `wealth.test.ts`, `cashflow.test.ts`, `analytics.test.ts`, `categorize.test.ts`.
+Silnik pieniędzy: `src/lib/budget.test.ts`, `savings.test.ts`, `splits.test.ts`, `wealth.test.ts`, `cashflow.test.ts`, `analytics.test.ts`, `categorize.test.ts`, `categories.test.ts`.
 
 ## Struktura
 

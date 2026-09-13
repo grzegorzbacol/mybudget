@@ -11,9 +11,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { EnvelopeGroupPicker } from "@/components/envelopes/EnvelopeGroupPicker";
 import { useAllocateMany, useBudget } from "@/hooks/use-budget";
 import { formatCurrency, getMonthLabel } from "@/lib/format";
 import { envelopeRowsFromBudget, planFillEnvelopeGaps } from "@/lib/budget";
+import { uniqueGroupNames } from "@/lib/categories";
 import { cn } from "@/lib/utils";
 import { CategoryPanel } from "./CategoryPanel";
 import { AssignedInput, Money } from "./AssignedInput";
@@ -31,7 +33,8 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
   const { data, isError, error, refetch, isFetching } = useBudget(year, month);
   const [selected, setSelected] = useState<BudgetCategoryRow | null>(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [groupName, setGroupName] = useState("Życie codzienne");
+  const [groupName, setGroupName] = useState("");
+  const [draftGroups, setDraftGroups] = useState<string[]>([]);
   const [catName, setCatName] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const allocateMany = useAllocateMany();
@@ -72,6 +75,12 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
 
   const groups = Array.isArray(data?.groups) ? data.groups : [];
   const allRows = envelopeRowsFromBudget(data);
+  const groupOptions = uniqueGroupNames([
+    ...groups.map((group) => ({ group_name: group.groupName })),
+    ...allRows.map((row) => row.category),
+    ...draftGroups.map((group_name) => ({ group_name })),
+  ]);
+  const selectedGroup = groupName || groupOptions[0] || "";
   const readyToAssign = Number(data?.readyToAssign) || 0;
   const rtaPositive = readyToAssign >= 0;
   const gapPlan = planFillEnvelopeGaps(allRows, readyToAssign);
@@ -331,13 +340,20 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             <DialogTitle>Nowa koperta</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            <EnvelopeGroupPicker
+              groups={groupOptions}
+              value={selectedGroup}
+              onChange={setGroupName}
+              onGroupsChange={(next) => {
+                setDraftGroups(next.filter((name) => !groups.some((group) => group.groupName === name)));
+                const created = next.find((name) => !groupOptions.includes(name));
+                if (created) setGroupName(created);
+              }}
+            />
             <div>
-              <Label>Grupa</Label>
-              <Input value={groupName} onChange={(e) => setGroupName(e.target.value)} />
-            </div>
-            <div>
-              <Label>Nazwa</Label>
+              <Label htmlFor="budget-envelope-name">Nazwa koperty</Label>
               <Input
+                id="budget-envelope-name"
                 value={catName}
                 onChange={(e) => setCatName(e.target.value)}
                 placeholder="np. Prezent dla mamy"
@@ -345,12 +361,12 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             </div>
             <Button
               className="w-full"
-              disabled={!catName || !groupName}
+              disabled={!catName.trim() || !selectedGroup}
               onClick={async () => {
                 const res = await fetch("/api/categories", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ group_name: groupName, name: catName }),
+                  body: JSON.stringify({ group_name: selectedGroup, name: catName.trim() }),
                 });
                 if (!res.ok) {
                   toast.error("Nie udało się dodać koperty");

@@ -117,8 +117,8 @@ export const scheduledSchema = z.object({
 });
 
 export const categorySchema = z.object({
-  group_name: z.string().min(1),
-  name: z.string().min(1),
+  group_name: z.string().trim().min(1, "Wybierz grupę"),
+  name: z.string().trim().min(1, "Podaj nazwę koperty"),
   icon: z.string().optional(),
   color: z.string().optional(),
   sort_order: z.number().int().optional(),

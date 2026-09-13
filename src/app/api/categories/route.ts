@@ -1,8 +1,26 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
-import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { fetchFamilyCategories, invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { uniqueGroupNames } from "@/lib/categories";
 import { insertRowWithSchemaRepair } from "@/lib/schema-write";
 import { categorySchema } from "@/lib/validators";
+
+export async function GET() {
+  const ctx = await getAuthContext();
+  if ("error" in ctx) {
+    return NextResponse.json({ error: ctx.error }, { status: ctx.status });
+  }
+
+  const fetched = await fetchFamilyCategories(ctx.supabase, ctx.family.id);
+  if (fetched.error) {
+    return NextResponse.json({ error: fetched.error }, { status: 500 });
+  }
+
+  return NextResponse.json({
+    categories: fetched.data,
+    groups: uniqueGroupNames(fetched.data),
+  });
+}
 
 export async function POST(request: Request) {
   const ctx = await getAuthContext();
