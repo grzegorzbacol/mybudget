@@ -16,7 +16,17 @@ export type EnsureSchemaResult = {
   applied: number;
   error?: string;
   skipped?: string;
+  columnPresent?: boolean | null;
+  notified?: boolean;
 };
+
+export type ColumnProbe = (
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>
+) => Promise<boolean | null>;
+
+export type SchemaNotify = (
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>
+) => Promise<boolean>;
 
 export type EnsureSchemaRunner = (
   env: NodeJS.ProcessEnv | Record<string, string | undefined>
@@ -45,17 +55,23 @@ let inFlight: Promise<EnsureSchemaResult> | null = null;
 let runStatements: EnsureSchemaRunner = runEnsureSchemaUncached;
 let runTransferStatements: EnsureSchemaRunner = runTransferSchemaUncached;
 let runScheduledIdStatements: EnsureSchemaRunner = runScheduledIdSchemaUncached;
+let probeScheduledIdColumn: ColumnProbe = probeTransactionsScheduledId;
+let notifyPgrstReload: SchemaNotify = notifyPostgrestSchemaReload;
 
 export function resetEnsureSchemaState(
   runner?: EnsureSchemaRunner,
   transferRunner?: EnsureSchemaRunner,
-  scheduledIdRunner?: EnsureSchemaRunner
+  scheduledIdRunner?: EnsureSchemaRunner,
+  columnProbe?: ColumnProbe,
+  notify?: SchemaNotify
 ) {
   lastSuccessAt = 0;
   inFlight = null;
   runStatements = runner ?? runEnsureSchemaUncached;
   runTransferStatements = transferRunner ?? runTransferSchemaUncached;
   runScheduledIdStatements = scheduledIdRunner ?? runScheduledIdSchemaUncached;
+  probeScheduledIdColumn = columnProbe ?? probeTransactionsScheduledId;
+  notifyPgrstReload = notify ?? notifyPostgrestSchemaReload;
 }
 
 export function markEnsureSchemaApplied(at = Date.now()) {
@@ -189,16 +205,91 @@ export async function applyTransferSchemaRepair(
   return runTransferStatements(env);
 }
 
+export async function probeTransactionsScheduledId(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): Promise<boolean | null> {
+  const url = resolveDatabaseUrl(env);
+  if (!url) return null;
+  const client = new Client(ensureSchemaClientConfig(url));
+  try {
+    await client.connect();
+    const result = await client.query<{ present: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1
+           FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'transactions'
+            AND column_name = 'scheduled_id'
+       ) AS present`
+    );
+    return Boolean(result.rows[0]?.present);
+  } catch {
+    return null;
+  } finally {
+    await client.end().catch(() => undefined);
+  }
+}
+
+/** NOTIFY does not require table ownership — app postgres can reload PostgREST. */
+export async function notifyPostgrestSchemaReload(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): Promise<boolean> {
+  const urls = resolveDdlDatabaseUrls(env);
+  const app = resolveDatabaseUrl(env);
+  const list = [...urls];
+  if (app && !list.includes(app)) list.push(app);
+  for (const url of list) {
+    const client = new Client(ensureSchemaClientConfig(url));
+    try {
+      await client.connect();
+      await client.query("NOTIFY pgrst, 'reload schema'");
+      return true;
+    } catch {
+      /* try next URL */
+    } finally {
+      await client.end().catch(() => undefined);
+    }
+  }
+  return false;
+}
+
 /**
- * Always ADD transactions.scheduled_id and NOTIFY pgrst. Bypasses the
- * ensure-schema TTL — boot/budget can mark that cache hot while PostgREST
- * still lacks scheduled_id. Uses DATABASE_OWNER_URL / SUPABASE_DB_URL first;
- * app DATABASE_URL is not owner of public.transactions.
+ * ADD transactions.scheduled_id when we can, then NOTIFY pgrst.
+ * If ALTER is blocked (app postgres is not owner) but the column already
+ * exists (parent / supabase_admin added it), treat that as success and
+ * still reload the PostgREST cache — that is what /payments needs.
  */
 export async function applyScheduledIdSchemaRepair(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
 ): Promise<EnsureSchemaResult> {
-  return runScheduledIdStatements(env);
+  const before = await probeScheduledIdColumn(env);
+  if (before === true) {
+    const notified = await notifyPgrstReload(env);
+    return { ok: true, applied: 0, skipped: "already present", columnPresent: true, notified };
+  }
+
+  const ddl = await runScheduledIdStatements(env);
+  const after = await probeScheduledIdColumn(env);
+  const notified = await notifyPgrstReload(env);
+
+  if (ddl.ok || after === true) {
+    return {
+      ok: true,
+      applied: ddl.applied,
+      skipped: ddl.skipped,
+      columnPresent: after === true || ddl.ok,
+      notified,
+    };
+  }
+
+  return {
+    ok: false,
+    applied: ddl.applied,
+    error: ddl.error ?? ddl.skipped,
+    skipped: ddl.skipped,
+    columnPresent: after,
+    notified,
+  };
 }
 
 export async function applyEnsureSchema(

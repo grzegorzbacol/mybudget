@@ -14,6 +14,12 @@ import {
 import { isMissingRelationError, isScheduledIdSchemaError, writeErrorMessage } from "@/lib/schema";
 import type { PaymentsBoard, ScheduledOccurrence, ScheduledTransaction } from "@/lib/types";
 
+const POSTGREST_RELOAD_WAIT_MS = 350;
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function GET(request: Request) {
   const ctx = await getAuthContext();
   if ("error" in ctx) {
@@ -44,9 +50,6 @@ export async function GET(request: Request) {
   ]);
 
   let warning: string | undefined;
-  if (!scheduledIdRepair.ok && scheduledIdRepair.error) {
-    warning = polishPaymentsWarning(scheduledIdRepair.error);
-  }
   if (rulesRes.error) {
     if (isMissingRelationError(rulesRes.error.message)) {
       warning = mergePaymentsWarning(
@@ -84,25 +87,31 @@ export async function GET(request: Request) {
 
   let transactions: ReturnType<typeof linkedTransactionsFromRows> = [];
   if (shouldSelectScheduledId(scheduledIdRepair)) {
-    const txRes = await ctx.supabase
-      .from("transactions")
-      .select(LINKED_TX_SELECT)
-      .eq("family_id", ctx.family.id)
-      .not("scheduled_id", "is", null)
-      .gte("date", from)
-      .lte("date", to);
+    const loadLinked = () =>
+      ctx.supabase
+        .from("transactions")
+        .select(LINKED_TX_SELECT)
+        .eq("family_id", ctx.family.id)
+        .not("scheduled_id", "is", null)
+        .gte("date", from)
+        .lte("date", to);
+
+    let txRes = await loadLinked();
+    if (txRes.error && isScheduledIdSchemaError(writeErrorMessage(txRes.error))) {
+      await applyScheduledIdSchemaRepair(process.env);
+      await wait(POSTGREST_RELOAD_WAIT_MS);
+      txRes = await loadLinked();
+    }
     if (txRes.error) {
       const raw = writeErrorMessage(txRes.error);
-      if (isScheduledIdSchemaError(raw)) {
+      if (isScheduledIdSchemaError(raw) || !isMissingRelationError(txRes.error.message)) {
         warning = mergePaymentsWarning(warning, paymentsTxSchemaWarning(txRes.error));
-      } else if (!isMissingRelationError(txRes.error.message)) {
-        warning = mergePaymentsWarning(warning, txRes.error.message);
       }
     } else {
       transactions = linkedTransactionsFromRows(txRes.data);
     }
-  } else {
-    warning = mergePaymentsWarning(warning, scheduledIdRepair.error ?? "column transactions.scheduled_id does not exist");
+  } else if (scheduledIdRepair.columnPresent === false) {
+    warning = mergePaymentsWarning(warning, "column transactions.scheduled_id does not exist");
   }
 
   const { items, summary } = buildPaymentBoard({
