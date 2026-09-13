@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, assembleBudgetMonthData, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, isOnBudgetCashTx, ledgerRowsForEnvelopeMath, planFillEnvelopeGaps, signedAccountBalance, uncategorizedExpenses, normalizeBudgetId } from "./budget";
+import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, assembleBudgetMonthData, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, isOnBudgetCashTx, ledgerRowsForEnvelopeMath, onBudgetCashBalance, planFillEnvelopeGaps, readyToAssignWarning, signedAccountBalance, uncategorizedExpenses, normalizeBudgetId } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -301,22 +301,17 @@ describe("YNAB envelope math", () => {
     expect(data.readyToAssign).toBe(500);
   });
 
-  it("treats a positive credit-card balance as debt in Saldo w budżecie", () => {
+  it("treats a positive credit-card balance as debt in Saldo w budżecie, not Ready to Assign", () => {
     expect(signedAccountBalance({ type: "credit", balance: 2400 })).toBe(-2400);
     expect(signedAccountBalance({ type: "credit", balance: -2400 })).toBe(-2400);
-    const data = buildBudgetMonthData(
-      2026,
-      9,
-      [category("groceries", "Zakupy")],
-      [alloc("groceries", 2026, 9, 0)],
-      [
-        { ...account("checking", 12000), type: "checking" },
-        { ...account("cc", 2400), type: "credit" },
-      ],
-      []
-    );
+    const accounts = [
+      { ...account("checking", 12000), type: "checking" as const },
+      { ...account("cc", 2400), type: "credit" as const },
+    ];
+    expect(onBudgetCashBalance(accounts)).toBe(12000);
+    const data = buildBudgetMonthData(2026, 9, [category("groceries", "Zakupy")], [alloc("groceries", 2026, 9, 0)], accounts, []);
     expect(data.onBudgetBalance).toBe(9600);
-    expect(data.readyToAssign).toBe(9600);
+    expect(data.readyToAssign).toBe(12000);
   });
 
   it("does not treat transfers or tracking rows as on-budget cash", () => {
@@ -368,6 +363,55 @@ describe("YNAB envelope math", () => {
   it("Ready to Assign equals on-budget cash minus envelope available", () => {
     expect(computeReadyToAssign(2800, 300)).toBe(2500);
     expect(computeReadyToAssign(850, -50)).toBe(900);
+  });
+
+  it("October with 0 income, 0 assigned, and prior leftover keeps leftover out of this-month assign", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      10,
+      [category("groceries", "Zakupy spożywcze"), category("restaurants", "Restauracje", "Życie", 1)],
+      [
+        alloc("groceries", 2026, 9, 1108.78),
+        alloc("restaurants", 2026, 9, 0),
+        alloc("groceries", 2026, 10, 0),
+        alloc("restaurants", 2026, 10, 0),
+      ],
+      [account("checking", 688.78)],
+      [
+        tx({ amount: 1108.78, date: "2026-09-01" }),
+        tx({ amount: -420, date: "2026-09-15", category_id: "restaurants" }),
+      ]
+    );
+    expect(data.incomeThisMonth).toBe(0);
+    expect(data.totalAllocated).toBe(0);
+    const groceries = data.groups[0].categories.find((row) => row.category.id === "groceries")!;
+    const restaurants = data.groups[0].categories.find((row) => row.category.id === "restaurants")!;
+    expect(groceries.leftover).toBe(1108.78);
+    expect(groceries.available).toBe(1108.78);
+    expect(restaurants.leftover).toBe(-420);
+    expect(restaurants.available).toBe(-420);
+    expect(data.readyToAssign).toBe(0);
+    expect(readyToAssignWarning({ readyToAssign: data.readyToAssign, assignedThisMonth: data.totalAllocated })).toBeNull();
+  });
+
+  it("does not dump credit-card debt into Do rozdzielenia when this month assigned is 0", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      10,
+      [category("groceries", "Zakupy spożywcze")],
+      [alloc("groceries", 2026, 9, 1108.78), alloc("groceries", 2026, 10, 0)],
+      [account("checking", 1108.78), { ...account("cc", 28411.54), type: "credit" }],
+      [tx({ amount: 1108.78, date: "2026-09-01" })]
+    );
+    expect(data.incomeThisMonth).toBe(0);
+    expect(data.totalAllocated).toBe(0);
+    expect(data.groups[0].categories[0].leftover).toBe(1108.78);
+    expect(data.groups[0].categories[0].available).toBe(1108.78);
+    expect(data.onBudgetBalance).toBe(-27302.76);
+    expect(data.readyToAssign).toBe(0);
+    expect(readyToAssignWarning({ readyToAssign: -21182.25, assignedThisMonth: 0 })).toMatch(/nic nie przydzieliłeś/);
+    expect(readyToAssignWarning({ readyToAssign: -21182.25, assignedThisMonth: 0 })).not.toMatch(/Przydzieliłeś więcej/);
+    expect(readyToAssignWarning({ readyToAssign: -80, assignedThisMonth: 200 })).toMatch(/Przydzieliłeś więcej/);
   });
 
   it("fills overspent and unfunded envelopes from Ready to Assign", () => {

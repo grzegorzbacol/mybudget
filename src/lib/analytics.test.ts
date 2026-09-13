@@ -83,5 +83,6 @@ describe("savings analytics", () => {
     const rta = items.find((i) => i.id === "rta");
     expect(rta?.done).toBe(false);
     expect(rta?.detail).toMatch(/minusie/);
+    expect(rta?.detail).not.toMatch(/cofnij przydział/);
   });
 });
