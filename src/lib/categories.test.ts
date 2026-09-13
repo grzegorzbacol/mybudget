@@ -1,15 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
   addDraftGroup,
+  applySortOrders,
+  buildCategoryPatch,
   categoryMonthStatsMap,
   decideCategoryDelete,
   deleteCategoryRow,
   emptyCategoryRelatedCounts,
   formatCategoryRelatedPart,
+  groupCategoriesByName,
   isCategoryId,
   lookupCategoryMonthStats,
+  moveCategoryToIndex,
+  moveGroupToIndex,
+  normalizeCategoryIcon,
   normalizeGroupName,
+  planCategoryReorder,
+  reorderCategoryRows,
   uniqueGroupNames,
+  updateCategoryRow,
 } from "./categories";
 import type { BudgetCategory, BudgetCategoryRow, BudgetMonthData } from "./types";
 
@@ -224,6 +233,10 @@ function createMemoryClient(
           const result = await run();
           return { data: result.data?.[0] ?? null, error: result.error };
         },
+        single: async () => {
+          const result = await run();
+          return { data: result.data?.[0] ?? null, error: result.error };
+        },
         then: (resolve: (value: unknown) => void, reject?: (reason: unknown) => void) =>
           run().then(resolve, reject),
       };
@@ -335,5 +348,219 @@ describe("deleteCategoryRow", () => {
     const result = await deleteCategoryRow(supabase, { familyId, categoryId });
     expect(result).toMatchObject({ ok: false, status: 404, reason: "not_found" });
     expect(supabase.store.budget_categories).toHaveLength(1);
+  });
+});
+
+const CAT_A = "11111111-1111-4111-8111-111111111111";
+const CAT_B = "22222222-2222-4222-8222-222222222222";
+const CAT_C = "33333333-3333-4333-8333-333333333333";
+
+function sampleCategories(): BudgetCategory[] {
+  return [
+    {
+      id: CAT_A,
+      family_id: "fam-1",
+      group_name: "Zdrowie",
+      name: "Lekarstwa",
+      icon: "📁",
+      color: "#6366f1",
+      sort_order: 10,
+      kind: "expense",
+    },
+    {
+      id: CAT_B,
+      family_id: "fam-1",
+      group_name: "Zdrowie",
+      name: "Suplementy",
+      icon: "💊",
+      color: "#6366f1",
+      sort_order: 20,
+      kind: "expense",
+    },
+    {
+      id: CAT_C,
+      family_id: "fam-1",
+      group_name: "Transport",
+      name: "Paliwo",
+      icon: "⛽",
+      color: "#3b82f6",
+      sort_order: 30,
+      kind: "expense",
+    },
+  ];
+}
+
+describe("category icon and patch", () => {
+  it("normalizes empty or unsafe icon to the folder fallback", () => {
+    expect(normalizeCategoryIcon("")).toBe("📁");
+    expect(normalizeCategoryIcon("   ")).toBe("📁");
+    expect(normalizeCategoryIcon("<x>")).toBe("📁");
+    expect(normalizeCategoryIcon("  💊  ")).toBe("💊");
+    expect(normalizeCategoryIcon("🛒🍽️")).toBe("🛒");
+  });
+
+  it("builds a patch with trimmed name, group and a single emoji", () => {
+    expect(
+      buildCategoryPatch({
+        name: "  Lekarstwa  ",
+        group_name: " Zdrowie ",
+        icon: "🩺🏥",
+        kind: "expense",
+      })
+    ).toEqual({
+      name: "Lekarstwa",
+      group_name: "Zdrowie",
+      icon: "🩺",
+      kind: "expense",
+    });
+  });
+});
+
+describe("category reorder helpers", () => {
+  it("groups by first-seen name and sort_order inside the group", () => {
+    const groups = groupCategoriesByName(sampleCategories());
+    expect(groups.map((group) => group.name)).toEqual(["Zdrowie", "Transport"]);
+    expect(groups[0].categories.map((category) => category.name)).toEqual(["Lekarstwa", "Suplementy"]);
+  });
+
+  it("moves a category within a group and to another group", () => {
+    const groups = groupCategoriesByName(sampleCategories());
+    const swapped = moveCategoryToIndex(groups, CAT_A, { groupName: "Zdrowie", index: 1 });
+    expect(swapped[0].categories.map((category) => category.id)).toEqual([CAT_B, CAT_A]);
+
+    const moved = moveCategoryToIndex(groups, CAT_A, { groupName: "Transport", index: 0 });
+    expect(moved.find((group) => group.name === "Zdrowie")?.categories.map((c) => c.id)).toEqual([CAT_B]);
+    expect(moved.find((group) => group.name === "Transport")?.categories.map((c) => c.id)).toEqual([
+      CAT_A,
+      CAT_C,
+    ]);
+  });
+
+  it("reorders groups as units", () => {
+    const moved = moveGroupToIndex(groupCategoriesByName(sampleCategories()), "Transport", 0);
+    expect(moved.map((group) => group.name)).toEqual(["Transport", "Zdrowie"]);
+  });
+
+  it("assigns 10/20/30 sort_order across the flattened group list", () => {
+    expect(
+      applySortOrders([
+        { name: "Zdrowie", ids: [CAT_B, CAT_A] },
+        { name: "Transport", ids: [CAT_C] },
+      ])
+    ).toEqual([
+      { id: CAT_B, group_name: "Zdrowie", sort_order: 10 },
+      { id: CAT_A, group_name: "Zdrowie", sort_order: 20 },
+      { id: CAT_C, group_name: "Transport", sort_order: 30 },
+    ]);
+  });
+
+  it("rejects foreign or duplicate ids when planning a reorder", () => {
+    const owned = [CAT_A, CAT_B, CAT_C];
+    expect(planCategoryReorder(owned, [{ name: "Zdrowie", ids: [CAT_A, CAT_A] }])).toMatchObject({
+      ok: false,
+      status: 400,
+    });
+    expect(
+      planCategoryReorder(owned, [{ name: "Zdrowie", ids: ["99999999-9999-4999-8999-999999999999"] }])
+    ).toMatchObject({ ok: false, status: 400, error: "Koperta nie należy do tego gospodarstwa" });
+    expect(planCategoryReorder(owned, [{ name: "Zdrowie", ids: [CAT_B, CAT_A] }]).ok).toBe(true);
+  });
+});
+
+describe("updateCategoryRow", () => {
+  const familyId = "fam-1";
+
+  it("renames, changes group and persists emoji for a household envelope", async () => {
+    const supabase = createMemoryClient({
+      budget_categories: [
+        {
+          id: CAT_A,
+          family_id: familyId,
+          group_name: "Zdrowie",
+          name: "Lekarstwa",
+          icon: "📁",
+          sort_order: 10,
+          kind: "expense",
+        },
+        {
+          id: CAT_B,
+          family_id: familyId,
+          group_name: "Transport",
+          name: "Paliwo",
+          icon: "⛽",
+          sort_order: 20,
+          kind: "expense",
+        },
+      ],
+    });
+
+    const result = await updateCategoryRow(supabase, {
+      familyId,
+      categoryId: CAT_A,
+      patch: { name: "Apteka", group_name: "Transport", icon: "💊" },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.category).toMatchObject({
+      id: CAT_A,
+      name: "Apteka",
+      group_name: "Transport",
+      icon: "💊",
+      sort_order: 30,
+    });
+  });
+
+  it("does not update a category from another household", async () => {
+    const supabase = createMemoryClient({
+      budget_categories: [{ id: CAT_A, family_id: "other", name: "Cudza", icon: "📁" }],
+    });
+
+    const result = await updateCategoryRow(supabase, {
+      familyId,
+      categoryId: CAT_A,
+      patch: { name: "Nowa", icon: "🎯" },
+    });
+    expect(result).toMatchObject({ ok: false, status: 404 });
+    expect(supabase.store.budget_categories[0]).toMatchObject({ name: "Cudza", icon: "📁" });
+  });
+});
+
+describe("reorderCategoryRows", () => {
+  const familyId = "fam-1";
+
+  it("persists a new within-group order and group order", async () => {
+    const supabase = createMemoryClient({
+      budget_categories: sampleCategories().map((row) => ({ ...row })),
+    });
+
+    const result = await reorderCategoryRows(supabase, {
+      familyId,
+      groups: [
+        { name: "Transport", ids: [CAT_C] },
+        { name: "Zdrowie", ids: [CAT_B, CAT_A] },
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    const byId = Object.fromEntries(
+      supabase.store.budget_categories.map((row) => [row.id, row])
+    );
+    expect(byId[CAT_C]).toMatchObject({ group_name: "Transport", sort_order: 10 });
+    expect(byId[CAT_B]).toMatchObject({ group_name: "Zdrowie", sort_order: 20 });
+    expect(byId[CAT_A]).toMatchObject({ group_name: "Zdrowie", sort_order: 30 });
+  });
+
+  it("refuses ids that belong to another household", async () => {
+    const supabase = createMemoryClient({
+      budget_categories: [{ id: CAT_A, family_id: familyId, name: "Lekarstwa", sort_order: 10 }],
+    });
+
+    const result = await reorderCategoryRows(supabase, {
+      familyId,
+      groups: [{ name: "Zdrowie", ids: [CAT_B] }],
+    });
+    expect(result).toMatchObject({ ok: false, status: 400 });
+    expect(supabase.store.budget_categories[0].sort_order).toBe(10);
   });
 });

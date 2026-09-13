@@ -11,11 +11,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { CategoryEmojiPicker } from "@/components/envelopes/CategoryEmojiPicker";
+import { CategoryIcon } from "@/components/envelopes/CategoryIcon";
 import { EnvelopeGroupPicker } from "@/components/envelopes/EnvelopeGroupPicker";
 import { useAllocateMany, useBudget } from "@/hooks/use-budget";
 import { formatCurrency, getMonthLabel } from "@/lib/format";
 import { envelopeRowsFromBudget, planFillEnvelopeGaps } from "@/lib/budget";
-import { uniqueGroupNames } from "@/lib/categories";
+import { DEFAULT_CATEGORY_ICON, uniqueGroupNames } from "@/lib/categories";
 import { cn } from "@/lib/utils";
 import { CategoryPanel } from "./CategoryPanel";
 import { AssignedInput, Money } from "./AssignedInput";
@@ -36,6 +38,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
   const [groupName, setGroupName] = useState("");
   const [draftGroups, setDraftGroups] = useState<string[]>([]);
   const [catName, setCatName] = useState("");
+  const [catIcon, setCatIcon] = useState(DEFAULT_CATEGORY_ICON);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const allocateMany = useAllocateMany();
   const queryClient = useQueryClient();
@@ -251,7 +254,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                     className="col-span-12 text-left md:col-span-4"
                   >
                     <div className="flex items-center gap-2">
-                      <span>{row.category.icon}</span>
+                      <CategoryIcon icon={row.category.icon} size="sm" />
                       <span className="font-medium">{row.category.name}</span>
                     </div>
                     {(row.leftover !== 0 || unfunded) && (
@@ -340,7 +343,9 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             <DialogTitle>Nowa koperta</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            <CategoryEmojiPicker value={catIcon} onChange={setCatIcon} id="budget-envelope-icon" />
             <EnvelopeGroupPicker
+              id="budget-envelope-group"
               groups={groupOptions}
               value={selectedGroup}
               onChange={setGroupName}
@@ -366,7 +371,11 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                 const res = await fetch("/api/categories", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ group_name: selectedGroup, name: catName.trim() }),
+                  body: JSON.stringify({
+                  group_name: selectedGroup,
+                  name: catName.trim(),
+                  icon: catIcon,
+                }),
                 });
                 if (!res.ok) {
                   toast.error("Nie udało się dodać koperty");
@@ -374,6 +383,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                 }
                 toast.success("Dodano kopertę");
                 setCatName("");
+                setCatIcon(DEFAULT_CATEGORY_ICON);
                 setAddOpen(false);
                 queryClient.invalidateQueries({ queryKey: ["budget"] });
                 queryClient.invalidateQueries({ queryKey: ["categories"] });

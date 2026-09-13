@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
-import { deleteCategoryRow, isCategoryId } from "@/lib/categories";
+import { deleteCategoryRow, isCategoryId, updateCategoryRow } from "@/lib/categories";
+import { categoryPatchSchema } from "@/lib/validators";
 
 async function routeId(
   params: Promise<{ id: string }> | { id: string }
@@ -22,6 +23,46 @@ async function readForceFlag(request: Request): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export async function PATCH(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> | { id: string } }
+) {
+  const ctx = await getAuthContext();
+  if ("error" in ctx) {
+    return NextResponse.json({ error: ctx.error }, { status: ctx.status });
+  }
+
+  const id = await routeId(params);
+  if (!isCategoryId(id)) {
+    return NextResponse.json({ error: "Nieprawidłowe id koperty" }, { status: 400 });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Nieprawidłowe dane" }, { status: 400 });
+  }
+
+  const parsed = categoryPatchSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const result = await updateCategoryRow(ctx.supabase, {
+    familyId: ctx.family.id,
+    categoryId: id,
+    patch: parsed.data,
+  });
+
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
+  }
+
+  invalidateFamilyBudgetCache(ctx.family.id);
+  return NextResponse.json(result.category);
 }
 
 export async function DELETE(

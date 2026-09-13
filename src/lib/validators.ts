@@ -126,6 +126,22 @@ export const categorySchema = z.object({
   kind: z.enum(["expense", "income"]).optional(),
 });
 
+export const categoryPatchSchema = categorySchema.partial().refine(
+  (value) => Object.values(value).some((field) => field !== undefined),
+  { message: "Brak zmian" }
+);
+
+export const categoryReorderSchema = z.object({
+  groups: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1, "Wybierz grupę"),
+        ids: z.array(z.string().uuid()),
+      })
+    )
+    .min(1, "Podaj kolejność kopert"),
+});
+
 export const ocrResultSchema = z.object({
   store_name: z.string(),
   date: z.string(),

@@ -24,6 +24,7 @@ import { displayPayee } from "@/lib/display-payee";
 import { transactionRowAriaLabel } from "@/lib/transaction-detail";
 import { cn } from "@/lib/utils";
 import type { BudgetCategoryRow } from "@/lib/types";
+import { CategoryIcon } from "@/components/envelopes/CategoryIcon";
 import { TransactionDetail } from "@/components/transactions/TransactionDetail";
 import type { Transaction } from "@/lib/types";
 
@@ -91,8 +92,9 @@ export function CategoryPanel({
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              {row.category.icon} {row.category.name}
+            <DialogTitle className="flex items-center gap-2">
+              <CategoryIcon icon={row.category.icon} size="sm" />
+              {row.category.name}
             </DialogTitle>
           </DialogHeader>
 
@@ -198,7 +200,7 @@ export function CategoryPanel({
                     <SelectContent>
                       {others.map((c) => (
                         <SelectItem key={c.category.id} value={c.category.id}>
-                          {c.category.icon} {c.category.name}
+                          {c.category.icon || "📁"} {c.category.name}
                         </SelectItem>
                       ))}
                     </SelectContent>

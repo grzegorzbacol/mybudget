@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { fetchFamilyCategories, invalidateFamilyBudgetCache } from "@/lib/budget-read";
-import { uniqueGroupNames } from "@/lib/categories";
+import { normalizeCategoryIcon, uniqueGroupNames } from "@/lib/categories";
 import { insertRowWithSchemaRepair } from "@/lib/schema-write";
 import { categorySchema } from "@/lib/validators";
 
@@ -48,7 +48,7 @@ export async function POST(request: Request) {
       family_id: ctx.family.id,
       group_name: parsed.data.group_name,
       name: parsed.data.name,
-      icon: parsed.data.icon ?? "📁",
+      icon: normalizeCategoryIcon(parsed.data.icon),
       color: parsed.data.color ?? "#6366f1",
       sort_order: parsed.data.sort_order ?? (Number(last?.sort_order ?? 0) + 1),
       kind: parsed.data.kind ?? "expense",
