@@ -93,10 +93,14 @@ export function transferColumnOwnerMessage(raw?: string | null): string {
 
 /** Roles to try with SET ROLE before DDL on public.transactions. */
 export function ddlOwnerRoleCandidates(tableOwner?: string | null): string[] {
-  const roles = [tableOwner?.trim(), TRANSACTIONS_DDL_OWNER_ROLE].filter(
-    (role): role is string => Boolean(role)
-  );
-  return [...new Set(roles)];
+  const seen = new Set<string>();
+  const roles: string[] = [];
+  for (const role of [tableOwner?.trim(), TRANSACTIONS_DDL_OWNER_ROLE]) {
+    if (!role || seen.has(role)) continue;
+    seen.add(role);
+    roles.push(role);
+  }
+  return roles;
 }
 
 function quoteIdent(ident: string): string | null {
