@@ -5,6 +5,8 @@ import { loadFamilyTransactionDetail, type TransactionDetailClient } from "@/lib
 import { deleteFamilyTransaction } from "@/lib/transaction-delete";
 import { transactionPatchSchema } from "@/lib/validators";
 import { replaceCategorySplits } from "@/lib/category-splits";
+import { updateRowWithSchemaRepair } from "@/lib/schema-write";
+import { updateTransferRow } from "@/lib/transfer-write";
 
 async function routeId(
   params: Promise<{ id: string }> | { id: string }
@@ -101,17 +103,37 @@ export async function PATCH(
     return NextResponse.json({ error: "Nie znaleziono transakcji" }, { status: 404 });
   }
 
-  const { data, error } = await ctx.supabase
-    .from("transactions")
-    .update(patch)
-    .eq("id", id)
-    .eq("family_id", ctx.family.id)
-    .select()
-    .maybeSingle();
+  const writesTransferColumns =
+    patch.transfer_account_id !== undefined || patch.transfer_id !== undefined;
+  const updated = writesTransferColumns
+    ? await updateTransferRow(
+        async (row) =>
+          ctx.supabase
+            .from("transactions")
+            .update(row)
+            .eq("id", id)
+            .eq("family_id", ctx.family.id)
+            .select()
+            .maybeSingle(),
+        patch as Record<string, unknown>,
+        { id, familyId: ctx.family.id }
+      )
+    : await updateRowWithSchemaRepair(
+        async (row) =>
+          ctx.supabase
+            .from("transactions")
+            .update(row)
+            .eq("id", id)
+            .eq("family_id", ctx.family.id)
+            .select()
+            .maybeSingle(),
+        patch as Record<string, unknown>
+      );
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!updated.data && updated.error) {
+    return NextResponse.json({ error: updated.error }, { status: 500 });
   }
+  const data = updated.data;
 
   if (current.transfer_id && (patch.amount != null || patch.date != null || patch.cleared != null)) {
     const pairPatch: Record<string, unknown> = {};

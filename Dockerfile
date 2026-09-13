@@ -58,6 +58,7 @@ COPY --chown=nextjs:nodejs supabase/migrations ./supabase/migrations
 COPY --chown=nextjs:nodejs scripts/docker-entrypoint.sh ./docker-entrypoint.sh
 COPY --chown=nextjs:nodejs scripts/wait-for-sql-pool.cjs ./wait-for-sql-pool.cjs
 COPY --chown=nextjs:nodejs scripts/ensure-schema.sql ./scripts/ensure-schema.sql
+COPY --chown=nextjs:nodejs scripts/ensure-transfer-columns.sql ./scripts/ensure-transfer-columns.sql
 RUN chmod +x ./docker-entrypoint.sh
 
 USER nextjs

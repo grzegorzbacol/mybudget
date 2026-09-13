@@ -114,6 +114,41 @@ describe("insertRowsWithSchemaRepair", () => {
   });
 });
 
+describe("updateRowWithSchemaRepair", () => {
+  it("retries a PATCH after transfer_account_id is missing from the schema cache", async () => {
+    vi.resetModules();
+    const applyTransferSchemaRepair = vi.fn().mockResolvedValue({ ok: true, applied: 4 });
+    vi.doMock("./ensure-schema", () => ({
+      applyTransferSchemaRepair,
+      applyEnsureSchema: vi.fn(),
+    }));
+    const { updateRowWithSchemaRepair: update } = await import("./schema-write");
+
+    let attempts = 0;
+    const result = await update(
+      async (row) => {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            data: null,
+            error: {
+              message: "Could not find the 'transfer_account_id' column of 'transactions' in the schema cache",
+            },
+          };
+        }
+        return { data: { id: "tx-edit", ...row }, error: null };
+      },
+      { transfer_account_id: "acc-card", transfer_id: "pair-1", amount: -5615.43 },
+      ["scheduled_id"],
+      { requiredColumns: ["transfer_account_id", "transfer_id"] }
+    );
+
+    expect(applyTransferSchemaRepair).toHaveBeenCalled();
+    expect(attempts).toBe(2);
+    expect(result.data).toMatchObject({ transfer_account_id: "acc-card", transfer_id: "pair-1" });
+  });
+});
+
 describe("isGoalTypeCheckError", () => {
   it("detects the 001 goals_type_check still on live Postgres", () => {
     expect(

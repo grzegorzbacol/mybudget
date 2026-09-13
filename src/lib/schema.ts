@@ -3,10 +3,12 @@ export function isSchemaLagError(message?: string | null): boolean {
   return /column .+ does not exist|could not find the '.+' column|schema cache/i.test(message);
 }
 
-/** Live transfer toast: Could not find the 'transfer_id' column of 'transactions' in the schema cache. */
+/** Live transfer toast: Could not find the 'transfer_id'/'transfer_account_id' column of 'transactions'. */
 export function isTransferColumnSchemaError(message?: string | null): boolean {
   if (!message || !isSchemaLagError(message)) return false;
-  return /\btransfer_id\b|\btransfer_account_id\b/i.test(message);
+  if (!/\btransfer_id\b|\btransfer_account_id\b/i.test(message)) return false;
+  if (/scheduled_transactions/i.test(message)) return false;
+  return /of 'transactions'|column transactions\./i.test(message);
 }
 
 export function isMissingRelationError(message?: string | null): boolean {

@@ -237,3 +237,6 @@ export function isGoalTypeCheckError(message?: string | null): boolean {
   if (!message) return false;
   return /goals_type_check|check constraint.*goals/i.test(message);
 }
+
+/** Same repair/retry as insert — used by PATCH /api/transactions/:id. */
+export const updateRowWithSchemaRepair = insertRowWithSchemaRepair;

@@ -110,7 +110,7 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction }
     setReceiptUrl(source?.receiptUrl ?? "");
     setCleared(editTransaction?.cleared ?? false);
     setMemo(editTransaction?.memo ?? "");
-    setToAccountId("");
+    setToAccountId(editTransaction?.transfer_account_id ?? "");
     setSplitMode("none");
     setSplitUnit("pln");
     setCustomAmounts({});
@@ -301,6 +301,7 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction }
         memo,
         cleared,
         category_id: trackingTransfer ? categoryId || null : null,
+        replace_transaction_id: editTransaction?.id,
       });
     } else {
       const numAmount = type === "expense" ? -absAmount : absAmount;

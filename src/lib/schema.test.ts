@@ -26,9 +26,15 @@ describe("schema lag helpers", () => {
     expect(
       isTransferColumnSchemaError("Could not find the 'transfer_account_id' column of 'transactions' in the schema cache")
     ).toBe(true);
+    expect(isTransferColumnSchemaError("column transactions.transfer_account_id does not exist")).toBe(true);
     expect(isTransferColumnSchemaError("Could not find the 'paid_by' column of 'transactions' in the schema cache")).toBe(
       false
     );
+    expect(
+      isTransferColumnSchemaError(
+        "Could not find the 'transfer_account_id' column of 'scheduled_transactions' in the schema cache"
+      )
+    ).toBe(false);
     expect(isSchemaLagError("Unauthorized")).toBe(false);
     expect(isMissingRelationError('relation "scheduled_transactions" does not exist')).toBe(true);
     expect(isMissingRelationError("Could not find the table 'public.scheduled_transactions' in the schema cache")).toBe(
@@ -128,8 +134,23 @@ describe("schema lag helpers", () => {
     expect(scheduledSql).toContain("CREATE TABLE IF NOT EXISTS scheduled_transactions");
     expect(accountSql).toContain("ADD COLUMN IF NOT EXISTS on_budget");
     expect(accountSql).toContain("accounts_type_check");
+    const transferAccountSql = readFileSync(
+      join(process.cwd(), "supabase/migrations/011_transfer_account_id_schema_cache.sql"),
+      "utf8"
+    );
+    const bootTransferSql = readFileSync(
+      join(process.cwd(), "scripts/ensure-transfer-columns.sql"),
+      "utf8"
+    );
+    for (const sql of [transferAccountSql, bootTransferSql]) {
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS transfer_account_id");
+      expect(sql).toContain("ADD COLUMN IF NOT EXISTS transfer_id");
+      expect(sql).toContain("NOTIFY pgrst");
+    }
     const boot = readFileSync(join(process.cwd(), "scripts/docker-entrypoint.sh"), "utf8");
     expect(boot).toContain("transactions.transfer_account_id");
     expect(boot).toContain("transactions.transfer_id");
+    expect(boot).toContain("ensure-transfer-columns.sql");
+    expect(boot).toContain("NOTIFY pgrst");
   });
 });

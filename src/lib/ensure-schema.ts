@@ -99,11 +99,7 @@ async function runTransferSchemaUncached(
 export async function applyTransferSchemaRepair(
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
 ): Promise<EnsureSchemaResult> {
-  const result = await runTransferStatements(env);
-  if (result.ok) {
-    lastSuccessAt = Date.now();
-  }
-  return result;
+  return runTransferStatements(env);
 }
 
 export async function applyEnsureSchema(

@@ -48,6 +48,7 @@ export const transferSchema = z.object({
   memo: z.string().optional(),
   cleared: z.boolean().optional(),
   category_id: z.string().uuid().nullable().optional(),
+  replace_transaction_id: z.string().uuid().optional(),
 });
 
 export const allocateSchema = z.object({

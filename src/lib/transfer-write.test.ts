@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 const LIVE_TRANSFER_CACHE_ERROR =
   "Could not find the 'transfer_id' column of 'transactions' in the schema cache";
+const LIVE_TRANSFER_ACCOUNT_CACHE_ERROR =
+  "Could not find the 'transfer_account_id' column of 'transactions' in the schema cache";
 
 describe("buildTransferLegs", () => {
   it("writes the same transfer_id on both legs", async () => {
@@ -148,5 +150,62 @@ describe("insertTransferPair", () => {
     expect(applyTransferSchemaRepair).toHaveBeenCalled();
     expect(attempts).toBe(2);
     expect(result.data).toEqual([{ id: "out" }, { id: "in" }]);
+  });
+
+  it("retries then writes via SQL when transfer_account_id stays missing from the cache", async () => {
+    vi.resetModules();
+    vi.doMock("./ensure-schema", () => ({
+      applyTransferSchemaRepair: vi.fn().mockResolvedValue({ ok: true, applied: 4 }),
+      applyEnsureSchema: vi.fn(),
+    }));
+    const { insertTransferPair } = await import("./transfer-write");
+
+    const sqlFallback = vi.fn().mockResolvedValue({
+      data: [
+        { id: "sql-out", transfer_account_id: "acc-card" },
+        { id: "sql-in", transfer_account_id: "acc-main" },
+      ],
+    });
+
+    const result = await insertTransferPair(
+      async () => ({ data: null, error: { message: LIVE_TRANSFER_ACCOUNT_CACHE_ERROR } }),
+      [
+        { transfer_id: "pair-1", transfer_account_id: "acc-card", amount: -5615.43 },
+        { transfer_id: "pair-1", transfer_account_id: "acc-main", amount: 5615.43 },
+      ],
+      { retryDelaysMs: [5], sleep: async () => undefined, sqlFallback }
+    );
+
+    expect(sqlFallback).toHaveBeenCalled();
+    expect(result.data).toHaveLength(2);
+    expect(result.error).toBeUndefined();
+  });
+});
+
+describe("updateTransferRow", () => {
+  it("repairs and retries a convert/PATCH write on transfer_account_id cache miss", async () => {
+    vi.resetModules();
+    const applyTransferSchemaRepair = vi.fn().mockResolvedValue({ ok: true, applied: 4 });
+    vi.doMock("./ensure-schema", () => ({
+      applyTransferSchemaRepair,
+      applyEnsureSchema: vi.fn(),
+    }));
+    const { updateTransferRow } = await import("./transfer-write");
+
+    let attempts = 0;
+    const result = await updateTransferRow(
+      async (row) => {
+        attempts += 1;
+        if (attempts === 1) {
+          return { data: null, error: { message: LIVE_TRANSFER_ACCOUNT_CACHE_ERROR } };
+        }
+        return { data: { id: "tx-1", ...row }, error: null };
+      },
+      { transfer_account_id: "acc-card", transfer_id: "pair-1", amount: -5615.43 }
+    );
+
+    expect(applyTransferSchemaRepair).toHaveBeenCalled();
+    expect(attempts).toBe(2);
+    expect(result.data).toMatchObject({ transfer_account_id: "acc-card" });
   });
 });
