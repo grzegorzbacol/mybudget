@@ -35,7 +35,8 @@ W Coolify → **Environment Variables** ustaw jako **Build Variable** (dostępne
 | `NEXT_PUBLIC_SUPABASE_URL` | Powtórz (runtime) |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Powtórz (runtime) |
 | `NEXT_PUBLIC_APP_URL` | URL produkcyjny |
-| `DATABASE_URL` | Połączenie do Postgres (self-hosted Supabase w Coolify) |
+| `DATABASE_URL` | Połączenie aplikacji / PostgREST (może być rola **bez** OWNER na `transactions`) |
+| `DATABASE_OWNER_URL` albo `SUPABASE_DB_URL` | **Właściciel** tabel (`postgres` / `supabase_admin`) — ta sama baza. Wymagane do `ALTER TABLE`. |
 | `GIT_COMMIT` | SHA commita w `GET /api/health` (`revision` / `gitSha`). Coolify może też wstrzyknąć `SOURCE_COMMIT` przy buildzie. |
 
 ### Self-hosted Supabase w Coolify
@@ -128,7 +129,14 @@ Po dodaniu HTTPS do panelu Coolify możesz włączyć **Auto Deploy** w ustawien
 - **`/api/health` `getaddrinfo EAI_AGAIN supabase-db-...`:** Docker DNS cannot resolve the Postgres hostname (container down or not on the same network). The app retries DNS 2–3 times with short backoff. If the host stays unreachable, **`GET /api/health` returns 200** `{ok:true, db:false, degraded:true}` so Coolify does **not** restart MyBudget while Kong/PostgREST may still work. Cashflow then loads via REST instead of hanging on SQL. Fix infra: start/reconnect the `supabase-db-*` container. Keep Coolify’s HTTP healthcheck on `/api/health` (liveness = 200). Treat `db:true` as SQL readiness, not a kill signal — do not require 503 for a DNS blip.
 - **Budżet pusty / 500 `transfer_account_id does not exist`:** Redeploy; w logach startu musi przejść `006_transfer_columns.sql` albo `ensure-schema.sql`. `DATABASE_URL` = baza PostgREST. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/006_transfer_columns.sql`
 - **Transfer 500 `Could not find the 'transfer_id' column … in the schema cache`:** kolumny są w Postgresie, ale PostgREST ma stary cache (albo 006/009 oznaczone applied). Redeploy (010 + `NOTIFY pgrst`); API transferu wymusza `ADD COLUMN IF NOT EXISTS`, `NOTIFY pgrst, 'reload schema'` i ponawia zapis. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/010_transfer_schema_cache.sql`
-- **Edytuj → Zapisz transfer 500 `transfer_account_id` … schema cache:** `010`/`011` po pierwszym deployu są pomijane. Konwersja wydatku (CSV) → transfer idzie **SQL-first**: `ADD COLUMN IF NOT EXISTS` + zapis obu nóg w jednej transakcji na `public.transactions` (ten sam `DATABASE_URL` co PostgREST). REST tylko gdy SQL nie wstanie. Boot: `012_force_transfer_columns_notify.sql` + `scripts/ensure-transfer-columns.sql` + `NOTIFY pgrst`. Jednorazowo (zalogowany albo `Authorization: Bearer $SETUP_SECRET`): `POST /api/setup/repair-transfer`. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/012_force_transfer_columns_notify.sql` potem `NOTIFY pgrst, 'reload schema';`
+- **Edytuj → Zapisz transfer 500 `transfer_account_id` … schema cache / `must be owner of table transactions`:** `public.transactions` należy do `postgres`/`supabase_admin`, a `DATABASE_URL` aplikacji **nie** jest właścicielem — `ALTER TABLE` z boot/`repair-transfer` nic nie doda (NOTIFY bez kolumn jest bezużyteczny). **Jednorazowo jako właściciel** (Coolify → supabase-db → terminal):
+  ```sql
+  ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid;
+  ALTER TABLE public.transactions ADD COLUMN IF NOT EXISTS transfer_id uuid;
+  CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON public.transactions(transfer_id);
+  NOTIFY pgrst, 'reload schema';
+  ```
+  albo `psql -U postgres -d postgres -f scripts/owner-add-transfer-columns.sql`. Żeby kolejny deploy sam dodał kolumny: ustaw `DATABASE_OWNER_URL` lub `SUPABASE_DB_URL` na użytkownika-właściciela **tej samej** bazy co PostgREST (nie na ograniczoną rolę z `DATABASE_URL`). `POST /api/setup/repair-transfer` próbuje te URL-e w tej kolejności i zwraca `ownerSql` gdy ALTER jest zablokowane.
 - **Cashflow 500 `scheduled_transactions` / schema cache:** Redeploy; w logach startu `007_scheduled_transactions.sql` albo `ensure-schema.sql` musi utworzyć tabelę. Ręcznie: `psql "$DATABASE_URL" -f supabase/migrations/007_scheduled_transactions.sql`
 - **Nie da się utworzyć konta / „nie znaleziono konta” przy wydatku:** brak `accounts.on_budget` albo stary `accounts_type_check`. Redeploy; `008_account_columns.sql` + ensure-schema. UI idzie przez `POST /api/accounts` (retry bez kolumny / po naprawie constraintu).
 - **Wydatek 500 `paid_by` / cel 500 `kind`:** Redeploy; `009_live_schema_gaps.sql` + ensure-schema. API transakcji i kategorii retry po naprawie, a w ostateczności zapisuje bez tych kolumn.

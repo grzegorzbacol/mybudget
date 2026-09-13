@@ -1,7 +1,12 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { applyTransferSchemaRepair } from "@/lib/ensure-schema";
-import { resolveDatabaseUrl } from "@/lib/schema";
+import {
+  isTableOwnerError,
+  resolveDatabaseUrl,
+  transferColumnOwnerMessage,
+  TRANSFER_COLUMN_OWNER_SQL,
+} from "@/lib/schema";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -16,7 +21,7 @@ async function authorized(request: Request): Promise<boolean> {
 
 /**
  * One-shot live repair: ADD COLUMN IF NOT EXISTS transfer_* + NOTIFY pgrst.
- * Call after a schema-cache miss, or from an operator with SETUP_SECRET.
+ * Tries DATABASE_OWNER_URL / SUPABASE_DB_URL before the (often non-owner) DATABASE_URL.
  */
 export async function POST(request: Request) {
   if (!(await authorized(request))) {
@@ -31,6 +36,7 @@ export async function POST(request: Request) {
         ok: false,
         error: "DATABASE_URL not set — cannot ADD COLUMN / NOTIFY on the PostgREST database",
         repair,
+        ownerSql: TRANSFER_COLUMN_OWNER_SQL,
       },
       { status: 503 }
     );
@@ -48,18 +54,34 @@ export async function POST(request: Request) {
           AND column_name IN ('transfer_account_id', 'transfer_id')`
     );
     const present = new Set(columns.rows.map((row) => row.column_name));
+    const ok = present.has("transfer_account_id") && present.has("transfer_id");
+    const ownerBlocked = isTableOwnerError(repair.error);
     return NextResponse.json({
-      ok: present.has("transfer_account_id") && present.has("transfer_id"),
+      ok,
       repair,
       columns: {
         transfer_account_id: present.has("transfer_account_id"),
         transfer_id: present.has("transfer_id"),
       },
       notified: true,
+      error: ok
+        ? undefined
+        : ownerBlocked
+          ? transferColumnOwnerMessage(repair.error)
+          : repair.error ?? "Kolumny transferów nadal nie istnieją na bazie PostgREST",
+      ownerSql: ok ? undefined : TRANSFER_COLUMN_OWNER_SQL,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "repair-transfer failed";
-    return NextResponse.json({ ok: false, error: message, repair }, { status: 500 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: isTableOwnerError(message) ? transferColumnOwnerMessage(message) : message,
+        repair,
+        ownerSql: TRANSFER_COLUMN_OWNER_SQL,
+      },
+      { status: 500 }
+    );
   } finally {
     await client.end().catch(() => undefined);
   }

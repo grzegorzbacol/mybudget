@@ -11,7 +11,11 @@ import {
   isTransferColumnSchemaError,
   missingScheduledTableMessage,
   resolveDatabaseUrl,
+  resolveDdlDatabaseUrls,
   schemaLagMessage,
+  isTableOwnerError,
+  transferColumnOwnerMessage,
+  TRANSFER_COLUMN_OWNER_SQL,
   writeErrorMessage,
 } from "./schema";
 
@@ -54,6 +58,12 @@ describe("schema lag helpers", () => {
     ).toContain("transfer_account_id");
     expect(writeErrorMessage({ code: "PGRST204" })).toMatch(/schema cache/i);
     expect(isSchemaLagError(writeErrorMessage({ code: "PGRST204" }))).toBe(true);
+    expect(isTableOwnerError("must be owner of table transactions")).toBe(true);
+    expect(transferColumnOwnerMessage("must be owner of table transactions")).toContain(
+      "ADD COLUMN IF NOT EXISTS transfer_account_id"
+    );
+    expect(TRANSFER_COLUMN_OWNER_SQL).toContain("NOTIFY pgrst");
+    expect(schemaLagMessage("must be owner of table transactions")).toContain("właścicielem");
   });
 
   it("explains that Coolify must run migrations on the PostgREST database", () => {
@@ -100,6 +110,13 @@ describe("schema lag helpers", () => {
     expect(resolveDatabaseUrl({ DATABASE_URL: "postgres://a" })).toBe("postgres://a");
     expect(resolveDatabaseUrl({ POSTGRES_URL: "postgres://b" })).toBe("postgres://b");
     expect(resolveDatabaseUrl({})).toBeUndefined();
+    expect(
+      resolveDdlDatabaseUrls({
+        DATABASE_URL: "postgres://app",
+        SUPABASE_DB_URL: "postgres://owner",
+      })
+    ).toEqual(["postgres://owner", "postgres://app"]);
+    expect(resolveDdlDatabaseUrls({ DATABASE_OWNER_URL: "postgres://owner" })[0]).toBe("postgres://owner");
   });
 
   it("keeps boot SQL and 009 in sync for every live schema gap", () => {
@@ -166,5 +183,7 @@ describe("schema lag helpers", () => {
     expect(boot).toContain("transactions.transfer_id");
     expect(boot).toContain("ensure-transfer-columns.sql");
     expect(boot).toContain("NOTIFY pgrst");
+    expect(boot).toContain("DATABASE_OWNER_URL");
+    expect(boot).toContain("owner-add-transfer-columns.sql");
   });
 });

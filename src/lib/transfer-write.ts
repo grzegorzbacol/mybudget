@@ -1,4 +1,12 @@
-import { isSchemaLagError, isTransferColumnSchemaError, resolveDatabaseUrl, schemaLagMessage, TRANSFER_SCHEMA_STATEMENTS } from "./schema";
+import {
+  isSchemaLagError,
+  isTableOwnerError,
+  isTransferColumnSchemaError,
+  resolveDatabaseUrl,
+  schemaLagMessage,
+  transferColumnOwnerMessage,
+  TRANSFER_SCHEMA_STATEMENTS,
+} from "./schema";
 import {
   TRANSFER_REQUIRED_COLUMNS,
   insertRowsWithSchemaRepair,
@@ -123,6 +131,7 @@ export function isAmbiguousCommitError(message?: string): boolean {
 export function shouldReplayConvertAfterSqlFailure(message?: string): boolean {
   if (!message) return false;
   if (isAmbiguousCommitError(message)) return false;
+  if (isTableOwnerError(message)) return false;
   return (
     /DATABASE_URL not set|Nie znaleziono transakcji|SQL transfer connect|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout exceeded|getaddrinfo|column .+ does not exist|schema cache|PGRST204/i.test(
       message
@@ -178,9 +187,30 @@ async function ensureTransferColumnsOnClient(client: PgClient): Promise<void> {
   }
 }
 
+async function ensureTransferColumnsOnClientAllowingOwnerMiss(client: PgClient): Promise<void> {
+  try {
+    await ensureTransferColumnsOnClient(client);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (isTableOwnerError(message)) return;
+    throw error;
+  }
+}
+
+function sqlWriteError(error: unknown, fallback: string): string {
+  const message = error instanceof Error ? error.message : fallback;
+  if (isTableOwnerError(message) || /column .+transfer_(account_id|id).+does not exist/i.test(message)) {
+    return transferColumnOwnerMessage(message);
+  }
+  return message;
+}
+
 function userFacingTransferError(restError?: string, sqlError?: string): string {
   const rest = restError?.trim() ?? "";
   const sql = sqlError?.trim() ?? "";
+  if (isTableOwnerError(rest) || isTableOwnerError(sql)) {
+    return transferColumnOwnerMessage(sql || rest);
+  }
   if (sql && !shouldFallbackToSql(sql)) return sql;
   if (shouldFallbackToSql(rest) || shouldFallbackToSql(sql)) {
     return schemaLagMessage(sql || rest);
@@ -252,7 +282,7 @@ export async function insertTransferRowsViaSql(
   let client: PgClient | undefined;
   try {
     client = await connectPg(databaseUrl);
-    await ensureTransferColumnsOnClient(client);
+    await ensureTransferColumnsOnClientAllowingOwnerMiss(client);
     const inserted: Record<string, unknown>[] = [];
     for (const row of rows) {
       const result = await client.query(INSERT_TRANSFER_SQL, insertValues(row));
@@ -260,7 +290,7 @@ export async function insertTransferRowsViaSql(
     }
     return { data: inserted };
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "SQL transfer insert failed" };
+    return { error: sqlWriteError(error, "SQL transfer insert failed") };
   } finally {
     await client?.end().catch(() => undefined);
   }
@@ -280,12 +310,12 @@ export async function updateTransferRowViaSql(
   let client: PgClient | undefined;
   try {
     client = await connectPg(databaseUrl);
-    await ensureTransferColumnsOnClient(client);
+    await ensureTransferColumnsOnClientAllowingOwnerMiss(client);
     const result = await client.query(UPDATE_TRANSFER_SQL, updateValues(id, familyId, row));
     const data = result.rows[0] as Record<string, unknown> | undefined;
     return data ? { data } : { error: "Nie znaleziono transakcji" };
   } catch (error) {
-    return { error: error instanceof Error ? error.message : "SQL transfer update failed" };
+    return { error: sqlWriteError(error, "SQL transfer update failed") };
   } finally {
     await client?.end().catch(() => undefined);
   }
@@ -300,15 +330,17 @@ export async function convertTransferViaSql(
   input: ConvertTransferInput,
   env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
 ): Promise<SchemaWriteResult<Record<string, unknown>[]>> {
+  const { applyTransferSchemaRepair } = await import("./ensure-schema");
+  const repair = await applyTransferSchemaRepair(env);
   const databaseUrl = resolveDatabaseUrl(env);
   if (!databaseUrl) {
-    return { error: "DATABASE_URL not set" };
+    return { error: repair.error ?? "DATABASE_URL not set" };
   }
 
   let client: PgClient | undefined;
   try {
     client = await connectPg(databaseUrl);
-    await ensureTransferColumnsOnClient(client);
+    await ensureTransferColumnsOnClientAllowingOwnerMiss(client);
     await client.query("BEGIN");
     const updated = await client.query(
       UPDATE_TRANSFER_SQL,
@@ -366,7 +398,7 @@ export async function convertTransferViaSql(
     return { data: [outgoingRow, incomingRow] };
   } catch (error) {
     if (client) await client.query("ROLLBACK").catch(() => undefined);
-    return { error: error instanceof Error ? error.message : "SQL transfer convert failed" };
+    return { error: sqlWriteError(error, repair.error ?? "SQL transfer convert failed") };
   } finally {
     await client?.end().catch(() => undefined);
   }

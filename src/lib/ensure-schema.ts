@@ -1,5 +1,12 @@
 import { Client } from "pg";
-import { ENSURE_SCHEMA_STATEMENTS, TRANSFER_SCHEMA_STATEMENTS, resolveDatabaseUrl } from "./schema";
+import {
+  ENSURE_SCHEMA_STATEMENTS,
+  TRANSFER_SCHEMA_STATEMENTS,
+  isTableOwnerError,
+  resolveDatabaseUrl,
+  resolveDdlDatabaseUrls,
+  transferColumnOwnerMessage,
+} from "./schema";
 
 export type EnsureSchemaResult = {
   ok: boolean;
@@ -53,16 +60,11 @@ export function wasEnsureSchemaRecentlyApplied(now = Date.now()): boolean {
   return lastSuccessAt > 0 && now - lastSuccessAt < ENSURE_SCHEMA_TTL_MS;
 }
 
-async function runSqlStatements(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+async function runSqlStatementsOnUrl(
+  databaseUrl: string,
   statements: readonly string[],
-  label = "ensure-schema"
+  label: string
 ): Promise<EnsureSchemaResult> {
-  const databaseUrl = resolveDatabaseUrl(env);
-  if (!databaseUrl) {
-    return { ok: false, applied: 0, skipped: "DATABASE_URL not set" };
-  }
-
   const client = new Client(ensureSchemaClientConfig(databaseUrl));
   let applied = 0;
   const errors: string[] = [];
@@ -95,6 +97,47 @@ async function runSqlStatements(
   } finally {
     await client.end().catch(() => undefined);
   }
+}
+
+/** Try privilege-first URLs so a non-owner DATABASE_URL does not block ALTER TABLE. */
+export async function runSqlStatementsAcrossDdlUrls(
+  urls: string[],
+  statements: readonly string[],
+  label: string,
+  exec: (url: string) => Promise<EnsureSchemaResult> = (url) =>
+    runSqlStatementsOnUrl(url, statements, label)
+): Promise<EnsureSchemaResult> {
+  if (!urls.length) {
+    return { ok: false, applied: 0, skipped: "DATABASE_URL not set" };
+  }
+
+  let lastOwner: string | undefined;
+  let lastError: string | undefined;
+  for (const url of urls) {
+    const result = await exec(url);
+    if (result.ok) return result;
+    if (isTableOwnerError(result.error)) {
+      lastOwner = result.error;
+      continue;
+    }
+    lastError = result.error ?? result.skipped;
+  }
+  if (lastOwner) {
+    return { ok: false, applied: 0, error: transferColumnOwnerMessage(lastOwner) };
+  }
+  return { ok: false, applied: 0, error: lastError };
+}
+
+async function runSqlStatements(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  statements: readonly string[],
+  label = "ensure-schema"
+): Promise<EnsureSchemaResult> {
+  const urls = resolveDdlDatabaseUrls(env);
+  if (!urls.length && resolveDatabaseUrl(env)) {
+    urls.push(resolveDatabaseUrl(env)!);
+  }
+  return runSqlStatementsAcrossDdlUrls(urls, statements, label);
 }
 
 async function runEnsureSchemaUncached(
