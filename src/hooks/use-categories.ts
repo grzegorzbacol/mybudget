@@ -14,11 +14,24 @@ export function useCategories(enabled = true) {
   });
 }
 
+export type CategoryWriteInput = {
+  group_name: string;
+  name: string;
+  icon?: string;
+  kind?: "expense" | "income";
+};
+
+function invalidateCategoryQueries(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ["categories"] });
+  queryClient.invalidateQueries({ queryKey: ["budget"] });
+  queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+}
+
 export function useCreateCategory() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (input: { group_name: string; name: string }) => {
+    mutationFn: async (input: CategoryWriteInput) => {
       const res = await fetch("/api/categories", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -32,8 +45,7 @@ export function useCreateCategory() {
     },
     onSuccess: () => {
       toast.success("Dodano kopertę");
-      queryClient.invalidateQueries({ queryKey: ["categories"] });
-      queryClient.invalidateQueries({ queryKey: ["budget"] });
+      invalidateCategoryQueries(queryClient);
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : "Nie udało się dodać koperty"),
   });
@@ -81,5 +93,53 @@ export function useDeleteCategory() {
         toast.error(err instanceof Error ? err.message : "Nie udało się usunąć koperty");
       }
     },
+  });
+}
+
+export function useUpdateCategory() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: { id: string } & Partial<CategoryWriteInput>) => {
+      const { id, ...patch } = input;
+      const res = await fetch(`/api/categories/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Nie udało się zapisać koperty");
+      }
+      return data as BudgetCategory;
+    },
+    onSuccess: () => {
+      toast.success("Zapisano kopertę");
+      invalidateCategoryQueries(queryClient);
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Nie udało się zapisać koperty"),
+  });
+}
+
+export function useReorderCategories() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: { groups: Array<{ name: string; ids: string[] }> }) => {
+      const res = await fetch("/api/categories/reorder", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Nie udało się zmienić kolejności");
+      }
+      return data as { ok: true; updates: Array<{ id: string; sort_order: number }> };
+    },
+    onSuccess: () => {
+      invalidateCategoryQueries(queryClient);
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Nie udało się zmienić kolejności"),
   });
 }

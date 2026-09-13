@@ -1,12 +1,14 @@
 import { envelopeRowsFromBudget } from "@/lib/budget";
 import { isMissingRelationError, isSchemaLagError } from "@/lib/schema";
+import { updateRowWithSchemaRepair } from "@/lib/schema-write";
 import {
   categoryHasActivity,
   decideCategoryDelete,
+  isCategoryId,
   type CategoryDeleteDecision,
   type CategoryRelatedCounts,
 } from "@/lib/category-delete-policy";
-import type { BudgetCategory, BudgetMonthData } from "@/lib/types";
+import type { BudgetCategory, BudgetMonthData, CategoryKind } from "@/lib/types";
 
 export {
   categoryDeleteBlockedMessage,
@@ -62,6 +64,225 @@ export function addDraftGroup(
   const match = existing.find((group) => group.toLocaleLowerCase("pl-PL") === key);
   if (match) return { groups: existing, selected: match };
   return { groups: [...existing, name], selected: name };
+}
+
+export const DEFAULT_CATEGORY_ICON = "📁";
+
+/** Curated set for Settings / budget create — household envelopes, not a full emoji mart. */
+export const CATEGORY_EMOJI_CHOICES = [
+  "📁",
+  "🛒",
+  "🍽️",
+  "☕",
+  "🍕",
+  "🧼",
+  "🏠",
+  "💡",
+  "📶",
+  "🛡️",
+  "⛽",
+  "🚌",
+  "🚗",
+  "🚲",
+  "💊",
+  "🩺",
+  "🏥",
+  "💉",
+  "🎮",
+  "📺",
+  "🎬",
+  "🎵",
+  "👕",
+  "💇",
+  "🏦",
+  "🎯",
+  "💰",
+  "📈",
+  "🎁",
+  "✈️",
+  "🐶",
+  "👶",
+  "📚",
+  "🏋️",
+  "🔧",
+  "🧹",
+  "🌳",
+  "📱",
+  "💻",
+  "🎓",
+  "❤️",
+  "⭐",
+  "🔥",
+  "🎉",
+] as const;
+
+function firstGrapheme(value: string): string {
+  const Segmenter = (Intl as typeof Intl & { Segmenter?: typeof Intl.Segmenter }).Segmenter;
+  if (typeof Segmenter === "function") {
+    const iterator = new Segmenter("en", { granularity: "grapheme" }).segment(value)[Symbol.iterator]();
+    return iterator.next().value?.segment ?? "";
+  }
+  return Array.from(value)[0] ?? "";
+}
+
+/** Persist a single emoji/grapheme on `budget_categories.icon` (already in 001). */
+export function normalizeCategoryIcon(value?: string | null): string {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed) return DEFAULT_CATEGORY_ICON;
+  if (/[\u0000-\u001F<>]/.test(trimmed)) return DEFAULT_CATEGORY_ICON;
+  const first = firstGrapheme(trimmed);
+  if (!first || first.length > 24) return DEFAULT_CATEGORY_ICON;
+  return first;
+}
+
+export function categoryIcon(category: { icon?: string | null } | null | undefined): string {
+  return normalizeCategoryIcon(category?.icon);
+}
+
+export type CategoryGroup = {
+  name: string;
+  categories: BudgetCategory[];
+};
+
+export function groupCategoriesByName(categories: BudgetCategory[]): CategoryGroup[] {
+  const map = new Map<string, BudgetCategory[]>();
+  const order: string[] = [];
+  const sorted = [...categories].sort((a, b) => (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0));
+  for (const category of sorted) {
+    const name = normalizeGroupName(category.group_name) || "Inne";
+    if (!map.has(name)) {
+      map.set(name, []);
+      order.push(name);
+    }
+    map.get(name)!.push(category);
+  }
+  return order.map((name) => ({ name, categories: map.get(name) ?? [] }));
+}
+
+export function flattenCategoryGroups(groups: CategoryGroup[]): BudgetCategory[] {
+  return groups.flatMap((group) =>
+    group.categories.map((category) => ({ ...category, group_name: group.name }))
+  );
+}
+
+export function moveListItem<T>(list: T[], from: number, to: number): T[] {
+  if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return list;
+  const next = [...list];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
+export function moveCategoryToIndex(
+  groups: CategoryGroup[],
+  categoryId: string,
+  target: { groupName: string; index: number }
+): CategoryGroup[] {
+  const cloned = groups.map((group) => ({ name: group.name, categories: [...group.categories] }));
+  let moving: BudgetCategory | undefined;
+  for (const group of cloned) {
+    const index = group.categories.findIndex((category) => category.id === categoryId);
+    if (index >= 0) {
+      [moving] = group.categories.splice(index, 1);
+      break;
+    }
+  }
+  if (!moving) return groups;
+  const dest = cloned.find((group) => group.name === target.groupName);
+  if (!dest) return groups;
+  const index = Math.max(0, Math.min(target.index, dest.categories.length));
+  dest.categories.splice(index, 0, { ...moving, group_name: dest.name });
+  return cloned.filter((group) => group.categories.length > 0 || group.name === target.groupName);
+}
+
+export function moveGroupToIndex(groups: CategoryGroup[], groupName: string, to: number): CategoryGroup[] {
+  const from = groups.findIndex((group) => group.name === groupName);
+  if (from < 0) return groups;
+  return moveListItem(groups, from, to);
+}
+
+export function toReorderPayload(groups: CategoryGroup[]): Array<{ name: string; ids: string[] }> {
+  return groups.map((group) => ({
+    name: group.name,
+    ids: group.categories.map((category) => category.id),
+  }));
+}
+
+export function applySortOrders(
+  groups: Array<{ name: string; ids: string[] }>,
+  step = 10
+): Array<{ id: string; group_name: string; sort_order: number }> {
+  const updates: Array<{ id: string; group_name: string; sort_order: number }> = [];
+  let order = step;
+  for (const group of groups) {
+    const groupName = normalizeGroupName(group.name);
+    for (const id of group.ids) {
+      updates.push({ id, group_name: groupName, sort_order: order });
+      order += step;
+    }
+  }
+  return updates;
+}
+
+export type CategoryReorderPlan =
+  | { ok: true; updates: Array<{ id: string; group_name: string; sort_order: number }> }
+  | { ok: false; status: number; error: string };
+
+export function planCategoryReorder(
+  ownedIds: string[],
+  groups: Array<{ name?: string | null; ids: string[] }>
+): CategoryReorderPlan {
+  const owned = new Set(ownedIds);
+  const seen = new Set<string>();
+  const normalized: Array<{ name: string; ids: string[] }> = [];
+
+  for (const group of groups) {
+    const name = normalizeGroupName(group.name);
+    if (!name) {
+      return { ok: false, status: 400, error: "Nazwa grupy nie może być pusta" };
+    }
+    const ids: string[] = [];
+    for (const id of group.ids) {
+      if (!isCategoryId(id)) {
+        return { ok: false, status: 400, error: "Nieprawidłowe id koperty" };
+      }
+      if (!owned.has(id)) {
+        return { ok: false, status: 400, error: "Koperta nie należy do tego gospodarstwa" };
+      }
+      if (seen.has(id)) {
+        return { ok: false, status: 400, error: "Ta sama koperta jest na liście dwa razy" };
+      }
+      seen.add(id);
+      ids.push(id);
+    }
+    if (ids.length) normalized.push({ name, ids });
+  }
+
+  if (!normalized.length) {
+    return { ok: false, status: 400, error: "Podaj kolejność kopert" };
+  }
+
+  return { ok: true, updates: applySortOrders(normalized) };
+}
+
+export type CategoryPatchInput = {
+  name?: string;
+  group_name?: string;
+  icon?: string;
+  color?: string;
+  kind?: CategoryKind;
+  sort_order?: number;
+};
+
+export function buildCategoryPatch(input: CategoryPatchInput): CategoryPatchInput {
+  const patch: CategoryPatchInput = {};
+  if (input.name !== undefined) patch.name = normalizeGroupName(input.name);
+  if (input.group_name !== undefined) patch.group_name = normalizeGroupName(input.group_name);
+  if (input.icon !== undefined) patch.icon = normalizeCategoryIcon(input.icon);
+  if (input.color !== undefined) patch.color = String(input.color).trim();
+  if (input.kind !== undefined) patch.kind = input.kind;
+  if (input.sort_order !== undefined) patch.sort_order = input.sort_order;
+  return patch;
 }
 
 export function categoryMonthStatsMap(
@@ -239,4 +460,111 @@ export async function deleteCategoryRow(
   }
 
   return { ...decision, category };
+}
+
+export type CategoryUpdateResult =
+  | { ok: true; category: BudgetCategory }
+  | { ok: false; status: number; error: string };
+
+export async function updateCategoryRow(
+  supabase: CategoryClient,
+  input: { familyId: string; categoryId: string; patch: CategoryPatchInput }
+): Promise<CategoryUpdateResult> {
+  if (!isCategoryId(input.categoryId)) {
+    return { ok: false, status: 400, error: "Nieprawidłowe id koperty" };
+  }
+
+  const patch = buildCategoryPatch(input.patch);
+  if (patch.name !== undefined && !patch.name) {
+    return { ok: false, status: 400, error: "Podaj nazwę koperty" };
+  }
+  if (patch.group_name !== undefined && !patch.group_name) {
+    return { ok: false, status: 400, error: "Wybierz grupę" };
+  }
+  if (!Object.keys(patch).length) {
+    return { ok: false, status: 400, error: "Brak zmian" };
+  }
+
+  const loaded = await supabase
+    .from("budget_categories")
+    .select("id, family_id, group_name, name, icon, color, sort_order, kind")
+    .eq("id", input.categoryId)
+    .eq("family_id", input.familyId)
+    .maybeSingle();
+
+  if (loaded.error) {
+    return { ok: false, status: 500, error: loaded.error.message };
+  }
+
+  const current = (loaded.data as BudgetCategory | null) ?? null;
+  if (!current) {
+    return { ok: false, status: 404, error: "Nie znaleziono koperty" };
+  }
+
+  const payload: Record<string, unknown> = { ...patch };
+  if (patch.group_name && patch.group_name !== current.group_name && patch.sort_order === undefined) {
+    const siblings = await supabase
+      .from("budget_categories")
+      .select("sort_order")
+      .eq("family_id", input.familyId)
+      .eq("group_name", patch.group_name);
+    if (siblings.error) {
+      return { ok: false, status: 500, error: siblings.error.message };
+    }
+    const max = ((siblings.data ?? []) as Array<{ sort_order?: number }>).reduce(
+      (highest, row) => Math.max(highest, Number(row.sort_order) || 0),
+      0
+    );
+    payload.sort_order = max + 10;
+  }
+
+  const updated = await updateRowWithSchemaRepair(
+    async (row) =>
+      supabase
+        .from("budget_categories")
+        .update(row)
+        .eq("id", input.categoryId)
+        .eq("family_id", input.familyId)
+        .select()
+        .single(),
+    payload,
+    ["kind"]
+  );
+
+  if (!updated.data) {
+    return { ok: false, status: 500, error: updated.error ?? "Nie udało się zapisać koperty" };
+  }
+
+  return { ok: true, category: updated.data as BudgetCategory };
+}
+
+export type CategoryReorderResult =
+  | { ok: true; updates: Array<{ id: string; group_name: string; sort_order: number }> }
+  | { ok: false; status: number; error: string };
+
+export async function reorderCategoryRows(
+  supabase: CategoryClient,
+  input: { familyId: string; groups: Array<{ name: string; ids: string[] }> }
+): Promise<CategoryReorderResult> {
+  const loaded = await supabase.from("budget_categories").select("id").eq("family_id", input.familyId);
+  if (loaded.error) {
+    return { ok: false, status: 500, error: loaded.error.message };
+  }
+
+  const ownedIds = ((loaded.data ?? []) as Array<{ id: string }>).map((row) => row.id);
+  const plan = planCategoryReorder(ownedIds, input.groups);
+  if (!plan.ok) return plan;
+
+  for (const row of plan.updates) {
+    const updated = await supabase
+      .from("budget_categories")
+      .update({ group_name: row.group_name, sort_order: row.sort_order })
+      .eq("id", row.id)
+      .eq("family_id", input.familyId);
+    if (updated.error) {
+      return { ok: false, status: 500, error: updated.error.message };
+    }
+  }
+
+  return { ok: true, updates: plan.updates };
 }

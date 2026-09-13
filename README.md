@@ -108,9 +108,11 @@ Tylko zalogowany członek gospodarstwa (to samo auth + `family_id` co reszta API
 
 Konta z listy **Konta** to konta gospodarstwa (RLS). Kosz jest przy każdym z nich; UI zawsze pyta o potwierdzenie i przy konflikcie 409 ponawia z `force`.
 
-### Koperty / kategorie (`GET|POST /api/categories`, `DELETE /api/categories/[id]`)
+### Koperty / kategorie (`GET|POST /api/categories`, `PATCH /api/categories/[id]`, `PATCH /api/categories/reorder`, `DELETE /api/categories/[id]`)
 
 Ustawienia → **Koperty (kategorie)**. Grupa przy tworzeniu jest **wybierana z już istniejących** (select), albo **Utwórz nową grupę** — bez wolnego pola, które mnoży literówki. Każda koperta wydatków pokazuje statystyki **bieżącego miesiąca** (przydzielone / aktywność / dostępne) z `GET /api/budget/{year}/{month}` (ten sam silnik `budget-read`), nie z placeholderów.
+
+Kolejność (w grupie i między grupami) zapisuje `sort_order`. Emoji siedzi w istniejącym polu `icon` (domyślnie 📁). **Edytuj** (ołówek albo klik wiersza) zmienia nazwę, grupę, rodzaj i ikonę (`PATCH /api/categories/[id]`). Przeciągnięcie albo strzałki woła `PATCH /api/categories/reorder` z `{ groups: [{ name, ids }] }`. Ta sama ikona widać na liście w Ustawieniach i na kopertach budżetu.
 
 | Stan | Zachowanie |
 | --- | --- |

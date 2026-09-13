@@ -25,6 +25,8 @@ type EnvelopeGroupPickerProps = {
   value: string;
   onChange: (group: string) => void;
   onGroupsChange?: (groups: string[]) => void;
+  id?: string;
+  label?: string;
 };
 
 export function EnvelopeGroupPicker({
@@ -32,6 +34,8 @@ export function EnvelopeGroupPicker({
   value,
   onChange,
   onGroupsChange,
+  id = "envelope-group",
+  label = "Grupa",
 }: EnvelopeGroupPickerProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [draft, setDraft] = useState("");
@@ -48,9 +52,9 @@ export function EnvelopeGroupPicker({
 
   return (
     <div className="space-y-2">
-      <Label htmlFor="envelope-group">Grupa</Label>
+      <Label htmlFor={id}>{label}</Label>
       <Select value={value || undefined} onValueChange={onChange}>
-        <SelectTrigger id="envelope-group" className="w-full">
+        <SelectTrigger id={id} className="w-full">
           <SelectValue placeholder="Wybierz grupę" />
         </SelectTrigger>
         <SelectContent>
