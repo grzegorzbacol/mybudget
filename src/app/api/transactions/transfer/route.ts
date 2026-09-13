@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
-import { insertRowsWithSchemaRepair } from "@/lib/schema-write";
+import { buildTransferLegs, insertTransferPair } from "@/lib/transfer-write";
 import { transferSchema } from "@/lib/validators";
 
 export async function POST(request: Request) {
@@ -40,42 +40,22 @@ export async function POST(request: Request) {
     );
   }
 
-  const transferId = crypto.randomUUID();
-  const abs = Math.abs(amount);
-
-  const created = await insertRowsWithSchemaRepair(
+  const created = await insertTransferPair(
     async (rows) => ctx.supabase.from("transactions").insert(rows).select(),
-    [
-      {
-        family_id: ctx.family.id,
-        account_id: from_account_id,
-        transfer_account_id: to_account_id,
-        transfer_id: transferId,
-        category_id: involvesTracking ? category_id : null,
-        amount: -abs,
-        payee: `Transfer → ${to.name}`,
-        memo: memo ?? "",
-        date,
-        cleared: cleared ?? false,
-        source: "manual",
-        added_by: ctx.user.id,
-      },
-      {
-        family_id: ctx.family.id,
-        account_id: to_account_id,
-        transfer_account_id: from_account_id,
-        transfer_id: transferId,
-        category_id: null,
-        amount: abs,
-        payee: `Transfer ← ${from.name}`,
-        memo: memo ?? "",
-        date,
-        cleared: cleared ?? false,
-        source: "manual",
-        added_by: ctx.user.id,
-      },
-    ],
-    ["transfer_account_id", "transfer_id", "scheduled_id"]
+    buildTransferLegs({
+      familyId: ctx.family.id,
+      userId: ctx.user.id,
+      fromAccountId: from_account_id,
+      toAccountId: to_account_id,
+      fromName: from.name,
+      toName: to.name,
+      amount,
+      date,
+      memo,
+      cleared,
+      categoryId: category_id,
+      involvesTracking,
+    })
   );
 
   if (!created.data) {

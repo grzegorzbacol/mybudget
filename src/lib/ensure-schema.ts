@@ -1,5 +1,5 @@
 import { Client } from "pg";
-import { ENSURE_SCHEMA_STATEMENTS, resolveDatabaseUrl } from "./schema";
+import { ENSURE_SCHEMA_STATEMENTS, TRANSFER_SCHEMA_STATEMENTS, resolveDatabaseUrl } from "./schema";
 
 export type EnsureSchemaResult = {
   ok: boolean;
@@ -21,11 +21,16 @@ export const ENSURE_SCHEMA_READ_WAIT_MS = 800;
 let lastSuccessAt = 0;
 let inFlight: Promise<EnsureSchemaResult> | null = null;
 let runStatements: EnsureSchemaRunner = runEnsureSchemaUncached;
+let runTransferStatements: EnsureSchemaRunner = runTransferSchemaUncached;
 
-export function resetEnsureSchemaState(runner?: EnsureSchemaRunner) {
+export function resetEnsureSchemaState(
+  runner?: EnsureSchemaRunner,
+  transferRunner?: EnsureSchemaRunner
+) {
   lastSuccessAt = 0;
   inFlight = null;
   runStatements = runner ?? runEnsureSchemaUncached;
+  runTransferStatements = transferRunner ?? runTransferSchemaUncached;
 }
 
 export function markEnsureSchemaApplied(at = Date.now()) {
@@ -36,8 +41,10 @@ export function wasEnsureSchemaRecentlyApplied(now = Date.now()): boolean {
   return lastSuccessAt > 0 && now - lastSuccessAt < ENSURE_SCHEMA_TTL_MS;
 }
 
-async function runEnsureSchemaUncached(
-  env: NodeJS.ProcessEnv | Record<string, string | undefined>
+async function runSqlStatements(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>,
+  statements: readonly string[],
+  label = "ensure-schema"
 ): Promise<EnsureSchemaResult> {
   const databaseUrl = resolveDatabaseUrl(env);
   if (!databaseUrl) {
@@ -49,13 +56,13 @@ async function runEnsureSchemaUncached(
   const errors: string[] = [];
   try {
     await client.connect();
-    for (const sql of ENSURE_SCHEMA_STATEMENTS) {
+    for (const sql of statements) {
       try {
         await client.query(sql);
         applied += 1;
       } catch (error) {
-        const message = error instanceof Error ? error.message : "ensure-schema statement failed";
-        console.error("[ensure-schema]", message);
+        const message = error instanceof Error ? error.message : `${label} statement failed`;
+        console.error(`[${label}]`, message);
         errors.push(message);
       }
     }
@@ -64,12 +71,39 @@ async function runEnsureSchemaUncached(
     }
     return { ok: errors.length === 0, applied, error: errors.length ? errors.join(" | ") : undefined };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "ensure-schema failed";
-    console.error("[ensure-schema]", message);
+    const message = error instanceof Error ? error.message : `${label} failed`;
+    console.error(`[${label}]`, message);
     return { ok: false, applied, error: message };
   } finally {
     await client.end().catch(() => undefined);
   }
+}
+
+async function runEnsureSchemaUncached(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>
+): Promise<EnsureSchemaResult> {
+  return runSqlStatements(env, ENSURE_SCHEMA_STATEMENTS);
+}
+
+async function runTransferSchemaUncached(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined>
+): Promise<EnsureSchemaResult> {
+  return runSqlStatements(env, TRANSFER_SCHEMA_STATEMENTS, "transfer-schema");
+}
+
+/**
+ * Always ADD transfer_* columns and NOTIFY pgrst. Must not use the 10-minute
+ * ensure-schema TTL — boot / budget reads can mark that cache hot while
+ * PostgREST still lacks transfer_id.
+ */
+export async function applyTransferSchemaRepair(
+  env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env
+): Promise<EnsureSchemaResult> {
+  const result = await runTransferStatements(env);
+  if (result.ok) {
+    lastSuccessAt = Date.now();
+  }
+  return result;
 }
 
 export async function applyEnsureSchema(

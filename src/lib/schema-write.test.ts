@@ -85,6 +85,33 @@ describe("insertRowsWithSchemaRepair", () => {
     expect(result.warning).toContain("paid_by");
     expect(batches.at(-1)?.every((row) => !("paid_by" in row))).toBe(true);
   });
+
+  it("forces ensure-schema on a schema-cache miss so a hot TTL cannot skip NOTIFY", async () => {
+    vi.resetModules();
+    const applyEnsureSchema = vi.fn().mockResolvedValue({ ok: true, applied: 2 });
+    vi.doMock("./ensure-schema", () => ({ applyEnsureSchema }));
+    const { insertRowsWithSchemaRepair: insert } = await import("./schema-write");
+
+    let attempts = 0;
+    const result = await insert(
+      async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return {
+            data: null,
+            error: { message: "Could not find the 'paid_by' column of 'transactions' in the schema cache" },
+          };
+        }
+        return { data: [{ id: "t1" }], error: null };
+      },
+      [{ payee: "A", paid_by: "u1" }],
+      ["paid_by"]
+    );
+
+    expect(applyEnsureSchema).toHaveBeenCalledWith(process.env, { force: true });
+    expect(attempts).toBe(2);
+    expect(result.data).toEqual([{ id: "t1" }]);
+  });
 });
 
 describe("isGoalTypeCheckError", () => {
