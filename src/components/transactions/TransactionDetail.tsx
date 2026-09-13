@@ -32,6 +32,7 @@ import {
 } from "@/lib/transaction-detail";
 import { useDeleteTransaction, useUpdateTransaction } from "@/hooks/use-transactions";
 import { TransactionForm } from "./TransactionForm";
+import { AiCategoryPanel } from "./AiCategoryPanel";
 import { ReceiptPhoto } from "@/components/ReceiptPhoto";
 import { useFamily, useFamilyMembers } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
@@ -238,6 +239,16 @@ function TransactionDetailBody({
                 ))}
               </SelectContent>
             </Select>
+            <AiCategoryPanel
+              payee={transaction.payee}
+              memo={transaction.memo}
+              amount={Math.abs(transaction.amount)}
+              disabled={updateTx.isPending}
+              announce={false}
+              onAssign={(categoryId) =>
+                updateTx.mutateAsync({ id: transaction.id, category_id: categoryId })
+              }
+            />
           </div>
         ) : null}
         {transaction.account && (
