@@ -16,7 +16,7 @@ import { CategoryIcon } from "@/components/envelopes/CategoryIcon";
 import { EnvelopeGroupPicker } from "@/components/envelopes/EnvelopeGroupPicker";
 import { useAllocateMany, useBudget } from "@/hooks/use-budget";
 import { formatCurrency, getMonthLabel } from "@/lib/format";
-import { envelopeRowsFromBudget, planFillEnvelopeGaps } from "@/lib/budget";
+import { envelopeRowsFromBudget, planFillEnvelopeGaps, readyToAssignWarning } from "@/lib/budget";
 import { DEFAULT_CATEGORY_ICON, uniqueGroupNames } from "@/lib/categories";
 import { cn } from "@/lib/utils";
 import { CategoryPanel } from "./CategoryPanel";
@@ -86,6 +86,10 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
   const selectedGroup = groupName || groupOptions[0] || "";
   const readyToAssign = Number(data?.readyToAssign) || 0;
   const rtaPositive = readyToAssign >= 0;
+  const rtaWarning = readyToAssignWarning({
+    readyToAssign,
+    assignedThisMonth: data?.totalAllocated ?? 0,
+  });
   const gapPlan = planFillEnvelopeGaps(allRows, readyToAssign);
   const gapTotal = gapPlan.reduce((sum, row) => sum + row.add, 0);
   const selectedRow = selected
@@ -144,10 +148,8 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             </Button>
           </div>
         )}
-        {!rtaPositive && data && (
-          <p className="mt-3 text-sm text-red-600 dark:text-red-400">
-            Przydzieliłeś więcej, niż masz. Cofnij przydział albo przenieś środki z kategorii.
-          </p>
+        {rtaWarning && (
+          <p className="mt-3 text-sm text-red-600 dark:text-red-400">{rtaWarning}</p>
         )}
         {rtaPositive && readyToAssign > 0 && (
           <p className="mt-3 text-sm text-muted-foreground">

@@ -23,6 +23,10 @@ export function isOnBudget(account: Account): boolean {
 /** Matches wealth ACCOUNT_TYPE_META liability kinds without importing wealth (cycle). */
 const LIABILITY_ACCOUNT_TYPES = new Set(["credit", "loan", "mortgage", "other_liability"]);
 
+export function isLiabilityAccountType(type?: string | null): boolean {
+  return LIABILITY_ACCOUNT_TYPES.has(String(type ?? ""));
+}
+
 /**
  * Liability balances are stored negative. A positive credit/loan entry is still debt
  * so "Saldo w budżecie" matches Majątek / Wartość netto.
@@ -212,6 +216,15 @@ export function onBudgetBalance(accounts: Account[]): number {
   );
 }
 
+/** Cash/savings only — credit cards and loans are on-budget for Saldo, not for RTA. */
+export function onBudgetCashBalance(accounts: Account[]): number {
+  return money(
+    accounts
+      .filter((account) => isOnBudget(account) && !isLiabilityAccountType(account.type))
+      .reduce((sum, account) => sum + signedAccountBalance(account), 0)
+  );
+}
+
 function allocationLookup(allocations: BudgetAllocation[]) {
   const map = new Map<string, BudgetAllocation>();
   for (const allocation of allocations ?? []) {
@@ -245,10 +258,22 @@ export function computeCategoryMonth(input: {
 
 /**
  * YNAB Ready to Assign: on-budget cash minus money sitting in expense envelopes.
- * Income categories are excluded so inflows categorized as "Przychody" still count as unassigned.
+ * Do not pass credit-card / loan balances — starting debt is not "assigned too much".
  */
-export function computeReadyToAssign(onBudget: number, expenseAvailable: number): number {
-  return money(onBudget - expenseAvailable);
+export function computeReadyToAssign(onBudgetCash: number, expenseAvailable: number): number {
+  return money(onBudgetCash - expenseAvailable);
+}
+
+/** Header copy when Do rozdzielenia is red. Assigned=0 must not blame this month's przydział. */
+export function readyToAssignWarning(input: {
+  readyToAssign: number;
+  assignedThisMonth: number;
+}): string | null {
+  if (input.readyToAssign >= -0.005) return null;
+  if (Math.abs(input.assignedThisMonth) <= 0.005) {
+    return "W tym miesiącu nic nie przydzieliłeś. Minus to zaległości z kopert albo saldo kont z poprzednich miesięcy — nie bieżący przydział.";
+  }
+  return "Przydzieliłeś więcej, niż masz. Cofnij przydział albo przenieś środki z kategorii.";
 }
 
 function zeroCategoryRow(
@@ -520,11 +545,12 @@ export function assembleBudgetMonthData(input: {
   const totalActivity = money(groups.reduce((sum, group) => sum + group.activity, 0));
   const totalAvailable = money(groups.reduce((sum, group) => sum + group.available, 0));
   const balance = onBudgetBalance(accounts);
+  const cash = onBudgetCashBalance(accounts);
 
   return {
     year: safeYear,
     month: safeMonth,
-    readyToAssign: computeReadyToAssign(balance, totalAvailable),
+    readyToAssign: computeReadyToAssign(cash, totalAvailable),
     incomeThisMonth: money(input.incomeThisMonth),
     totalAllocated,
     totalMoved,
@@ -610,9 +636,9 @@ export function groupCategoriesByGroup(
   return buildBudgetMonthData(0, 1, categories, allocations, []).groups;
 }
 
-/** @deprecated Ready to Assign is on-budget balance minus envelope available. */
+/** @deprecated Ready to Assign is on-budget cash minus envelope available. */
 export function calculateReadyToAssign(accounts: Account[], allocations: BudgetAllocation[]): number {
-  const totalBalance = onBudgetBalance(accounts);
+  const totalCash = onBudgetCashBalance(accounts);
   const totalAvailable = allocations.reduce((sum, allocation) => sum + Number(allocation.available), 0);
-  return computeReadyToAssign(totalBalance, totalAvailable);
+  return computeReadyToAssign(totalCash, totalAvailable);
 }
