@@ -213,9 +213,10 @@ export function EnvelopesSettings() {
               }}
             >
               <div className="flex items-center gap-1 bg-muted/40 px-2 py-2">
-                <button
-                  type="button"
+                <div
                   className="flex h-8 w-8 shrink-0 cursor-grab items-center justify-center text-muted-foreground active:cursor-grabbing"
+                  role="button"
+                  tabIndex={0}
                   aria-label={`Przeciągnij grupę ${group.name}`}
                   draggable
                   onDragStart={() => setDragging({ type: "group", id: group.name })}
@@ -225,7 +226,7 @@ export function EnvelopesSettings() {
                   }}
                 >
                   <GripVertical className="h-4 w-4" aria-hidden />
-                </button>
+                </div>
                 <div className="min-w-0 flex-1 text-sm font-semibold">{group.name}</div>
                 <Button
                   type="button"
@@ -282,9 +283,10 @@ export function EnvelopesSettings() {
                       }}
                     >
                       <div className="flex items-start gap-1">
-                        <button
-                          type="button"
+                        <div
                           className="mt-1 flex h-8 w-8 shrink-0 cursor-grab items-center justify-center text-muted-foreground active:cursor-grabbing"
+                          role="button"
+                          tabIndex={0}
                           aria-label={`Przeciągnij kopertę ${category.name}`}
                           draggable
                           onDragStart={() => setDragging({ type: "category", id: category.id })}
@@ -294,7 +296,7 @@ export function EnvelopesSettings() {
                           }}
                         >
                           <GripVertical className="h-4 w-4" aria-hidden />
-                        </button>
+                        </div>
                         <button
                           type="button"
                           className="min-w-0 flex-1 rounded-md px-1 text-left hover:bg-muted/40"
