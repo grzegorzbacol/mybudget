@@ -56,6 +56,25 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
       fi
     fi
 
+    # 010 is skipped once marked applied. Always ADD transfer_* + NOTIFY on the
+    # same DATABASE_URL PostgREST uses — otherwise Edit → Zapisz transfer 500s.
+    echo "Ensuring transfer columns + PostgREST schema reload..."
+    if [ -f /app/scripts/ensure-transfer-columns.sql ]; then
+      if psql "$dburl" -v ON_ERROR_STOP=0 -f /app/scripts/ensure-transfer-columns.sql; then
+        echo "NOTIFY pgrst, 'reload schema' sent on DATABASE_URL (must match PostgREST)."
+      else
+        echo "WARNING: ensure-transfer-columns.sql failed. DATABASE_URL may not be the PostgREST database."
+      fi
+    else
+      psql "$dburl" -v ON_ERROR_STOP=0 -c "
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_account_id uuid;
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS transfer_id uuid;
+CREATE INDEX IF NOT EXISTS idx_transactions_transfer ON transactions(transfer_id);
+NOTIFY pgrst, 'reload schema';
+"
+      echo "NOTIFY pgrst, 'reload schema' sent on DATABASE_URL (must match PostgREST)."
+    fi
+
     for spec in \
       "transactions.transfer_account_id" \
       "transactions.transfer_id" \

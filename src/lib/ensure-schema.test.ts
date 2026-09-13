@@ -65,6 +65,12 @@ describe("applyEnsureSchema cache", () => {
     expect(transferRuns).toBe(1);
   });
 
+  it("does not treat a transfer-column repair as a full ensure-schema success", async () => {
+    resetEnsureSchemaState(undefined, async () => ({ ok: true, applied: 4 }));
+    await applyTransferSchemaRepair();
+    expect(wasEnsureSchemaRecentlyApplied()).toBe(false);
+  });
+
   it("transfer-column repair reports a missing DATABASE_URL instead of using the TTL", async () => {
     resetEnsureSchemaState();
     markEnsureSchemaApplied();

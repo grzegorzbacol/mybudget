@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
-import { buildTransferLegs, insertTransferPair } from "@/lib/transfer-write";
+import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { buildTransferLegs, insertTransferPair, updateTransferRow } from "@/lib/transfer-write";
 import { transferSchema } from "@/lib/validators";
 
 export async function POST(request: Request) {
@@ -15,7 +16,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { from_account_id, to_account_id, amount, date, memo, cleared, category_id } = parsed.data;
+  const {
+    from_account_id,
+    to_account_id,
+    amount,
+    date,
+    memo,
+    cleared,
+    category_id,
+    replace_transaction_id,
+  } = parsed.data;
   if (from_account_id === to_account_id) {
     return NextResponse.json({ error: "Wybierz dwa różne konta" }, { status: 400 });
   }
@@ -40,27 +50,107 @@ export async function POST(request: Request) {
     );
   }
 
+  const legs = buildTransferLegs({
+    familyId: ctx.family.id,
+    userId: ctx.user.id,
+    fromAccountId: from_account_id,
+    toAccountId: to_account_id,
+    fromName: from.name,
+    toName: to.name,
+    amount,
+    date,
+    memo,
+    cleared,
+    categoryId: category_id,
+    involvesTracking,
+  });
+
+  if (replace_transaction_id) {
+    const existing = await ctx.supabase
+      .from("transactions")
+      .select("id, transfer_id")
+      .eq("id", replace_transaction_id)
+      .eq("family_id", ctx.family.id)
+      .maybeSingle();
+
+    if (!existing.data) {
+      const fallback = await ctx.supabase
+        .from("transactions")
+        .select("id")
+        .eq("id", replace_transaction_id)
+        .eq("family_id", ctx.family.id)
+        .maybeSingle();
+      if (!fallback.data) {
+        return NextResponse.json({ error: "Nie znaleziono transakcji" }, { status: 404 });
+      }
+    }
+
+    const existingTransferId =
+      existing.data && "transfer_id" in existing.data
+        ? ((existing.data as { transfer_id?: string | null }).transfer_id ?? null)
+        : null;
+    const outgoing = {
+      ...legs[0],
+      transfer_id: existingTransferId ?? legs[0].transfer_id,
+    };
+    const incoming = {
+      ...legs[1],
+      transfer_id: outgoing.transfer_id,
+    };
+    const updated = await updateTransferRow(
+      async (row) =>
+        ctx.supabase
+          .from("transactions")
+          .update(row)
+          .eq("id", replace_transaction_id)
+          .eq("family_id", ctx.family.id)
+          .select()
+          .maybeSingle(),
+      outgoing,
+      { id: replace_transaction_id, familyId: ctx.family.id }
+    );
+    if (!updated.data) {
+      return NextResponse.json({ error: updated.error }, { status: 500 });
+    }
+
+    if (existingTransferId) {
+      await updateTransferRow(
+        async (row) =>
+          ctx.supabase
+            .from("transactions")
+            .update(row)
+            .eq("transfer_id", existingTransferId)
+            .neq("id", replace_transaction_id)
+            .eq("family_id", ctx.family.id)
+            .select()
+            .maybeSingle(),
+        incoming
+      );
+      invalidateFamilyBudgetCache(ctx.family.id);
+      return NextResponse.json([updated.data]);
+    }
+
+    const created = await insertTransferPair(
+      async (rows) => ctx.supabase.from("transactions").insert(rows).select(),
+      [incoming]
+    );
+    if (!created.data) {
+      return NextResponse.json({ error: created.error }, { status: 500 });
+    }
+
+    invalidateFamilyBudgetCache(ctx.family.id);
+    return NextResponse.json([updated.data, ...created.data]);
+  }
+
   const created = await insertTransferPair(
     async (rows) => ctx.supabase.from("transactions").insert(rows).select(),
-    buildTransferLegs({
-      familyId: ctx.family.id,
-      userId: ctx.user.id,
-      fromAccountId: from_account_id,
-      toAccountId: to_account_id,
-      fromName: from.name,
-      toName: to.name,
-      amount,
-      date,
-      memo,
-      cleared,
-      categoryId: category_id,
-      involvesTracking,
-    })
+    legs
   );
 
   if (!created.data) {
     return NextResponse.json({ error: created.error }, { status: 500 });
   }
 
+  invalidateFamilyBudgetCache(ctx.family.id);
   return NextResponse.json(created.data);
 }
