@@ -52,6 +52,7 @@ const FREQ_LABEL: Record<ScheduledTransaction["frequency"], string> = {
   biweekly: "Co 2 tygodnie",
   monthly: "Co miesiąc",
   yearly: "Co rok",
+  custom: "Własna",
 };
 
 function rulePayload(
@@ -223,7 +224,13 @@ export default function CashflowPage() {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold">Przepływy</h1>
-          <p className="text-sm text-muted-foreground">Cashflow · wpływy vs wydatki, plan vs fakt, kiedy ciasno</p>
+          <p className="text-sm text-muted-foreground">
+            Cashflow · wpływy vs wydatki, plan vs fakt, kiedy ciasno. Rachunki dzień po dniu:{" "}
+            <Link href="/payments" className="underline">
+              Płatności
+            </Link>
+            .
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Select value={String(days)} onValueChange={(v) => setDays(parseInt(v, 10))}>
@@ -520,8 +527,11 @@ export default function CashflowPage() {
           </Card>
 
           <Card>
-            <CardHeader>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0">
               <CardTitle className="text-base">Szablony cykliczne</CardTitle>
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/payments">Otwórz Płatności</Link>
+              </Button>
             </CardHeader>
             <CardContent className="space-y-2">
               {(data.scheduled ?? []).length === 0 && (
@@ -616,7 +626,9 @@ export default function CashflowPage() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {Object.entries(FREQ_LABEL).map(([value, label]) => (
+                    {Object.entries(FREQ_LABEL)
+                      .filter(([value]) => value !== "custom")
+                      .map(([value, label]) => (
                       <SelectItem key={value} value={value}>
                         {label}
                       </SelectItem>

@@ -35,6 +35,12 @@ describe("scheduled cashflow", () => {
     expect(nextScheduleDate("2026-09-05", "once")).toBeNull();
   });
 
+  it("generates custom interval occurrences", () => {
+    const weeklyish: ScheduledTransaction = { ...rent, frequency: "custom", interval_days: 10, next_date: "2026-09-01" };
+    const items = generateScheduleOccurrences([weeklyish], "2026-09-01", "2026-09-25");
+    expect(items.map((i) => i.date)).toEqual(["2026-09-01", "2026-09-11", "2026-09-21"]);
+  });
+
   it("generates occurrences inside the horizon", () => {
     const items = generateScheduleOccurrences([rent, payday], "2026-09-01", "2026-10-31");
     expect(items.map((i) => `${i.date}:${i.payee}`)).toEqual([

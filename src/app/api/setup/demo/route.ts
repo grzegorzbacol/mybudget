@@ -173,6 +173,17 @@ export async function POST() {
       frequency: "monthly",
       enabled: true,
     },
+    {
+      family_id: ctx.family.id,
+      account_id: checking.id,
+      category_id: rent?.id ?? null,
+      amount: -45,
+      payee: "Netflix",
+      memo: "Przykładowa subskrypcja",
+      next_date: `${ym}-08`,
+      frequency: "monthly",
+      enabled: true,
+    },
   ]);
 
   if (emergency) {

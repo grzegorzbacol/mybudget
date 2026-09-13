@@ -111,10 +111,23 @@ export const scheduledSchema = z.object({
   payee: z.string().min(1),
   memo: z.string().optional(),
   next_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  frequency: z.enum(["once", "weekly", "biweekly", "monthly", "yearly"]),
+  frequency: z.enum(["once", "weekly", "biweekly", "monthly", "yearly", "custom"]),
+  interval_days: z.number().int().positive().max(3650).nullable().optional(),
   end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   auto_enter: z.boolean().optional(),
   enabled: z.boolean().optional(),
+});
+
+export const paymentPaySchema = z.object({
+  scheduled_id: z.string().uuid(),
+  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  create_transaction: z.boolean().optional(),
+});
+
+export const paymentUnpaySchema = z.object({
+  scheduled_id: z.string().uuid(),
+  due_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  delete_transaction: z.boolean().optional(),
 });
 
 export const categorySchema = z.object({
@@ -160,3 +173,5 @@ export type AllocateInput = z.infer<typeof allocateSchema>;
 export type MoveMoneyInput = z.infer<typeof moveMoneySchema>;
 export type TransferInput = z.infer<typeof transferSchema>;
 export type ScheduledInput = z.infer<typeof scheduledSchema>;
+export type PaymentPayInput = z.infer<typeof paymentPaySchema>;
+export type PaymentUnpayInput = z.infer<typeof paymentUnpaySchema>;

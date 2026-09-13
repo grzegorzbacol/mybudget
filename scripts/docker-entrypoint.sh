@@ -122,6 +122,11 @@ NOTIFY pgrst, 'reload schema';
       echo "WARNING: public.scheduled_transactions is still missing. DATABASE_URL may point at the wrong database."
     fi
 
+    occurrences=$(psql "$dburl" -tAc "SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='scheduled_occurrences'" 2>/dev/null | tr -d ' ')
+    if [ "$occurrences" != "1" ]; then
+      echo "WARNING: public.scheduled_occurrences is still missing. Redeploy so 013_scheduled_occurrences.sql / ensure-schema can create it (new table, migrating role is owner)."
+    fi
+
     onbudget=$(psql "$dburl" -tAc "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='accounts' AND column_name='on_budget'" 2>/dev/null | tr -d ' ')
     if [ "$onbudget" != "1" ]; then
       echo "WARNING: accounts.on_budget is still missing. DATABASE_URL may point at the wrong database."

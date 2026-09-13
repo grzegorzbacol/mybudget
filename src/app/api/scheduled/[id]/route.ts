@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
+import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { markScheduledPaid } from "@/lib/payments-write";
 import { scheduledSchema } from "@/lib/validators";
-import { nextScheduleDate } from "@/lib/cashflow";
 
 export async function PATCH(
   request: Request,
@@ -17,6 +18,10 @@ export async function PATCH(
   const parsed = scheduledSchema.partial().safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  if (parsed.data.frequency === "custom" && !(parsed.data.interval_days ?? 0)) {
+    return NextResponse.json({ error: "Podaj liczbę dni dla własnej cykliczności" }, { status: 400 });
   }
 
   const { data, error } = await ctx.supabase
@@ -67,87 +72,16 @@ export async function POST(
   }
 
   const { id } = await params;
-  const { data: rule, error: loadError } = await ctx.supabase
-    .from("scheduled_transactions")
-    .select("*")
-    .eq("id", id)
-    .eq("family_id", ctx.family.id)
-    .single();
-
-  if (loadError || !rule) {
-    return NextResponse.json({ error: "Nie znaleziono zaplanowanej transakcji" }, { status: 404 });
+  const result = await markScheduledPaid({
+    supabase: ctx.supabase,
+    familyId: ctx.family.id,
+    userId: ctx.user.id,
+    scheduledId: id,
+    createTransaction: true,
+  });
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: result.status });
   }
-
-  const isTransfer = Boolean(rule.transfer_account_id);
-  if (isTransfer) {
-    const transferId = crypto.randomUUID();
-    const abs = Math.abs(Number(rule.amount));
-    const { error: txError } = await ctx.supabase.from("transactions").insert([
-      {
-        family_id: ctx.family.id,
-        account_id: rule.account_id,
-        transfer_account_id: rule.transfer_account_id,
-        transfer_id: transferId,
-        scheduled_id: rule.id,
-        category_id: rule.category_id,
-        amount: -abs,
-        payee: rule.payee,
-        memo: rule.memo ?? "",
-        date: rule.next_date,
-        source: "manual",
-        added_by: ctx.user.id,
-      },
-      {
-        family_id: ctx.family.id,
-        account_id: rule.transfer_account_id,
-        transfer_account_id: rule.account_id,
-        transfer_id: transferId,
-        scheduled_id: rule.id,
-        category_id: null,
-        amount: abs,
-        payee: rule.payee,
-        memo: rule.memo ?? "",
-        date: rule.next_date,
-        source: "manual",
-        added_by: ctx.user.id,
-      },
-    ]);
-    if (txError) {
-      return NextResponse.json({ error: txError.message }, { status: 500 });
-    }
-  } else {
-    const { error: txError } = await ctx.supabase.from("transactions").insert({
-      family_id: ctx.family.id,
-      account_id: rule.account_id,
-      category_id: Number(rule.amount) > 0 ? null : rule.category_id,
-      scheduled_id: rule.id,
-      amount: Number(rule.amount),
-      payee: rule.payee,
-      memo: rule.memo ?? "",
-      date: rule.next_date,
-      source: "manual",
-      added_by: ctx.user.id,
-    });
-    if (txError) {
-      return NextResponse.json({ error: txError.message }, { status: 500 });
-    }
-  }
-
-  const next = nextScheduleDate(rule.next_date, rule.frequency);
-  const { data: updated, error: updateError } = await ctx.supabase
-    .from("scheduled_transactions")
-    .update(
-      next
-        ? { next_date: next }
-        : { enabled: false }
-    )
-    .eq("id", rule.id)
-    .select()
-    .single();
-
-  if (updateError) {
-    return NextResponse.json({ error: updateError.message }, { status: 500 });
-  }
-
-  return NextResponse.json(updated);
+  invalidateFamilyBudgetCache(ctx.family.id);
+  return NextResponse.json(result.rule);
 }

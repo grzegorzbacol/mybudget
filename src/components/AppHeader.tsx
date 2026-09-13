@@ -12,6 +12,7 @@ const navItems = [
   { href: "/budget", label: "Budżet" },
   { href: "/transactions", label: "Transakcje" },
   { href: "/cashflow", label: "Przepływy" },
+  { href: "/payments", label: "Płatności" },
   { href: "/wealth", label: "Majątek" },
   { href: "/accounts", label: "Konta" },
   { href: "/savings", label: "Oszczędności" },

@@ -14,7 +14,8 @@ export type AccountType =
 export type TransactionSource = "manual" | "ocr" | "import";
 export type GoalType = "target_balance" | "monthly_contribution" | "pay_off" | "emergency_fund";
 export type CategoryKind = "expense" | "income";
-export type ScheduleFrequency = "once" | "weekly" | "biweekly" | "monthly" | "yearly";
+export type ScheduleFrequency = "once" | "weekly" | "biweekly" | "monthly" | "yearly" | "custom";
+export type PaymentStatus = "upcoming" | "paid" | "overdue";
 
 export interface Profile {
   id: string;
@@ -118,6 +119,7 @@ export interface ScheduledTransaction {
   memo: string;
   next_date: string;
   frequency: ScheduleFrequency;
+  interval_days?: number | null;
   end_date: string | null;
   auto_enter: boolean;
   enabled: boolean;
@@ -125,6 +127,60 @@ export interface ScheduledTransaction {
   account?: Account;
   transfer_account?: Account;
   category?: BudgetCategory;
+}
+
+export interface ScheduledOccurrence {
+  id: string;
+  family_id: string;
+  scheduled_id: string;
+  due_date: string;
+  status: "paid" | "skipped";
+  amount: number | null;
+  transaction_id: string | null;
+  paid_at: string | null;
+  created_at: string;
+}
+
+export interface PaymentItem {
+  id: string;
+  scheduledId: string;
+  occurrenceId: string | null;
+  transactionId: string | null;
+  payee: string;
+  amount: number;
+  dueDate: string;
+  status: PaymentStatus;
+  categoryId: string | null;
+  categoryName: string | null;
+  accountId: string;
+  accountName: string | null;
+  frequency: ScheduleFrequency;
+  intervalDays: number | null;
+  enabled: boolean;
+  canPay: boolean;
+  canUndo: boolean;
+  inferredPaid: boolean;
+}
+
+export interface PaymentSummary {
+  upcomingCount: number;
+  upcomingAmount: number;
+  overdueCount: number;
+  overdueAmount: number;
+  paidCount: number;
+  paidAmount: number;
+}
+
+export interface PaymentsBoard {
+  year: number;
+  month: number;
+  from: string;
+  to: string;
+  today: string;
+  summary: PaymentSummary;
+  items: PaymentItem[];
+  rules: ScheduledTransaction[];
+  warning?: string;
 }
 
 export interface Goal {
