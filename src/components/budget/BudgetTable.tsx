@@ -190,7 +190,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             <p className="font-medium">Pierwsza sesja</p>
             <ol className="mt-1 list-decimal space-y-1 pl-4 text-muted-foreground">
               <li>
-                Otwórz <a className="underline" href="/setup">kreator startu</a> i wpisz saldo na koncie (albo wczytaj dane przykładowe).
+                Otwórz <a className="underline" href="/setup">kreator startu</a> i wpisz saldo każdego konta (albo wczytaj dane przykładowe).
               </li>
               <li>Kwota trafia do <strong>Do rozdzielenia</strong> — przydziel ją do kopert, aż zostanie 0 zł.</li>
               <li>
