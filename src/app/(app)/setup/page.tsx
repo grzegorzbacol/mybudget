@@ -262,8 +262,7 @@ export default function SetupPage() {
                   {trackingAccounts.map(renderAccountField)}
                 </div>
               )}
-              {list.length > 0 && (
-                <div className="space-y-2 rounded-lg border border-dashed p-3">
+              <div className="space-y-2 rounded-lg border border-dashed p-3">
                   <p className="text-sm font-medium">Dodaj kolejne konto</p>
                   <div className="grid gap-2 sm:grid-cols-[1fr_10rem]">
                     <Input
@@ -289,7 +288,6 @@ export default function SetupPage() {
                     {adding ? "Dodawanie…" : "Dodaj konto"}
                   </Button>
                 </div>
-              )}
               <Button className="w-full" onClick={() => saveOpening.mutate()} disabled={saveOpening.isPending || isLoading}>
                 Zapisz i przejdź do budżetu
               </Button>
