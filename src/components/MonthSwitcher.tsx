@@ -44,7 +44,7 @@ export function MonthSwitcher({
         >
           <ChevronLeft className="h-5 w-5" />
         </Button>
-        <h2 className="text-lg font-semibold capitalize">
+        <h2 className={cn("text-lg font-semibold", !allMonths && "capitalize")}>
           {allMonths ? "Wszystkie miesiące" : getMonthLabel(year, month)}
         </h2>
         <Button variant="ghost" size="icon" onClick={() => goMonth(1)} aria-label="Następny miesiąc">
