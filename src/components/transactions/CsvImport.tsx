@@ -10,17 +10,26 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { decodeBankFileBytes } from "@/lib/csv-encoding";
+import type { Account } from "@/lib/types";
 
-export function CsvImport() {
+export function CsvImport({ defaultAccountId }: { defaultAccountId?: string }) {
   const { data: familyData } = useFamily();
   const supabase = createClient();
   const queryClient = useQueryClient();
-  const [accountId, setAccountId] = useState("");
+  const [open, setOpen] = useState(false);
+  const [accountId, setAccountId] = useState(defaultAccountId ?? "");
   const [importing, setImporting] = useState(false);
 
   const { data: accounts } = useQuery({
@@ -31,9 +40,14 @@ export function CsvImport() {
         .from("accounts")
         .select("*")
         .eq("family_id", familyData!.family.id);
-      return data ?? [];
+      return (data ?? []) as Account[];
     },
   });
+
+  const handleOpen = (next: boolean) => {
+    setOpen(next);
+    if (next) setAccountId(defaultAccountId ?? accountId);
+  };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -67,6 +81,7 @@ export function CsvImport() {
       queryClient.invalidateQueries({ queryKey: ["budget"] });
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
       queryClient.invalidateQueries({ queryKey: ["payee-repair"] });
+      setOpen(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Błąd importu");
     } finally {
@@ -76,31 +91,52 @@ export function CsvImport() {
   };
 
   return (
-    <div className="flex items-center gap-2">
-      <Select value={accountId} onValueChange={setAccountId}>
-        <SelectTrigger className="w-40">
-          <SelectValue placeholder="Konto" />
-        </SelectTrigger>
-        <SelectContent>
-          {accounts?.map((a) => (
-            <SelectItem key={a.id} value={a.id}>
-              {a.name}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <Button variant="outline" size="sm" disabled={importing || !accountId} asChild>
-        <label className="cursor-pointer">
-          <Upload className="mr-2 h-4 w-4" />
-          Import CSV/OFX
-          <input
-            type="file"
-            accept=".csv,.txt,.ofx,.qfx"
-            className="hidden"
-            onChange={handleImport}
-          />
-        </label>
+    <>
+      <Button variant="outline" onClick={() => handleOpen(true)}>
+        <Upload className="mr-2 h-4 w-4" />
+        Import CSV/OFX
       </Button>
-    </div>
+      <Dialog open={open} onOpenChange={handleOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Import CSV/OFX</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Transakcje trafią na wybrane konto. Transfer między własnymi kontami dodaj ręcznie — wtedy ubędzie
+              na jednym i przybędzie na drugim.
+            </p>
+            <div className="space-y-2">
+              <Label htmlFor="import-account">Konto</Label>
+              <Select value={accountId} onValueChange={setAccountId}>
+                <SelectTrigger id="import-account" aria-label="Konto do importu">
+                  <SelectValue placeholder="Wybierz konto" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accounts?.map((account) => (
+                    <SelectItem key={account.id} value={account.id}>
+                      {account.type === "cash" ? "💵 " : "🏦 "}
+                      {account.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button variant="outline" className="w-full" disabled={importing || !accountId} asChild>
+              <label className="cursor-pointer">
+                <Upload className="mr-2 h-4 w-4" />
+                {importing ? "Importowanie…" : "Wybierz plik CSV/OFX"}
+                <input
+                  type="file"
+                  accept=".csv,.txt,.ofx,.qfx"
+                  className="hidden"
+                  onChange={handleImport}
+                />
+              </label>
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

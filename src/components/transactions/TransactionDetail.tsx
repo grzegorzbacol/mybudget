@@ -20,8 +20,10 @@ import { formatCurrency } from "@/lib/format";
 import { displayPayee } from "@/lib/display-payee";
 import { cn } from "@/lib/utils";
 import { isExpenseCategory, isTransferTx } from "@/lib/budget";
-import type { BudgetCategory, FamilyMember, Transaction } from "@/lib/types";
+import { transferDirectionLabel } from "@/lib/transaction-list";
+import type { Account, BudgetCategory, FamilyMember, Transaction } from "@/lib/types";
 import { fetchJson } from "@/lib/http";
+import { createClient } from "@/lib/supabase/client";
 import {
   mergeTransactionDetail,
   showEnvelopeSplitList,
@@ -35,7 +37,7 @@ import { useDeleteTransaction, useUpdateTransaction } from "@/hooks/use-transact
 import { TransactionForm } from "./TransactionForm";
 import { AiCategoryPanel } from "./AiCategoryPanel";
 import { ReceiptPhoto } from "@/components/ReceiptPhoto";
-import { useFamilyMembers } from "@/hooks/use-family";
+import { useFamily, useFamilyMembers } from "@/hooks/use-family";
 import { useQuery } from "@tanstack/react-query";
 
 interface TransactionDetailProps {
@@ -54,8 +56,22 @@ export function TransactionDetail({
   const deleteTx = useDeleteTransaction();
   const [editing, setEditing] = useState(false);
   const { data: members } = useFamilyMembers();
+  const { data: familyData } = useFamily();
   const { data: categoryList } = useCategories(!!id);
   const categories = categoryList?.categories ?? [];
+  const supabase = createClient();
+
+  const { data: accounts } = useQuery({
+    queryKey: ["accounts", familyData?.family.id],
+    enabled: !!familyData?.family.id,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("accounts")
+        .select("id, name, type")
+        .eq("family_id", familyData!.family.id);
+      return (data ?? []) as Pick<Account, "id" | "name" | "type">[];
+    },
+  });
 
   useEffect(() => {
     setEditing(false);
@@ -121,6 +137,7 @@ export function TransactionDetail({
                 categorySplits={categorySplits}
                 expenseSplits={expenseSplits}
                 categories={(categories ?? []) as BudgetCategory[]}
+                accounts={accounts}
                 members={members}
                 updateTx={updateTx}
                 deleteTx={deleteTx}
@@ -148,6 +165,7 @@ function TransactionDetailBody({
   categorySplits,
   expenseSplits,
   categories,
+  accounts,
   members,
   updateTx,
   deleteTx,
@@ -158,6 +176,7 @@ function TransactionDetailBody({
   categorySplits: CategorySplitView[];
   expenseSplits: ExpenseSplitView[];
   categories: BudgetCategory[];
+  accounts: Array<Pick<Account, "id" | "name" | "type">> | undefined;
   members: FamilyMember[] | undefined;
   updateTx: ReturnType<typeof useUpdateTransaction>;
   deleteTx: ReturnType<typeof useDeleteTransaction>;
@@ -177,7 +196,7 @@ function TransactionDetailBody({
         <p
           className={cn(
             "text-3xl font-bold",
-            transfer ? "text-foreground" : isExpense ? "text-red-500" : "text-green-600"
+            transaction.amount < 0 ? "text-red-500" : "text-green-600"
           )}
         >
           {formatCurrency(transaction.amount)}
@@ -238,9 +257,15 @@ function TransactionDetailBody({
             />
           </div>
         ) : null}
+        {transfer && (
+          <div className="flex justify-between gap-3">
+            <span className="shrink-0 text-muted-foreground">Kierunek</span>
+            <span className="text-right font-medium">{transferDirectionLabel(transaction, accounts ?? [])}</span>
+          </div>
+        )}
         {transaction.account && (
           <div className="flex justify-between">
-            <span className="text-muted-foreground">Konto</span>
+            <span className="text-muted-foreground">{transfer ? "To konto" : "Konto"}</span>
             <span className="font-medium">
               {transaction.account.name}
               <span className="ml-1 text-xs capitalize text-muted-foreground">

@@ -3,9 +3,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
-import { isTransferTx } from "@/lib/budget";
 import { formatTransactionDeleteCount } from "@/lib/format";
-import { parseYearMonthFromDate } from "@/lib/money";
+import { monthRange, parseYearMonthFromDate } from "@/lib/money";
+import { visibleLedgerTransactions } from "@/lib/transaction-list";
 import type { BudgetMonthData, Transaction } from "@/lib/types";
 import type { TransactionInput, TransferInput } from "@/lib/validators";
 
@@ -23,30 +23,32 @@ export function useTransactions(filters: TransactionFilters = {}) {
   return useQuery({
     queryKey: ["transactions", filters],
     queryFn: async () => {
-      let query = supabase
-        .from("transactions")
-        .select("*, account:accounts(*), category:budget_categories(*)")
-        .order("date", { ascending: false })
-        .order("created_at", { ascending: false });
+      const pageSize = 1000;
+      const rows: Transaction[] = [];
+      let offset = 0;
 
-      if (filters.accountId) query = query.eq("account_id", filters.accountId);
-      if (filters.categoryId) query = query.eq("category_id", filters.categoryId);
-      if (filters.userId) query = query.eq("added_by", filters.userId);
-      if (filters.year && filters.month) {
-        const start = `${filters.year}-${String(filters.month).padStart(2, "0")}-01`;
-        const endMonth = filters.month === 12 ? 1 : filters.month + 1;
-        const endYear = filters.month === 12 ? filters.year + 1 : filters.year;
-        const end = `${endYear}-${String(endMonth).padStart(2, "0")}-01`;
-        query = query.gte("date", start).lt("date", end);
+      while (true) {
+        let query = supabase
+          .from("transactions")
+          .select("*, account:accounts(*), category:budget_categories(*)")
+          .order("date", { ascending: false })
+          .order("created_at", { ascending: false });
+        if (filters.accountId) query = query.eq("account_id", filters.accountId);
+        if (filters.categoryId) query = query.eq("category_id", filters.categoryId);
+        if (filters.userId) query = query.eq("added_by", filters.userId);
+        if (filters.year && filters.month) {
+          const { start, end } = monthRange(filters.year, filters.month);
+          query = query.gte("date", start).lt("date", end);
+        }
+        const { data, error } = await query.range(offset, offset + pageSize - 1);
+        if (error) throw error;
+        rows.push(...((data ?? []) as Transaction[]));
+        if ((data ?? []).length < pageSize) break;
+        offset += pageSize;
+        if (offset >= pageSize * 20) break;
       }
 
-      const { data, error } = await query;
-      if (error) throw error;
-
-      let transactions = (data ?? []) as Transaction[];
-      if (!filters.accountId) {
-        transactions = transactions.filter((t) => !isTransferTx(t) || Number(t.amount) < 0);
-      }
+      const transactions = visibleLedgerTransactions(rows, filters.accountId);
 
       const userIds = Array.from(
         new Set(transactions.map((t) => t.added_by).filter(Boolean))
@@ -60,21 +62,24 @@ export function useTransactions(filters: TransactionFilters = {}) {
       }
 
       const ids = transactions.map((t) => t.id).filter(Boolean);
-      if (ids.length > 0) {
-        const { data: splitRows } = await supabase
+      const splitRows: Array<{ transaction_id: string; category_id: string; amount: number }> = [];
+      const splitChunk = 200;
+      for (let i = 0; i < ids.length; i += splitChunk) {
+        const { data } = await supabase
           .from("transaction_category_splits")
           .select("transaction_id, category_id, amount")
-          .in("transaction_id", ids);
-        if (splitRows?.length) {
-          const byTx = new Map<string, NonNullable<Transaction["category_splits"]>>();
-          for (const row of splitRows) {
-            const list = byTx.get(row.transaction_id) ?? [];
-            list.push({ category_id: row.category_id, amount: Number(row.amount) });
-            byTx.set(row.transaction_id, list);
-          }
-          for (const t of transactions) {
-            t.category_splits = byTx.get(t.id);
-          }
+          .in("transaction_id", ids.slice(i, i + splitChunk));
+        if (data?.length) splitRows.push(...data);
+      }
+      if (splitRows.length) {
+        const byTx = new Map<string, NonNullable<Transaction["category_splits"]>>();
+        for (const row of splitRows) {
+          const list = byTx.get(row.transaction_id) ?? [];
+          list.push({ category_id: row.category_id, amount: Number(row.amount) });
+          byTx.set(row.transaction_id, list);
+        }
+        for (const t of transactions) {
+          t.category_splits = byTx.get(t.id);
         }
       }
       return transactions;

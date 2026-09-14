@@ -4,6 +4,13 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { TransactionForm } from "@/components/transactions/TransactionForm";
 import { TransactionList } from "@/components/transactions/TransactionList";
 import { CsvImport } from "@/components/transactions/CsvImport";
@@ -11,6 +18,11 @@ import { GenericPayeeBanner } from "@/components/transactions/GenericPayeeBanner
 import { ReceiptScanner } from "@/components/ReceiptScanner";
 import { MonthSwitcher } from "@/components/MonthSwitcher";
 import { getCurrentYearMonth } from "@/lib/format";
+import { ALL_ACCOUNTS_FILTER, readAccountFilter } from "@/lib/transaction-list";
+import { useFamily } from "@/hooks/use-family";
+import { createClient } from "@/lib/supabase/client";
+import { useQuery } from "@tanstack/react-query";
+import type { Account } from "@/lib/types";
 
 function CaptureFromQuery({
   onAdd,
@@ -35,15 +47,49 @@ export default function TransactionsPage() {
   const { year: initYear, month: initMonth } = getCurrentYearMonth();
   const [year, setYear] = useState(initYear);
   const [month, setMonth] = useState(initMonth);
+  const [allMonths, setAllMonths] = useState(false);
+  const [accountId, setAccountId] = useState<string | undefined>(undefined);
   const [formOpen, setFormOpen] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
+  const { data: familyData } = useFamily();
+  const supabase = createClient();
+
+  const { data: accounts } = useQuery({
+    queryKey: ["accounts", familyData?.family.id],
+    enabled: !!familyData?.family.id,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("accounts")
+        .select("*")
+        .eq("family_id", familyData!.family.id)
+        .order("created_at");
+      return (data ?? []) as Account[];
+    },
+  });
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-2xl font-bold">Transakcje</h1>
-        <div className="flex flex-wrap gap-2">
-          <CsvImport />
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={accountId ?? ALL_ACCOUNTS_FILTER}
+            onValueChange={(value) => setAccountId(readAccountFilter(value))}
+          >
+            <SelectTrigger className="w-[200px]" aria-label="Konto">
+              <SelectValue placeholder="Wszystkie konta" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL_ACCOUNTS_FILTER}>Wszystkie konta</SelectItem>
+              {accounts?.map((account) => (
+                <SelectItem key={account.id} value={account.id}>
+                  {account.type === "cash" ? "💵 " : "🏦 "}
+                  {account.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <CsvImport defaultAccountId={accountId} />
           <Button variant="outline" onClick={() => setScannerOpen(true)}>
             Skanuj paragon
           </Button>
@@ -55,9 +101,9 @@ export default function TransactionsPage() {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Wydatek schodzi z koperty, przychód idzie do Do rozdzielenia, transfer tylko między kontami. Import: CSV
-        mBank (Zestawienie operacji — tam jest nazwa sklepu), PKO, ING albo OFX. Ten sam CSV jeszcze raz uzupełni
-        stare „ZAKUP PRZY UŻYCIU KARTY”. Reguły payee proponują kopertę po imporcie.
+        Wybierz konto, żeby zobaczyć jego rejestr: wydatek schodzi, przychód wchodzi, a transfer ubywa na
+        jednym koncie i przybywa na drugim. Bez filtra konta transfer widać raz (kierunek A → B). Import: CSV
+        mBank (Zestawienie operacji — tam jest nazwa sklepu), PKO, ING albo OFX.
       </p>
 
       <GenericPayeeBanner />
@@ -65,15 +111,22 @@ export default function TransactionsPage() {
       <MonthSwitcher
         year={year}
         month={month}
+        allMonths={allMonths}
+        onAllMonthsChange={setAllMonths}
         onChange={(y, m) => {
           setYear(y);
           setMonth(m);
+          setAllMonths(false);
         }}
       />
 
       <Suspense fallback={<p className="text-center text-muted-foreground">Ładowanie...</p>}>
         <CaptureFromQuery onAdd={() => setFormOpen(true)} onScan={() => setScannerOpen(true)} />
-        <TransactionList year={year} month={month} />
+        <TransactionList
+          year={allMonths ? undefined : year}
+          month={allMonths ? undefined : month}
+          accountId={accountId}
+        />
       </Suspense>
       <TransactionForm open={formOpen} onOpenChange={setFormOpen} />
       <ReceiptScanner open={scannerOpen} onOpenChange={setScannerOpen} />

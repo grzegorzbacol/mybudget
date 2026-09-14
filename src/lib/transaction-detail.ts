@@ -110,7 +110,7 @@ export async function loadFamilyTransactionDetail(
 ): Promise<{ data: TransactionDetailView } | { error: string; status: 404 | 500 }> {
   const withJoins = await supabase
     .from("transactions")
-    .select("*, account:accounts(*), category:budget_categories(*)")
+    .select("*, account:accounts!account_id(*), transfer_account:accounts!transfer_account_id(*), category:budget_categories(*)")
     .eq("id", id)
     .eq("family_id", familyId)
     .maybeSingle();

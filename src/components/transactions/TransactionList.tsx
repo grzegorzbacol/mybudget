@@ -31,6 +31,12 @@ import { isTransferTx } from "@/lib/budget";
 import { suggestedUpdatesForUncategorized } from "@/lib/categorize";
 import { formatCurrency, formatTransactionDeleteCount } from "@/lib/format";
 import { displayPayee } from "@/lib/display-payee";
+import {
+  accountActivitySummary,
+  groupTransactionsByMonth,
+  transactionAmountClass,
+  transferDirectionLabel,
+} from "@/lib/transaction-list";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useFamily } from "@/hooks/use-family";
@@ -44,7 +50,7 @@ import {
   visibleCategorySplits,
 } from "@/lib/transaction-detail";
 import { TransactionDetail } from "./TransactionDetail";
-import type { Transaction } from "@/lib/types";
+import type { Account, Transaction } from "@/lib/types";
 
 interface TransactionListProps {
   year?: number;
@@ -89,6 +95,22 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
       return data ?? [];
     },
   });
+
+  const { data: accounts } = useQuery({
+    queryKey: ["accounts", familyData?.family.id],
+    enabled: !!familyData?.family.id,
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("accounts")
+        .select("*")
+        .eq("family_id", familyData!.family.id)
+        .order("created_at");
+      return (data ?? []) as Account[];
+    },
+  });
+
+  const accountScoped = Boolean(accountId);
+  const allMonths = year == null || month == null;
 
   const toggleSelect = (id: string) => {
     const next = new Set(selected);
@@ -141,10 +163,24 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
         t.payee.toLowerCase().includes(q) ||
         (t.memo ?? "").toLowerCase().includes(q) ||
         (t.category?.name ?? "").toLowerCase().includes(q) ||
-        (t.account?.name ?? "").toLowerCase().includes(q)
+        (t.account?.name ?? "").toLowerCase().includes(q) ||
+        transferDirectionLabel(t, accounts ?? []).toLowerCase().includes(q)
       );
     });
-  }, [transactions, query, kind]);
+  }, [transactions, query, kind, accounts]);
+
+  const monthGroups = useMemo(
+    () =>
+      allMonths
+        ? groupTransactionsByMonth(visible)
+        : [{ key: "single", year: year ?? 0, month: month ?? 0, label: "", items: visible }],
+    [allMonths, visible, year, month]
+  );
+
+  const accountSummary = useMemo(
+    () => (accountScoped ? accountActivitySummary(visible) : null),
+    [accountScoped, visible]
+  );
 
   const allVisibleSelected = visible.length > 0 && visible.every((t) => selected.has(t.id));
   const someVisibleSelected = visible.some((t) => selected.has(t.id));
@@ -227,6 +263,21 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
           </Button>
         )}
       </div>
+      {accountSummary && visible.length > 0 && (
+        <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+          <p className="font-medium">
+            Zmiana na koncie:{" "}
+            <span className={cn(accountSummary.net < 0 ? "text-red-500" : "text-green-600")}>
+              {formatCurrency(accountSummary.net)}
+            </span>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Przychody {formatCurrency(accountSummary.income)} · wydatki {formatCurrency(accountSummary.expense)}
+            {(accountSummary.transferIn !== 0 || accountSummary.transferOut !== 0) &&
+              ` · transfery ${formatCurrency(accountSummary.transferOut)} / ${formatCurrency(accountSummary.transferIn)}`}
+          </p>
+        </div>
+      )}
       {visible.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 p-3">
           <label className="flex cursor-pointer items-center gap-2">
@@ -280,10 +331,17 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
         </p>
       )}
 
-      <div className="space-y-2">
-        {visible.map((t) => {
+      <div className="space-y-4">
+        {monthGroups.map((group) => (
+          <div key={group.key} className="space-y-2">
+            {group.label ? (
+              <h3 className="px-1 text-sm font-semibold capitalize text-muted-foreground">{group.label}</h3>
+            ) : null}
+            {group.items.map((t) => {
           const title = displayPayee(t.payee, t.memo);
           const envelopeSplits = visibleCategorySplits(t.category_splits);
+          const transfer = isTransferTx(t);
+          const direction = transfer ? transferDirectionLabel(t, accounts ?? []) : "";
           return (
           <div
             key={t.id}
@@ -337,8 +395,8 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
                 </div>
                 <p className="text-xs text-muted-foreground">
                   {t.date}
-                  {isTransferTx(t)
-                    ? " · Transfer"
+                  {transfer
+                    ? ` · Transfer · ${direction}`
                     : t.amount > 0
                       ? " · Do rozdzielenia"
                       : showEnvelopeSplitList(envelopeSplits)
@@ -346,37 +404,36 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
                         : t.category
                           ? ` · ${t.category.icon} ${t.category.name}`
                           : " · Bez kategorii"}
-                  {t.account && ` · ${t.account.type === "cash" ? "💵 " : "🏦 "}${t.account.name}`}
+                  {!transfer && t.account && ` · ${t.account.type === "cash" ? "💵 " : "🏦 "}${t.account.name}`}
                 </p>
               </div>
-              <span
-                className={cn(
-                  "shrink-0 font-semibold",
-                  isTransferTx(t)
-                    ? "text-muted-foreground"
-                    : t.amount < 0
-                      ? "text-red-500"
-                      : "text-green-600"
-                )}
-              >
+              <span className={cn("shrink-0 font-semibold", transactionAmountClass(t, accountScoped))}>
                 {formatCurrency(t.amount)}
               </span>
               <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
             </button>
           </div>
           );
-        })}
+            })}
+          </div>
+        ))}
         {visible.length === 0 && (
           <div className="rounded-lg border border-dashed px-4 py-8 text-center">
             <p className="font-medium">
-              {(transactions?.length ?? 0) === 0 ? "Brak transakcji w tym okresie" : "Brak wyników tego filtra"}
+              {(transactions?.length ?? 0) === 0
+                ? allMonths
+                  ? "Brak transakcji"
+                  : "Brak transakcji w tym okresie"
+                : "Brak wyników tego filtra"}
             </p>
             <p className="mt-1 text-sm text-muted-foreground">
               {(transactions?.length ?? 0) === 0
-                ? "Dodaj wydatek, przychód albo transfer. Możesz też wczytać CSV z mBank/PKO/ING albo dane przykładowe."
-                : "Zmień wyszukiwanie albo filtr."}
+                ? accountScoped
+                  ? "Na tym koncie nie ma jeszcze ruchu. Transfer z innego konta pojawi się tu jako wpływ, a na tamtym jako wydatek."
+                  : "Dodaj wydatek, przychód albo transfer. Możesz też wczytać CSV z mBank/PKO/ING albo dane przykładowe."
+                : "Zmień wyszukiwanie, konto, miesiąc albo filtr."}
             </p>
-            {(transactions?.length ?? 0) === 0 && (
+            {(transactions?.length ?? 0) === 0 && !accountScoped && (
               <div className="mt-3 flex flex-wrap justify-center gap-2">
                 <Button asChild variant="outline" size="sm">
                   <a href="/setup">Kreator startu</a>
