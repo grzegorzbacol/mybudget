@@ -259,7 +259,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
               <div className="col-span-4 hidden text-right tabular-nums md:col-span-2 md:block">
                 {formatCurrency(group.assigned)}
               </div>
-              <div className="col-span-4 hidden text-right tabular-nums md:col-span-2 md:block">
+              <div className="col-span-4 hidden text-right tabular-nums text-muted-foreground md:col-span-2 md:block">
                 {formatCurrency(
                   Math.abs(
                     previousData?.groups.find((previousGroup) => previousGroup.groupName === group.groupName)?.activity ?? 0
@@ -317,7 +317,10 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                     className="col-span-3 text-right text-sm md:col-span-2"
                   >
                     <p className="mb-1 text-xs text-muted-foreground md:hidden">Poprz. miesiąc</p>
-                    <Money amount={previousActivityByCategory.get(row.category.id) ?? 0} />
+                    <Money
+                      amount={previousActivityByCategory.get(row.category.id) ?? 0}
+                      className="text-muted-foreground"
+                    />
                   </button>
                   <button
                     type="button"
