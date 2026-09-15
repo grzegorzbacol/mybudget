@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useAllocateBudget } from "@/hooks/use-budget";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, parsePolishNumber } from "@/lib/format";
+import { money } from "@/lib/money";
 import { cn } from "@/lib/utils";
 
 interface AssignedInputProps {
@@ -22,8 +23,8 @@ export function AssignedInput({ categoryId, year, month, value, className }: Ass
   }, [value]);
 
   const commit = () => {
-    const next = parseFloat(text.replace(",", ".")) || 0;
-    if (next === value) {
+    const next = money(parsePolishNumber(text));
+    if (next === money(value)) {
       setText(String(value));
       return;
     }

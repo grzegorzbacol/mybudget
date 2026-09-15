@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { getAuthContext, getOrCreateAllocation } from "@/lib/api-helpers";
+import { getAuthContext } from "@/lib/api-helpers";
+import { saveCategoryAllocated } from "@/lib/allocation-write";
 import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
 import { allocateSchema } from "@/lib/validators";
-import { money } from "@/lib/money";
 
 export async function POST(request: Request) {
   const ctx = await getAuthContext();
@@ -10,36 +10,37 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: ctx.error }, { status: ctx.status });
   }
 
-  const body = await request.json();
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Nieprawidłowe dane przydziału" }, { status: 400 });
+  }
+
   const parsed = allocateSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+    return NextResponse.json({ error: "Nieprawidłowe dane przydziału" }, { status: 400 });
   }
 
   const { category_id, year, month, allocated, rollover } = parsed.data;
 
-  const current = await getOrCreateAllocation(
-    ctx.supabase,
-    ctx.family.id,
-    category_id,
-    year,
-    month
-  );
+  try {
+    const saved = await saveCategoryAllocated(ctx.supabase, {
+      familyId: ctx.family.id,
+      categoryId: category_id,
+      year,
+      month,
+      allocated,
+      rollover,
+    });
+    if (!saved.ok) {
+      return NextResponse.json({ error: saved.error }, { status: 500 });
+    }
 
-  const { data, error } = await ctx.supabase
-    .from("budget_allocations")
-    .update({
-      allocated: money(allocated),
-      rollover: rollover ?? current.rollover,
-    })
-    .eq("id", current.id)
-    .select()
-    .single();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    invalidateFamilyBudgetCache(ctx.family.id);
+    return NextResponse.json(saved.data);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Nie udało się zaktualizować przydziału";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  invalidateFamilyBudgetCache(ctx.family.id);
-  return NextResponse.json(data);
 }

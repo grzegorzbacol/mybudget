@@ -253,38 +253,4 @@ export async function loadBudgetSnapshot(
   };
 }
 
-export async function getOrCreateAllocation(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  familyId: string,
-  categoryId: string,
-  year: number,
-  month: number
-) {
-  const { data: existing } = await supabase
-    .from("budget_allocations")
-    .select("*")
-    .eq("category_id", categoryId)
-    .eq("year", year)
-    .eq("month", month)
-    .maybeSingle();
-
-  if (existing) return existing as BudgetAllocation;
-
-  const { data, error } = await supabase
-    .from("budget_allocations")
-    .insert({
-      family_id: familyId,
-      category_id: categoryId,
-      year,
-      month,
-      allocated: 0,
-      activity: 0,
-      available: 0,
-      moved: 0,
-    })
-    .select()
-    .single();
-
-  if (error) throw new Error(error.message);
-  return data as BudgetAllocation;
-}
+export { getOrCreateAllocation } from "@/lib/allocation-write";

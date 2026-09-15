@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/select";
 import { useTransactions } from "@/hooks/use-transactions";
 import { useAllocateBudget, useMoveMoney } from "@/hooks/use-budget";
-import { formatCurrency } from "@/lib/format";
+import { formatCurrency, parsePolishNumber } from "@/lib/format";
 import { displayPayee } from "@/lib/display-payee";
 import { transactionRowAriaLabel } from "@/lib/transaction-detail";
 import { cn } from "@/lib/utils";
@@ -139,7 +139,7 @@ export function CategoryPanel({
               <div className="mt-2 flex flex-wrap gap-2">
                 <Button
                   size="sm"
-                  onClick={() => saveAssigned(parseFloat(allocated) || 0)}
+                  onClick={() => saveAssigned(parsePolishNumber(allocated))}
                   disabled={allocate.isPending}
                 >
                   Zapisz przydział

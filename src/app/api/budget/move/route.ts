@@ -21,10 +21,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Wybierz inną kategorię docelową" }, { status: 400 });
   }
 
-  const [from, to] = await Promise.all([
-    getOrCreateAllocation(ctx.supabase, ctx.family.id, from_category_id, year, month),
-    getOrCreateAllocation(ctx.supabase, ctx.family.id, to_category_id, year, month),
-  ]);
+  let from;
+  let to;
+  try {
+    [from, to] = await Promise.all([
+      getOrCreateAllocation(ctx.supabase, ctx.family.id, from_category_id, year, month),
+      getOrCreateAllocation(ctx.supabase, ctx.family.id, to_category_id, year, month),
+    ]);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Błąd przenoszenia";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 
   const value = money(amount);
 
