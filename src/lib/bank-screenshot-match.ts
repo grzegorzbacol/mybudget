@@ -3,7 +3,11 @@ import {
   applyPayeeRules,
   buildPayeeCategoryRules,
 } from "./categorize";
-import type { BankScreenshotMatchedRow, BankScreenshotMatchStatus } from "./types";
+import type {
+  BankScreenshotMatchedRow,
+  BankScreenshotMatchStatus,
+  BankScreenshotRowKind,
+} from "./types";
 import type { BankScreenshotOperation } from "./validators";
 
 export const BANK_SCREENSHOT_LOOKBACK_DAYS = 45;
@@ -78,6 +82,32 @@ export function dedupeOperationsByAmountDate(
   return out;
 }
 
+/**
+ * Expand a parsed operation into ledger rows: card purchase + optional Spare change transfer.
+ */
+export function expandOperationRows(
+  op: BankScreenshotOperation
+): Array<BankScreenshotOperation & { kind: BankScreenshotRowKind }> {
+  const kind: BankScreenshotRowKind = op.amount < 0 ? "expense" : "income";
+  const rows: Array<BankScreenshotOperation & { kind: BankScreenshotRowKind }> = [
+    { ...op, kind, spare_change_amount: null },
+  ];
+  const spare = money(Math.abs(Number(op.spare_change_amount) || 0));
+  if (kind === "expense" && spare > 0) {
+    rows.push({
+      date: op.date,
+      amount: -spare,
+      payee: `Spare change · ${op.payee}`,
+      memo: op.memo ? `Spare change: ${op.memo}` : `Spare change (${op.payee})`,
+      direction: "expense",
+      category_hint: null,
+      spare_change_amount: null,
+      kind: "spare_change",
+    });
+  }
+  return rows;
+}
+
 export function resolveCategoryHint(
   hint: string | null | undefined,
   categories: CategoryForHint[]
@@ -118,8 +148,7 @@ export function resetReviewRowIdSeq(): void {
 
 /**
  * Attach duplicate status + category suggestions to parsed screenshot operations.
- * Duplicates default to selected=false; new rows selected=true.
- * Matching is by amount + date (±1 day) against existing account txs and within the batch.
+ * Spare change becomes a separate row (transfer to savings on confirm).
  */
 export function matchBankScreenshotOperations(
   operations: BankScreenshotOperation[],
@@ -133,6 +162,15 @@ export function matchBankScreenshotOperations(
   }>
 ): BankScreenshotMatchedRow[] {
   const uniqueOps = dedupeOperationsByAmountDate(operations);
+  const expanded = uniqueOps.flatMap(expandOperationRows);
+  // Dedup again after expansion (spare change may collide with another row)
+  const seenKeys = new Set<string>();
+  const uniqueExpanded = expanded.filter((op) => {
+    const key = `${op.kind}|${amountDateKey(op.amount, op.date)}`;
+    if (seenKeys.has(key)) return false;
+    seenKeys.add(key);
+    return true;
+  });
 
   const rules = buildPayeeCategoryRules(
     pastForRules ??
@@ -144,22 +182,26 @@ export function matchBankScreenshotOperations(
       }))
   );
 
-  const withHints = uniqueOps.map((op) => {
+  const withHints = uniqueExpanded.map((op) => {
     const fromHint =
-      op.amount < 0 ? resolveCategoryHint(op.category_hint, categories) : null;
+      op.kind === "expense" ? resolveCategoryHint(op.category_hint, categories) : null;
     return {
       ...op,
       category_id: fromHint,
     };
   });
 
-  const tagged = applyPayeeRules(withHints, rules);
+  const tagged = applyPayeeRules(
+    withHints.map((op) =>
+      op.kind === "spare_change" ? { ...op, category_id: null } : op
+    ),
+    rules
+  );
 
-  // Track amount+date already claimed in this batch so a second identical
-  // line (or ±1 day twin) is marked duplicate even if not yet in the DB.
   const claimed: ExistingTxForMatch[] = existing.map((tx) => ({ ...tx }));
 
   return tagged.map((op) => {
+    const kind = (op.kind ?? (op.amount < 0 ? "expense" : "income")) as BankScreenshotRowKind;
     const dup = findDuplicateTx(op, claimed);
     const status: BankScreenshotMatchStatus = dup ? "duplicate" : "new";
     const row: BankScreenshotMatchedRow = {
@@ -168,8 +210,9 @@ export function matchBankScreenshotOperations(
       amount: op.amount,
       payee: op.payee,
       memo: op.memo ?? null,
-      category_id: op.amount < 0 ? (op.category_id ?? null) : null,
+      category_id: kind === "expense" ? (op.category_id ?? null) : null,
       category_hint: op.category_hint ?? null,
+      kind,
       status,
       duplicate_of: dup?.id ?? null,
       selected: status === "new",
@@ -187,7 +230,16 @@ export function matchBankScreenshotOperations(
   });
 }
 
-/** Rows the confirm API should insert. */
+export type ImportableScreenshotRow = {
+  date: string;
+  amount: number;
+  payee: string;
+  memo: string | null;
+  category_id: string | null;
+  kind: BankScreenshotRowKind;
+};
+
+/** Rows the confirm API should process (expenses/income + spare_change transfers). */
 export function rowsToImport(
   rows: Array<{
     date: string;
@@ -195,41 +247,49 @@ export function rowsToImport(
     payee: string;
     memo?: string | null;
     category_id?: string | null;
+    kind?: BankScreenshotRowKind;
     status?: BankScreenshotMatchStatus;
     selected?: boolean;
   }>
-): Array<{
-  date: string;
-  amount: number;
-  payee: string;
-  memo: string | null;
-  category_id: string | null;
-}> {
+): ImportableScreenshotRow[] {
   const inserts = rows
     .filter((row) => {
       if (row.selected === false) return false;
       if (row.status === "skip") return false;
-      // Duplicates import only when the user explicitly re-selects them
       if (row.status === "duplicate") return row.selected === true;
       return true;
     })
-    .map((row) => ({
-      date: row.date,
-      amount: money(row.amount),
-      payee: row.payee.trim(),
-      memo: (row.memo ?? "").trim() || null,
-      category_id: row.amount < 0 ? row.category_id ?? null : null,
-    }))
+    .map((row) => {
+      const kind: BankScreenshotRowKind =
+        row.kind ?? (row.amount < 0 ? "expense" : "income");
+      return {
+        date: row.date,
+        amount: money(row.amount),
+        payee: row.payee.trim(),
+        memo: (row.memo ?? "").trim() || null,
+        category_id: kind === "expense" ? row.category_id ?? null : null,
+        kind,
+      };
+    })
     .filter((row) => row.payee && row.date && row.amount !== 0);
 
-  // Final guard: never insert two identical amount+date rows in one confirm
   const seen = new Set<string>();
-  const unique: typeof inserts = [];
+  const unique: ImportableScreenshotRow[] = [];
   for (const row of inserts) {
-    const key = amountDateKey(row.amount, row.date);
+    const key = `${row.kind}|${amountDateKey(row.amount, row.date)}`;
     if (seen.has(key)) continue;
     seen.add(key);
     unique.push(row);
   }
   return unique;
+}
+
+export function partitionImportRows(rows: ImportableScreenshotRow[]): {
+  ledger: ImportableScreenshotRow[];
+  spareChange: ImportableScreenshotRow[];
+} {
+  return {
+    ledger: rows.filter((r) => r.kind !== "spare_change"),
+    spareChange: rows.filter((r) => r.kind === "spare_change"),
+  };
 }

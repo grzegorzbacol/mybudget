@@ -186,6 +186,10 @@ export const bankScreenshotOperationSchema = z.object({
   memo: z.string().optional().nullable(),
   direction: z.enum(["expense", "income"]).optional().nullable(),
   category_hint: z.string().optional().nullable(),
+  /** Revolut Spare change round-up (absolute); separate from card purchase `amount`. */
+  spare_change_amount: z.number().optional().nullable(),
+  /** Declined / frozen / strikethrough — skip on import. */
+  failed: z.boolean().optional().nullable(),
 });
 
 export const bankScreenshotResultSchema = z.object({
@@ -193,6 +197,7 @@ export const bankScreenshotResultSchema = z.object({
 });
 
 export const bankScreenshotMatchStatusSchema = z.enum(["new", "duplicate", "skip"]);
+export const bankScreenshotRowKindSchema = z.enum(["expense", "income", "spare_change"]);
 
 /** Row returned to the review UI after AI parse + duplicate/category matching. */
 export const bankScreenshotMatchedRowSchema = z.object({
@@ -203,6 +208,7 @@ export const bankScreenshotMatchedRowSchema = z.object({
   memo: z.string().nullable().optional(),
   category_id: z.string().uuid().nullable().optional(),
   category_hint: z.string().nullable().optional(),
+  kind: bankScreenshotRowKindSchema.optional(),
   status: bankScreenshotMatchStatusSchema,
   duplicate_of: z.string().uuid().nullable().optional(),
   selected: z.boolean().optional(),
@@ -210,6 +216,8 @@ export const bankScreenshotMatchedRowSchema = z.object({
 
 export const bankScreenshotConfirmSchema = z.object({
   account_id: z.string().uuid(),
+  /** Target account for Spare change transfers (required when any spare_change row is selected). */
+  savings_account_id: z.string().uuid().optional().nullable(),
   rows: z
     .array(
       z.object({
@@ -218,6 +226,7 @@ export const bankScreenshotConfirmSchema = z.object({
         payee: z.string().min(1),
         memo: z.string().nullable().optional(),
         category_id: z.string().uuid().nullable().optional(),
+        kind: bankScreenshotRowKindSchema.optional(),
         status: bankScreenshotMatchStatusSchema.optional(),
         selected: z.boolean().optional(),
       })

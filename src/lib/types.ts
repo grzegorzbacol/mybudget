@@ -345,6 +345,7 @@ export interface OcrReceiptResult {
 }
 
 export type BankScreenshotMatchStatus = "new" | "duplicate" | "skip";
+export type BankScreenshotRowKind = "expense" | "income" | "spare_change";
 
 export interface BankScreenshotOperation {
   date: string;
@@ -353,6 +354,8 @@ export interface BankScreenshotOperation {
   memo?: string | null;
   direction?: "expense" | "income" | null;
   category_hint?: string | null;
+  spare_change_amount?: number | null;
+  failed?: boolean | null;
 }
 
 export interface BankScreenshotMatchedRow {
@@ -363,6 +366,7 @@ export interface BankScreenshotMatchedRow {
   memo?: string | null;
   category_id?: string | null;
   category_hint?: string | null;
+  kind?: BankScreenshotRowKind;
   status: BankScreenshotMatchStatus;
   duplicate_of?: string | null;
   selected?: boolean;
