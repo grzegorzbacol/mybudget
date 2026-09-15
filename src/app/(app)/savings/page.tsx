@@ -5,6 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bar,
   BarChart,
+  Line,
+  LineChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -32,7 +34,7 @@ import {
 import { useFamily } from "@/hooks/use-family";
 import { useAllocateBudget, useBudget, useMoveMoney } from "@/hooks/use-budget";
 import { createClient } from "@/lib/supabase/client";
-import { formatCurrency, getCurrentYearMonth } from "@/lib/format";
+import { formatCurrency, getCurrentYearMonth, getMonthLabel } from "@/lib/format";
 import {
   contributionHistory,
   contributionThisMonth,
@@ -43,10 +45,13 @@ import {
   isBehindSchedule,
   isEmergencyGoal,
   remainingToGoal,
+  savingsMonthEndHistory,
   savingsRate,
   sortGoalsForDashboard,
   suggestedForGoal,
+  trimLeadingEmptySavingsMonths,
 } from "@/lib/savings";
+import { addMonths } from "@/lib/money";
 import { whatIfGoal } from "@/lib/analytics";
 import type { Account, BudgetAllocation, Goal, GoalType } from "@/lib/types";
 import { toast } from "sonner";
@@ -66,6 +71,12 @@ const PRIORITY_LABEL: Record<number, string> = {
   4: "4 · niski",
   5: "5 · najniższy",
 };
+
+function formatSavingsDelta(delta: number): string {
+  if (Math.abs(delta) < 0.005) return "bez zmiany";
+  const formatted = formatCurrency(Math.abs(delta));
+  return delta > 0 ? `+${formatted}` : `−${formatted}`;
+}
 
 export default function SavingsPage() {
   const { data: familyData } = useFamily();
@@ -125,6 +136,24 @@ export default function SavingsPage() {
         .eq("family_id", familyData!.family.id)
         .eq("type", "savings");
       return (data ?? []) as Account[];
+    },
+  });
+
+  const savingsAccountIds = (savingsAccounts ?? []).map((account) => account.id);
+
+  const { data: savingsLedger } = useQuery({
+    queryKey: ["savings-account-ledger", familyData?.family.id, savingsAccountIds.join(","), year, month],
+    enabled: !!familyData?.family.id && savingsAccountIds.length > 0,
+    queryFn: async () => {
+      const from = addMonths(year, month, -11);
+      const start = `${from.year}-${String(from.month).padStart(2, "0")}-01`;
+      const { data } = await supabase
+        .from("transactions")
+        .select("date, amount, account_id")
+        .eq("family_id", familyData!.family.id)
+        .in("account_id", savingsAccountIds)
+        .gte("date", start);
+      return (data ?? []) as Array<{ date: string; amount: number; account_id: string }>;
     },
   });
 
@@ -220,6 +249,13 @@ export default function SavingsPage() {
     );
   }).length;
   const history = contributionHistory(allocations ?? [], goalIds, year, month, 6);
+  const monthEndSavings = useMemo(
+    () =>
+      trimLeadingEmptySavingsMonths(
+        savingsMonthEndHistory(savingsAccounts ?? [], savingsLedger ?? [], year, month, 12)
+      ),
+    [savingsAccounts, savingsLedger, year, month]
+  );
   const rate = savingsRate(budget?.incomeThisMonth ?? 0, contributedThisMonth);
   const recent = [...history].reverse().filter((p) => p.amount > 0).slice(0, 6);
   const primaryGoal = (goals ?? []).find((goal) => {
@@ -343,6 +379,54 @@ export default function SavingsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {(savingsAccounts?.length ?? 0) > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Na koniec miesiąca</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Suma kont oszczędnościowych. Poprzednie miesiące — stan z ostatniego dnia. Bieżący miesiąc — na dziś.
+            </p>
+            {monthEndSavings.length > 1 && (
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={monthEndSavings}>
+                  <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                  <YAxis tick={{ fontSize: 10 }} />
+                  <Tooltip formatter={(v) => formatCurrency(Number(v))} />
+                  <Line type="monotone" dataKey="amount" stroke="#0d9488" strokeWidth={2} name="Oszczędności" dot />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+            <div className="space-y-2 text-sm">
+              {[...monthEndSavings].reverse().map((point) => (
+                <div key={point.key} className="flex items-center justify-between rounded border px-3 py-2">
+                  <span className="capitalize">
+                    {getMonthLabel(point.year, point.month)}
+                    {point.current ? " · dziś" : ""}
+                  </span>
+                  <span className="text-right">
+                    <span className="font-medium">{formatCurrency(point.amount)}</span>
+                    <span
+                      className={cn(
+                        "ml-2 text-xs",
+                        point.delta > 0.005
+                          ? "text-green-600"
+                          : point.delta < -0.005
+                            ? "text-red-600"
+                            : "text-muted-foreground"
+                      )}
+                    >
+                      {formatSavingsDelta(point.delta)}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {primaryGoal && whatIfRemaining > 0 && (
         <Card>

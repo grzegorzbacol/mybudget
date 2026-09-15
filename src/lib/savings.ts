@@ -1,4 +1,4 @@
-import { money } from "./money";
+import { addMonths, money, monthIndex, parseMonthKey, parseYearMonthFromDate } from "./money";
 import { suggestMonthlyContribution } from "./budget";
 import type { Goal, GoalType } from "./types";
 
@@ -14,6 +14,16 @@ export interface ContributionPoint {
   month: number;
   label: string;
   amount: number;
+}
+
+export interface MonthEndSavingsPoint {
+  key: string;
+  year: number;
+  month: number;
+  label: string;
+  amount: number;
+  delta: number;
+  current: boolean;
 }
 
 export interface GoalMilestone {
@@ -209,4 +219,68 @@ export function contributionHistory(
     });
   }
   return points;
+}
+
+function yearMonthKey(year: number, month: number): string {
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+/**
+ * Month-end total of savings accounts: walk current balances backwards
+ * by subtracting later ledger activity. The selected month uses today's
+ * balance when it is the current month (no future txs after that month).
+ */
+export function savingsMonthEndHistory(
+  accounts: Array<{ id: string; balance: number }>,
+  transactions: Array<{ account_id: string; amount: number; date: string }>,
+  throughYear: number,
+  throughMonth: number,
+  months = 12
+): MonthEndSavingsPoint[] {
+  const wanted = new Set(accounts.map((account) => account.id));
+  let running = money(accounts.reduce((sum, account) => sum + Number(account.balance || 0), 0));
+  const byMonth = new Map<string, number>();
+  for (const tx of transactions) {
+    if (!wanted.has(tx.account_id)) continue;
+    const ym = parseYearMonthFromDate(tx.date);
+    if (!ym) continue;
+    const key = yearMonthKey(ym.year, ym.month);
+    byMonth.set(key, money((byMonth.get(key) ?? 0) + Number(tx.amount)));
+  }
+
+  const throughIdx = monthIndex(throughYear, throughMonth);
+  for (const [key, amount] of Array.from(byMonth.entries())) {
+    const parsed = parseMonthKey(key);
+    if (!parsed) continue;
+    if (monthIndex(parsed.year, parsed.month) > throughIdx) {
+      running = money(running - amount);
+    }
+  }
+
+  const collected: Array<{ year: number; month: number; amount: number; delta: number }> = [];
+  for (let i = 0; i < months; i++) {
+    const { year, month } = addMonths(throughYear, throughMonth, -i);
+    const key = yearMonthKey(year, month);
+    const delta = byMonth.get(key) ?? 0;
+    collected.push({ year, month, amount: running, delta });
+    running = money(running - delta);
+  }
+  collected.reverse();
+
+  return collected.map((point) => ({
+    key: yearMonthKey(point.year, point.month),
+    year: point.year,
+    month: point.month,
+    label: `${point.month}/${point.year}`,
+    amount: point.amount,
+    delta: point.delta,
+    current: point.year === throughYear && point.month === throughMonth,
+  }));
+}
+
+/** Drop leading months that were still empty so the chart starts at first money. */
+export function trimLeadingEmptySavingsMonths(points: MonthEndSavingsPoint[]): MonthEndSavingsPoint[] {
+  const first = points.findIndex((point) => Math.abs(point.amount) > 0.005 || Math.abs(point.delta) > 0.005);
+  if (first <= 0) return points;
+  return points.slice(first);
 }
