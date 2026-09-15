@@ -178,6 +178,53 @@ export const ocrResultSchema = z.object({
   ),
 });
 
+/** Raw operation extracted from a bank history screenshot (before matching). */
+export const bankScreenshotOperationSchema = z.object({
+  date: z.string(),
+  amount: z.number(),
+  payee: z.string(),
+  memo: z.string().optional().nullable(),
+  direction: z.enum(["expense", "income"]).optional().nullable(),
+  category_hint: z.string().optional().nullable(),
+});
+
+export const bankScreenshotResultSchema = z.object({
+  operations: z.array(bankScreenshotOperationSchema),
+});
+
+export const bankScreenshotMatchStatusSchema = z.enum(["new", "duplicate", "skip"]);
+
+/** Row returned to the review UI after AI parse + duplicate/category matching. */
+export const bankScreenshotMatchedRowSchema = z.object({
+  id: z.string(),
+  date: z.string(),
+  amount: z.number(),
+  payee: z.string(),
+  memo: z.string().nullable().optional(),
+  category_id: z.string().uuid().nullable().optional(),
+  category_hint: z.string().nullable().optional(),
+  status: bankScreenshotMatchStatusSchema,
+  duplicate_of: z.string().uuid().nullable().optional(),
+  selected: z.boolean().optional(),
+});
+
+export const bankScreenshotConfirmSchema = z.object({
+  account_id: z.string().uuid(),
+  rows: z
+    .array(
+      z.object({
+        date: z.string().min(1),
+        amount: z.number(),
+        payee: z.string().min(1),
+        memo: z.string().nullable().optional(),
+        category_id: z.string().uuid().nullable().optional(),
+        status: bankScreenshotMatchStatusSchema.optional(),
+        selected: z.boolean().optional(),
+      })
+    )
+    .min(1, "Brak wierszy do zapisania"),
+});
+
 export type TransactionInput = z.infer<typeof transactionSchema>;
 export type AllocateInput = z.infer<typeof allocateSchema>;
 export type MoveMoneyInput = z.infer<typeof moveMoneySchema>;
@@ -185,3 +232,6 @@ export type TransferInput = z.infer<typeof transferSchema>;
 export type ScheduledInput = z.infer<typeof scheduledSchema>;
 export type PaymentPayInput = z.infer<typeof paymentPaySchema>;
 export type PaymentUnpayInput = z.infer<typeof paymentUnpaySchema>;
+export type BankScreenshotOperation = z.infer<typeof bankScreenshotOperationSchema>;
+export type BankScreenshotMatchedRow = z.infer<typeof bankScreenshotMatchedRowSchema>;
+export type BankScreenshotConfirmInput = z.infer<typeof bankScreenshotConfirmSchema>;
