@@ -468,6 +468,8 @@ export function assembleBudgetMonthData(input: {
   categories: BudgetCategory[];
   allocations: BudgetAllocation[];
   accounts: Account[];
+  plannedIncome?: number;
+  plannedExpense?: number;
   activityMap: Map<string, Map<string, number>>;
   incomeThisMonth: number;
   uncategorizedCount: number;
@@ -600,6 +602,8 @@ export function assembleBudgetMonthData(input: {
     totalAvailable,
     onBudgetBalance: balance,
     uncategorizedCount: Math.max(0, Math.trunc(Number(input.uncategorizedCount) || 0)),
+    plannedIncome: money(input.plannedIncome ?? 0),
+    plannedExpense: money(input.plannedExpense ?? 0),
     groups,
   };
 }

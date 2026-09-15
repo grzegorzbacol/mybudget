@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Camera, ChevronRight, Trash2 } from "lucide-react";
+import { Camera, ChevronRight, CalendarClock, Pencil, Trash2 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -50,7 +50,22 @@ import {
   transactionRowAriaLabel,
 } from "@/lib/transaction-detail";
 import { TransactionDetail } from "./TransactionDetail";
-import type { Account, Transaction } from "@/lib/types";
+import { PlanForm } from "@/components/plan/PlanForm";
+import { useEnterScheduled, useScheduledTransactions } from "@/hooks/use-scheduled";
+import { frequencyLabel } from "@/lib/payments";
+import { todayIso } from "@/lib/format";
+import {
+  matchesPlanFilter,
+  paidKeysFromLedger,
+  plannedDisplayAmount,
+  plannedItems,
+  plannedRangeForView,
+  plannedTotals,
+  planSearchHaystack,
+  type PlannedItem,
+} from "@/lib/plan";
+import type { Account, ScheduledTransaction, Transaction } from "@/lib/types";
+import { toast } from "sonner";
 
 interface TransactionListProps {
   year?: number;
@@ -77,12 +92,16 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState(searchParams.get("filter") ?? "all");
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
+  const [editingRule, setEditingRule] = useState<ScheduledTransaction | null>(null);
   const bulkUpdate = useBulkUpdateCategory();
   const bulkDelete = useBulkDeleteTransactions();
   const applyRules = useApplyCategoryMap();
   const updateTx = useUpdateTransaction();
+  const enterScheduled = useEnterScheduled();
   const { data: familyData } = useFamily();
   const supabase = createClient();
+  const { data: scheduled } = useScheduledTransactions();
 
   const { data: categories } = useQuery({
     queryKey: ["categories", familyData?.family.id],
@@ -174,6 +193,24 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
     [allMonths, visible, year, month]
   );
 
+  const planned = useMemo(() => {
+    const range = plannedRangeForView(year, month, todayIso());
+    const q = query.trim().toLowerCase();
+    return plannedItems({
+      scheduled: scheduled ?? [],
+      from: range.from,
+      to: range.to,
+      paidKeys: paidKeysFromLedger(transactions ?? []),
+      accountId,
+    }).filter((item) => {
+      if (!matchesPlanFilter(item, kind)) return false;
+      if (!q) return true;
+      return planSearchHaystack(item, categories ?? [], accounts ?? []).includes(q);
+    });
+  }, [scheduled, year, month, transactions, accountId, kind, query, categories, accounts]);
+
+  const planSummary = useMemo(() => plannedTotals(planned, accounts ?? []), [planned, accounts]);
+
   const accountSummary = useMemo(
     () => (accountScoped ? accountActivitySummary(visible) : null),
     [accountScoped, visible]
@@ -216,6 +253,21 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
     const next = new Set(selected);
     for (const t of visible) next.delete(t.id);
     setSelected(next);
+  };
+
+  const openPlan = (scheduledId: string) => {
+    setEditingRule((scheduled ?? []).find((rule) => rule.id === scheduledId) ?? null);
+    setPlanOpen(true);
+  };
+
+  const enterPlan = (item: PlannedItem) => {
+    enterScheduled.mutate(
+      { scheduledId: item.scheduledId, dueDate: item.date },
+      {
+        onSuccess: () => toast.success("Wprowadzono do rejestru"),
+        onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd wprowadzania"),
+      }
+    );
   };
 
   if (isLoading) {
@@ -275,6 +327,17 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
           </p>
         </div>
       )}
+      {planned.length > 0 && (
+        <div className="rounded-lg border border-dashed bg-muted/20 px-3 py-2 text-sm">
+          <p className="font-medium">
+            {allMonths ? "Plan na 90 dni" : "Plan w tym miesiącu"}: przychody{" "}
+            <span className="text-green-600">{formatCurrency(planSummary.income)}</span>
+            {" · "}
+            wydatki {formatCurrency(planSummary.expense)}
+          </p>
+          <p className="text-xs text-muted-foreground">Nie rusza salda, dopóki nie klikniesz Wprowadź.</p>
+        </div>
+      )}
       {visible.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/50 p-3">
           <label className="flex cursor-pointer items-center gap-2">
@@ -329,6 +392,76 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
       )}
 
       <div className="space-y-4">
+        {planned.length > 0 && (
+          <div className="space-y-2">
+            <h3 className="px-1 text-sm font-semibold text-muted-foreground">
+              {allMonths ? "Zaplanowane (90 dni)" : "Zaplanowane w tym miesiącu"}
+            </h3>
+            {planned.map((item) => {
+              const amount = plannedDisplayAmount(item, accountId);
+              const category = (categories ?? []).find((row) => row.id === item.categoryId);
+              const account = (accounts ?? []).find((row) => row.id === item.accountId);
+              return (
+                <div
+                  key={item.id}
+                  className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2"
+                >
+                  <CalendarClock className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate font-medium">{item.payee}</p>
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        Plan
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {item.date}
+                      {item.kind === "income"
+                        ? " · Do rozdzielenia"
+                        : item.kind === "transfer"
+                          ? " · Transfer"
+                          : category
+                            ? ` · ${category.icon} ${category.name}`
+                            : " · Bez koperty"}
+                      {account ? ` · ${account.name}` : ""}
+                      {` · ${frequencyLabel(item.frequency, item.intervalDays)}`}
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      "shrink-0 font-semibold",
+                      item.kind === "income" || amount > 0
+                        ? "text-green-600"
+                        : item.kind === "transfer"
+                          ? "text-muted-foreground"
+                          : "text-red-500"
+                    )}
+                  >
+                    {formatCurrency(amount)}
+                  </span>
+                  <div className="flex shrink-0 gap-1">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={enterScheduled.isPending}
+                      onClick={() => enterPlan(item)}
+                    >
+                      Wprowadź
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      aria-label={`Edytuj plan ${item.payee}`}
+                      onClick={() => openPlan(item.scheduledId)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
         {monthGroups.map((group) => (
           <div key={group.key} className="space-y-2">
             {group.label ? (
@@ -411,31 +544,46 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
           <div className="rounded-lg border border-dashed px-4 py-8 text-center">
             <p className="font-medium">
               {(transactions?.length ?? 0) === 0
-                ? allMonths
-                  ? "Brak transakcji"
-                  : "Brak transakcji w tym okresie"
+                ? planned.length > 0
+                  ? allMonths
+                    ? "Brak zaksięgowanych transakcji"
+                    : "Brak zaksięgowanych transakcji w tym okresie"
+                  : allMonths
+                    ? "Brak transakcji"
+                    : "Brak transakcji w tym okresie"
                 : "Brak wyników tego filtra"}
             </p>
             <p className="mt-1 text-sm text-muted-foreground">
               {(transactions?.length ?? 0) === 0
                 ? accountScoped
                   ? "Na tym koncie nie ma jeszcze ruchu. Transfer z innego konta pojawi się tu jako wpływ, a na tamtym jako wydatek."
-                  : "Dodaj wydatek, przychód albo transfer. Możesz też wczytać CSV z mBank/PKO/ING albo dane przykładowe."
+                  : planned.length > 0
+                    ? "Powyżej widać plan. Wprowadź go, gdy pieniądze naprawdę wpłyną albo zejdą, albo dodaj zwykłą transakcję."
+                    : "Dodaj wydatek, przychód albo zaplanuj przyszłą wypłatę i rachunki. Możesz też wczytać CSV z mBank/PKO/ING albo dane przykładowe."
                 : "Zmień wyszukiwanie, konto, miesiąc albo filtr."}
             </p>
-            {(transactions?.length ?? 0) === 0 && !accountScoped && (
+            {(transactions?.length ?? 0) === 0 && !accountScoped && planned.length === 0 && (
               <div className="mt-3 flex flex-wrap justify-center gap-2">
                 <Button asChild variant="outline" size="sm">
                   <a href="/setup">Kreator startu</a>
                 </Button>
-                <Button asChild variant="outline" size="sm">
-                  <a href="/cashflow">Zaplanuj stałe opłaty</a>
+                <Button variant="outline" size="sm" onClick={() => openPlan("")}>
+                  Zaplanuj przychód lub wydatek
                 </Button>
               </div>
             )}
           </div>
         )}
       </div>
+
+      <PlanForm
+        open={planOpen}
+        onOpenChange={(open) => {
+          setPlanOpen(open);
+          if (!open) setEditingRule(null);
+        }}
+        editRule={editingRule}
+      />
 
       <TransactionDetail
         transaction={detail}

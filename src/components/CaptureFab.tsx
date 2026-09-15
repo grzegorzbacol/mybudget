@@ -5,10 +5,12 @@ import { Camera, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ReceiptScanner } from "@/components/ReceiptScanner";
 import { TransactionForm } from "@/components/transactions/TransactionForm";
+import { PlanForm } from "@/components/plan/PlanForm";
 
 /** Mobile capture: add a transaction or scan a receipt from any app screen. */
 export function CaptureFab() {
   const [formOpen, setFormOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
 
   return (
@@ -32,7 +34,12 @@ export function CaptureFab() {
           <Plus className="h-5 w-5" />
         </Button>
       </div>
-      <TransactionForm open={formOpen} onOpenChange={setFormOpen} />
+      <TransactionForm
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        onPlanInstead={() => setPlanOpen(true)}
+      />
+      <PlanForm open={planOpen} onOpenChange={setPlanOpen} />
       <ReceiptScanner open={scannerOpen} onOpenChange={setScannerOpen} />
     </>
   );

@@ -1,4 +1,5 @@
 import { upcomingByCategory } from "@/lib/cashflow";
+import { plannedMonthTotals } from "@/lib/plan";
 import {
   activityByCategoryMonth,
   activityMapFromAggregates,
@@ -332,6 +333,7 @@ export function budgetMonthFromCore(
 ): BudgetMonthData {
   const { start, end } = monthRange(year, month);
   const upcoming = upcomingByCategory(core.scheduled, start, addDays(end, -1));
+  const planned = plannedMonthTotals(core.scheduled, year, month, core.accounts);
 
   return assembleBudgetMonthData({
     year,
@@ -343,6 +345,8 @@ export function budgetMonthFromCore(
     incomeThisMonth: monthAmount(core.income, year, month),
     uncategorizedCount: monthCount(core.uncategorized, year, month),
     upcomingByCategory: upcoming,
+    plannedIncome: planned.income,
+    plannedExpense: planned.expense,
   });
 }
 

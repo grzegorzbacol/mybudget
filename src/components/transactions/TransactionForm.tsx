@@ -47,11 +47,12 @@ interface TransactionFormProps {
     receiptUrl?: string;
   };
   editTransaction?: Transaction | null;
+  onPlanInstead?: () => void;
 }
 
 type EntryType = "expense" | "income" | "transfer";
 
-export function TransactionForm({ open, onOpenChange, prefill, editTransaction }: TransactionFormProps) {
+export function TransactionForm({ open, onOpenChange, prefill, editTransaction, onPlanInstead }: TransactionFormProps) {
   const { data: familyData } = useFamily();
   const { data: members } = useFamilyMembers();
   const createTransaction = useCreateTransaction();
@@ -448,6 +449,27 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction }
               <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
           </div>
+          {!editTransaction && date > todayIso() && (
+            <p className="text-sm text-amber-800 dark:text-amber-200">
+              Data w przyszłości. Zapis jako transakcja ruszy saldo i koperty od razu.
+              {onPlanInstead ? (
+                <>
+                  {" "}
+                  <button
+                    type="button"
+                    className="font-medium underline"
+                    onClick={() => {
+                      onOpenChange(false);
+                      onPlanInstead();
+                    }}
+                  >
+                    Zaplanuj zamiast tego
+                  </button>
+                  — plan nie księguje, dopóki go nie wprowadzisz.
+                </>
+              ) : null}
+            </p>
+          )}
 
           {(!accounts || accounts.length === 0) && (
             <div className="space-y-2 rounded-md border border-amber-500/40 px-3 py-2">

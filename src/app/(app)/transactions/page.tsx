@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Plus } from "lucide-react";
+import { Plus, CalendarClock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -16,6 +16,7 @@ import { TransactionList } from "@/components/transactions/TransactionList";
 import { CsvImport } from "@/components/transactions/CsvImport";
 import { GenericPayeeBanner } from "@/components/transactions/GenericPayeeBanner";
 import { ReceiptScanner } from "@/components/ReceiptScanner";
+import { PlanForm } from "@/components/plan/PlanForm";
 import { MonthSwitcher } from "@/components/MonthSwitcher";
 import { getCurrentYearMonth } from "@/lib/format";
 import { ALL_ACCOUNTS_FILTER, readAccountFilter } from "@/lib/transaction-list";
@@ -50,6 +51,7 @@ export default function TransactionsPage() {
   const [allMonths, setAllMonths] = useState(false);
   const [accountId, setAccountId] = useState<string | undefined>(undefined);
   const [formOpen, setFormOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
   const { data: familyData } = useFamily();
   const supabase = createClient();
@@ -93,6 +95,10 @@ export default function TransactionsPage() {
           <Button variant="outline" onClick={() => setScannerOpen(true)}>
             Skanuj paragon
           </Button>
+          <Button variant="outline" onClick={() => setPlanOpen(true)}>
+            <CalendarClock className="mr-2 h-4 w-4" />
+            Zaplanuj
+          </Button>
           <Button onClick={() => setFormOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Dodaj
@@ -102,8 +108,9 @@ export default function TransactionsPage() {
 
       <p className="text-sm text-muted-foreground">
         Wybierz konto, żeby zobaczyć jego rejestr: wydatek schodzi, przychód wchodzi, a transfer ubywa na
-        jednym koncie i przybywa na drugim. Bez filtra konta transfer widać raz (kierunek A → B). Import: CSV
-        mBank (Zestawienie operacji — tam jest nazwa sklepu), PKO, ING albo OFX.
+        jednym koncie i przybywa na drugim. <strong>Zaplanuj</strong> przyszłą wypłatę albo rachunek — nie
+        rusza salda, dopóki go nie wprowadzisz. Bez filtra konta transfer widać raz (kierunek A → B). Import:
+        CSV mBank (Zestawienie operacji — tam jest nazwa sklepu), PKO, ING albo OFX.
       </p>
 
       <GenericPayeeBanner />
@@ -128,7 +135,12 @@ export default function TransactionsPage() {
           accountId={accountId}
         />
       </Suspense>
-      <TransactionForm open={formOpen} onOpenChange={setFormOpen} />
+      <TransactionForm
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        onPlanInstead={() => setPlanOpen(true)}
+      />
+      <PlanForm open={planOpen} onOpenChange={setPlanOpen} />
       <ReceiptScanner open={scannerOpen} onOpenChange={setScannerOpen} />
     </div>
   );

@@ -205,6 +205,10 @@ export interface BudgetMonthData {
   totalAvailable: number;
   onBudgetBalance: number;
   uncategorizedCount: number;
+  /** Scheduled inflows in this month that are not yet on the ledger. */
+  plannedIncome?: number;
+  /** Scheduled outflows in this month that are not yet on the ledger. */
+  plannedExpense?: number;
   groups: BudgetGroup[];
 }
 

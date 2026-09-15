@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { Camera, Plus } from "lucide-react";
+import { Camera, CalendarClock, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { BudgetTable } from "@/components/budget/BudgetTable";
+import { PlanForm } from "@/components/plan/PlanForm";
 import { ReceiptScanner } from "@/components/ReceiptScanner";
 import { TransactionForm } from "@/components/transactions/TransactionForm";
 import { StatusStrip } from "@/components/overview/StatusStrip";
@@ -19,6 +20,7 @@ export default function BudgetPage() {
   const [month, setMonth] = useState(initMonth);
   const [scannerOpen, setScannerOpen] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
+  const [planOpen, setPlanOpen] = useState(false);
 
   return (
     <div className="space-y-4">
@@ -31,6 +33,10 @@ export default function BudgetPage() {
           <Button variant="outline" onClick={() => setScannerOpen(true)}>
             <Camera className="mr-2 h-4 w-4" />
             Skanuj
+          </Button>
+          <Button variant="outline" onClick={() => setPlanOpen(true)}>
+            <CalendarClock className="mr-2 h-4 w-4" />
+            Zaplanuj
           </Button>
           <Button onClick={() => setFormOpen(true)}>
             <Plus className="mr-2 h-4 w-4" />
@@ -53,7 +59,12 @@ export default function BudgetPage() {
       <BudgetSecondaryStrips year={year} month={month} />
 
       <ReceiptScanner open={scannerOpen} onOpenChange={setScannerOpen} />
-      <TransactionForm open={formOpen} onOpenChange={setFormOpen} />
+      <TransactionForm
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        onPlanInstead={() => setPlanOpen(true)}
+      />
+      <PlanForm open={planOpen} onOpenChange={setPlanOpen} />
     </div>
   );
 }

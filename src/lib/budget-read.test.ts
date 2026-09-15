@@ -79,6 +79,54 @@ describe("budgetMonthFromCore", () => {
     expect(data.groups[0].categories[0].assigned).toBe(500);
     expect(data.groups[0].categories[0].available).toBe(420);
     expect(data.readyToAssign).toBe(2580);
+    expect(data.plannedIncome).toBe(0);
+    expect(data.plannedExpense).toBe(0);
+  });
+
+  it("exposes planned income and expenses from scheduled rules for the month", () => {
+    const data = budgetMonthFromCore(
+      core({
+        scheduled: [
+          {
+            id: "s-pay",
+            family_id: "fam-1",
+            account_id: "checking",
+            transfer_account_id: null,
+            category_id: null,
+            amount: 8500,
+            payee: "Wynagrodzenie",
+            memo: "",
+            next_date: "2026-09-10",
+            frequency: "monthly",
+            end_date: null,
+            auto_enter: false,
+            enabled: true,
+            created_at: "",
+          },
+          {
+            id: "s-rent",
+            family_id: "fam-1",
+            account_id: "checking",
+            transfer_account_id: null,
+            category_id: "groceries",
+            amount: -2100,
+            payee: "Czynsz",
+            memo: "",
+            next_date: "2026-09-05",
+            frequency: "monthly",
+            end_date: null,
+            auto_enter: false,
+            enabled: true,
+            created_at: "",
+          },
+        ],
+      }),
+      2026,
+      9
+    );
+    expect(data.plannedIncome).toBe(8500);
+    expect(data.plannedExpense).toBe(2100);
+    expect(data.groups[0].categories[0].upcoming).toBe(2100);
   });
 
   it("matches assembleBudgetMonthData leftover math", () => {

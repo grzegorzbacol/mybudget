@@ -137,6 +137,16 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             <p className="font-medium">{formatCurrency(data?.onBudgetBalance ?? 0)}</p>
           </div>
         </div>
+        {(Number(data?.plannedIncome) > 0 || Number(data?.plannedExpense) > 0) && (
+          <div className="mt-3 rounded-md border bg-background/80 px-3 py-2 text-sm">
+            <p className="font-medium">Plan miesiąca (jeszcze nie w rejestrze)</p>
+            <p className="text-muted-foreground">
+              Przychody {formatCurrency(data?.plannedIncome ?? 0)}
+              {" · "}
+              wydatki {formatCurrency(data?.plannedExpense ?? 0)}
+            </p>
+          </div>
+        )}
         {isError && (
           <div className="mt-3 rounded-md border border-amber-500/40 bg-background p-3 text-sm">
             <p className="font-medium">Nie udało się wczytać kopert</p>
