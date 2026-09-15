@@ -67,53 +67,14 @@ export function addDraftGroup(
 
 export const DEFAULT_CATEGORY_ICON = "📁";
 
-/** Curated set for Settings / budget create — household envelopes, not a full emoji mart. */
-export const CATEGORY_EMOJI_CHOICES = [
-  "📁",
-  "🛒",
-  "🍽️",
-  "☕",
-  "🍕",
-  "🧼",
-  "🏠",
-  "💡",
-  "📶",
-  "🛡️",
-  "⛽",
-  "🚌",
-  "🚗",
-  "🚲",
-  "💊",
-  "🩺",
-  "🏥",
-  "💉",
-  "🎮",
-  "📺",
-  "🎬",
-  "🎵",
-  "👕",
-  "💇",
-  "🏦",
-  "🎯",
-  "💰",
-  "📈",
-  "🎁",
-  "✈️",
-  "🐶",
-  "👶",
-  "📚",
-  "🏋️",
-  "🔧",
-  "🧹",
-  "🌳",
-  "📱",
-  "💻",
-  "🎓",
-  "❤️",
-  "⭐",
-  "🔥",
-  "🎉",
-] as const;
+export {
+  CATEGORY_EMOJI_CHOICES,
+  CATEGORY_EMOJI_CATALOG,
+  CATEGORY_EMOJI_GROUPS,
+  filterCategoryEmojis,
+  foldEmojiSearch,
+} from "./category-emojis";
+export type { CategoryEmojiEntry, CategoryEmojiGroupId } from "./category-emojis";
 
 function firstGrapheme(value: string): string {
   const Segmenter = (Intl as typeof Intl & { Segmenter?: typeof Intl.Segmenter }).Segmenter;
