@@ -8,6 +8,7 @@ import {
   isAccountTypeCheckError,
   isQaLeftoverAccountName,
   loadAccountForLedger,
+  accountPatchRow,
 } from "./accounts";
 
 describe("account create payload", () => {
@@ -42,6 +43,120 @@ describe("account create payload", () => {
       )
     ).toBe(true);
     expect(isAccountTypeCheckError("Unauthorized")).toBe(false);
+  });
+});
+
+describe("accountPatchRow", () => {
+  it("trims the name and keeps type plus on_budget", () => {
+    expect(accountPatchRow({ name: "  mBank  ", type: "savings", on_budget: false })).toEqual({
+      ok: true,
+      row: {
+        name: "mBank",
+        type: "savings",
+        on_budget: false,
+      },
+    });
+  });
+
+  it("rejects a blank name and an empty patch", () => {
+    expect(accountPatchRow({ name: "   " })).toEqual({ ok: false, error: "Nazwa nie może być pusta" });
+    expect(accountPatchRow({})).toEqual({ ok: false, error: "Brak zmian" });
+  });
+});
+
+describe("updateAccountRow", () => {
+  it("updates the family account and returns 404 when it is missing", async () => {
+    const { updateAccountRow } = await import("./accounts");
+    const filters: Array<{ col: string; val: unknown }> = [];
+    const supabase = {
+      from: () => ({
+        update: (row: Record<string, unknown>) => ({
+          eq: (col: string, val: unknown) => {
+            filters.push({ col, val });
+            const chain = {
+              eq: (col2: string, val2: unknown) => {
+                filters.push({ col: col2, val: val2 });
+                return chain;
+              },
+              select: () => ({
+                maybeSingle: async () => ({ data: { id: "a1", name: row.name, type: row.type }, error: null }),
+              }),
+            };
+            return chain;
+          },
+        }),
+      }),
+    };
+
+    const result = await updateAccountRow(supabase, {
+      familyId: "fam",
+      accountId: "a1",
+      name: "Gotówka",
+      type: "cash",
+      on_budget: true,
+    });
+    expect(result.account).toMatchObject({ id: "a1", name: "Gotówka", type: "cash" });
+    expect(filters).toEqual([
+      { col: "id", val: "a1" },
+      { col: "family_id", val: "fam" },
+    ]);
+
+    const missing = {
+      from: () => ({
+        update: () => ({
+          eq: () => ({
+            eq: () => ({
+              select: () => ({
+                maybeSingle: async () => ({ data: null, error: null }),
+              }),
+            }),
+          }),
+        }),
+      }),
+    };
+    const notFound = await updateAccountRow(missing, { familyId: "fam", accountId: "missing", name: "X" });
+    expect(notFound).toMatchObject({ error: "Nie znaleziono konta", status: 404 });
+  });
+
+  it("retries after ensure-schema when on_budget is missing from the cache", async () => {
+    vi.resetModules();
+    vi.doMock("./ensure-schema", () => ({
+      applyEnsureSchema: vi.fn().mockResolvedValue({ ok: true, applied: 1 }),
+    }));
+    const { updateAccountRow } = await import("./accounts");
+    let calls = 0;
+    const supabase = {
+      from: () => ({
+        update: (row: Record<string, unknown>) => ({
+          eq: () => ({
+            eq: () => ({
+              select: () => ({
+                maybeSingle: async () => {
+                  calls += 1;
+                  if (calls === 1) {
+                    return {
+                      data: null,
+                      error: {
+                        message: "Could not find the 'on_budget' column of 'accounts' in the schema cache",
+                      },
+                    };
+                  }
+                  return { data: { id: "a1", name: "mBank", on_budget: row.on_budget }, error: null };
+                },
+              }),
+            }),
+          }),
+        }),
+      }),
+    };
+    const result = await updateAccountRow(supabase, {
+      familyId: "fam",
+      accountId: "a1",
+      name: "mBank",
+      on_budget: false,
+    });
+    expect(result.account).toMatchObject({ id: "a1", on_budget: false });
+    expect(calls).toBe(2);
   });
 });
 

@@ -95,6 +95,16 @@ export const accountSchema = z.object({
   on_budget: z.boolean().optional(),
 });
 
+export const accountUpdateSchema = z
+  .object({
+    name: z.string().min(1).optional(),
+    type: accountSchema.shape.type.optional(),
+    on_budget: z.boolean().optional(),
+  })
+  .refine((value) => value.name != null || value.type != null || value.on_budget != null, {
+    message: "Brak zmian",
+  });
+
 export const goalSchema = z.object({
   category_id: z.string().uuid(),
   target_amount: z.number().positive(),

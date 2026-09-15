@@ -10,7 +10,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -44,6 +44,7 @@ export default function AccountsPage() {
   const supabase = createClient();
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState<Account | null>(null);
   const [reconcileOpen, setReconcileOpen] = useState<Account | null>(null);
   const [deleteOpen, setDeleteOpen] = useState<Account | null>(null);
   const [selected, setSelected] = useState<Account | null>(null);
@@ -52,6 +53,9 @@ export default function AccountsPage() {
   const [type, setType] = useState<string>("checking");
   const [onBudget, setOnBudget] = useState(true);
   const [opening, setOpening] = useState("");
+  const [editName, setEditName] = useState("");
+  const [editType, setEditType] = useState<string>("checking");
+  const [editOnBudget, setEditOnBudget] = useState(true);
 
   const { data: accounts } = useQuery({
     queryKey: ["accounts", familyData?.family.id],
@@ -119,6 +123,44 @@ export default function AccountsPage() {
       setOnBudget(true);
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd tworzenia konta"),
+  });
+
+  const openEdit = (account: Account) => {
+    setEditOpen(account);
+    setEditName(account.name);
+    setEditType(account.type);
+    setEditOnBudget(isOnBudget(account));
+  };
+
+  const updateAccount = useMutation({
+    mutationFn: async () => {
+      if (!editOpen) return;
+      const res = await fetch(`/api/accounts/${editOpen.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editName.trim(),
+          type: editType,
+          on_budget: editOnBudget,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(typeof json.error === "string" ? json.error : "Nie udało się zapisać konta");
+      }
+      return json as Account;
+    },
+    onSuccess: (account) => {
+      toast.success("Konto zapisane");
+      queryClient.invalidateQueries({ queryKey: ["accounts"] });
+      queryClient.invalidateQueries({ queryKey: ["budget"] });
+      queryClient.invalidateQueries({ queryKey: ["transactions"] });
+      queryClient.invalidateQueries({ queryKey: ["cashflow"] });
+      queryClient.invalidateQueries({ queryKey: ["wealth"] });
+      if (account && selected?.id === account.id) setSelected(account);
+      setEditOpen(null);
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Nie udało się zapisać konta"),
   });
 
   const reconcile = useMutation({
@@ -235,7 +277,7 @@ export default function AccountsPage() {
                 {isOnBudget(account) ? "" : " · śledzone (poza budżetem)"}
               </p>
             </button>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               <div className="text-right">
                 <p className="text-lg font-bold">{formatCurrency(displayBalance(account))}</p>
                 <p className="text-xs text-muted-foreground">
@@ -243,6 +285,14 @@ export default function AccountsPage() {
                   {Math.abs(uncleared) > 0.001 ? ` · w drodze ${formatCurrency(uncleared)}` : ""}
                 </p>
               </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openEdit(account)}
+              >
+                <Pencil className="mr-1 h-4 w-4" />
+                Edytuj
+              </Button>
               <Button
                 variant="outline"
                 size="sm"
@@ -413,6 +463,69 @@ export default function AccountsPage() {
               disabled={!name || createAccount.isPending}
             >
               Utwórz
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!editOpen}
+        onOpenChange={(open) => {
+          if (!open) setEditOpen(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edytuj konto</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="edit-account-name">Nazwa</Label>
+              <Input
+                id="edit-account-name"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label>Typ</Label>
+              <Select
+                value={editType}
+                onValueChange={(value) => {
+                  setEditType(value);
+                  const meta = ACCOUNT_TYPE_META[value as keyof typeof ACCOUNT_TYPE_META];
+                  if (meta) setEditOnBudget(meta.onBudget);
+                }}
+              >
+                <SelectTrigger aria-label="Typ konta">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(ACCOUNT_TYPE_META).map(([value, meta]) => (
+                    <SelectItem key={value} value={value}>
+                      {meta.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={editOnBudget}
+                onChange={(e) => setEditOnBudget(e.target.checked)}
+              />
+              Konto w budżecie (wyłącz dla inwestycji / śledzenia)
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Saldo zmieniasz przez Uzgodnij. Tu tylko nazwa, typ i czy konto liczy się w kopertach.
+            </p>
+            <Button
+              className="w-full"
+              onClick={() => updateAccount.mutate()}
+              disabled={!editName.trim() || updateAccount.isPending}
+            >
+              {updateAccount.isPending ? "Zapisywanie…" : "Zapisz"}
             </Button>
           </div>
         </DialogContent>
