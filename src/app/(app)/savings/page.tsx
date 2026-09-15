@@ -3,10 +3,12 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
-  Line,
-  LineChart,
+  CartesianGrid,
+  Legend,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -76,6 +78,17 @@ function formatSavingsDelta(delta: number): string {
   if (Math.abs(delta) < 0.005) return "bez zmiany";
   const formatted = formatCurrency(Math.abs(delta));
   return delta > 0 ? `+${formatted}` : `−${formatted}`;
+}
+
+function savingsChartLabel(year: number, month: number): string {
+  const monthPart = new Intl.DateTimeFormat("pl-PL", { month: "short" })
+    .format(new Date(year, month - 1, 1))
+    .replace(".", "");
+  return `${monthPart} ${String(year).slice(2)}`;
+}
+
+function compactPln(value: number): string {
+  return new Intl.NumberFormat("pl-PL", { notation: "compact", maximumFractionDigits: 1 }).format(value);
 }
 
 export default function SavingsPage() {
@@ -256,6 +269,14 @@ export default function SavingsPage() {
       ),
     [savingsAccounts, savingsLedger, year, month]
   );
+  const monthEndChart = useMemo(
+    () =>
+      monthEndSavings.map((point) => ({
+        ...point,
+        chartLabel: savingsChartLabel(point.year, point.month),
+      })),
+    [monthEndSavings]
+  );
   const rate = savingsRate(budget?.incomeThisMonth ?? 0, contributedThisMonth);
   const recent = [...history].reverse().filter((p) => p.amount > 0).slice(0, 6);
   const primaryGoal = (goals ?? []).find((goal) => {
@@ -383,20 +404,50 @@ export default function SavingsPage() {
       {(savingsAccounts?.length ?? 0) > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Na koniec miesiąca</CardTitle>
+            <CardTitle className="text-base">Oszczędności na koniec miesiąca</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Suma kont oszczędnościowych. Poprzednie miesiące — stan z ostatniego dnia. Bieżący miesiąc — na dziś.
+              Wykres pokazuje, ile leżało na kontach oszczędnościowych na ostatni dzień miesiąca. Bieżący miesiąc — stan na
+              dziś.
             </p>
-            {monthEndSavings.length > 1 && (
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart data={monthEndSavings}>
-                  <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                  <YAxis tick={{ fontSize: 10 }} />
-                  <Tooltip formatter={(v) => formatCurrency(Number(v))} />
-                  <Line type="monotone" dataKey="amount" stroke="#0d9488" strokeWidth={2} name="Oszczędności" dot />
-                </LineChart>
+            {monthEndChart.length > 0 && (
+              <ResponsiveContainer width="100%" height={280}>
+                <AreaChart data={monthEndChart} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="savingsMonthEndFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#0d9488" stopOpacity={0.35} />
+                      <stop offset="95%" stopColor="#0d9488" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="chartLabel" tick={{ fontSize: 11 }} />
+                  <YAxis
+                    tick={{ fontSize: 10 }}
+                    width={52}
+                    domain={[0, "auto"]}
+                    tickFormatter={(value) => compactPln(Number(value))}
+                  />
+                  <Tooltip
+                    formatter={(value) => formatCurrency(Number(value))}
+                    labelFormatter={(_, payload) => {
+                      const point = payload?.[0]?.payload as { year?: number; month?: number; current?: boolean } | undefined;
+                      if (!point?.year || !point?.month) return "";
+                      return `${getMonthLabel(point.year, point.month)}${point.current ? " · dziś" : ""}`;
+                    }}
+                  />
+                  <Legend />
+                  <Area
+                    type="monotone"
+                    dataKey="amount"
+                    name="Na koniec miesiąca"
+                    stroke="#0d9488"
+                    strokeWidth={2}
+                    fill="url(#savingsMonthEndFill)"
+                    dot={{ r: 3 }}
+                    activeDot={{ r: 5 }}
+                  />
+                </AreaChart>
               </ResponsiveContainer>
             )}
             <div className="space-y-2 text-sm">
