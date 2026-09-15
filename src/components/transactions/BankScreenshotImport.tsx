@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { Camera, Upload } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Camera, PiggyBank, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -36,6 +36,7 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
 
   const [open, setOpen] = useState(false);
   const [accountId, setAccountId] = useState(defaultAccountId ?? "");
+  const [savingsAccountId, setSavingsAccountId] = useState("");
   const [step, setStep] = useState<Step>("pick");
   const [processingError, setProcessingError] = useState<string | null>(null);
   const [rows, setRows] = useState<BankScreenshotMatchedRow[]>([]);
@@ -72,10 +73,26 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
     (c) => c.group_name !== "Przychody" && (c.kind ?? "expense") !== "income"
   );
 
+  const savingsTargets = (accounts ?? []).filter((a) => a.id !== accountId);
+  const preferredSavings = savingsTargets.filter((a) => a.type === "savings");
+
+  const selectedSpareChange = rows.filter(
+    (r) =>
+      r.kind === "spare_change" && r.selected !== false && r.status !== "skip"
+  );
+  const needsSavingsAccount = selectedSpareChange.length > 0;
+
+  useEffect(() => {
+    if (!needsSavingsAccount || savingsAccountId) return;
+    const preferred = preferredSavings[0] ?? savingsTargets[0];
+    if (preferred) setSavingsAccountId(preferred.id);
+  }, [needsSavingsAccount, preferredSavings, savingsTargets, savingsAccountId]);
+
   const handleOpen = (next: boolean) => {
     setOpen(next);
     if (next) {
       setAccountId(defaultAccountId ?? accountId);
+      setSavingsAccountId("");
       setStep("pick");
       setProcessingError(null);
       setRows([]);
@@ -144,12 +161,18 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
     setRows((prev) => prev.map((row) => (row.id === id ? { ...row, ...patch } : row)));
   };
 
-  const selectedCount = rows.filter((r) => r.selected !== false && r.status === "new").length;
+  const selectedCount = rows.filter(
+    (r) => r.selected !== false && (r.status === "new" || r.status === "duplicate")
+  ).length;
 
   const handleConfirm = async () => {
     const toSave = rows.filter((r) => r.selected !== false && r.status !== "skip");
     if (toSave.length === 0) {
       toast.error("Zaznacz przynajmniej jedną operację");
+      return;
+    }
+    if (needsSavingsAccount && !savingsAccountId) {
+      toast.error("Wybierz konto oszczędności dla Spare change");
       return;
     }
 
@@ -160,12 +183,14 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           account_id: accountId,
+          savings_account_id: needsSavingsAccount ? savingsAccountId : null,
           rows: toSave.map((row) => ({
             date: row.date,
             amount: row.amount,
             payee: row.payee,
             memo: row.memo ?? null,
             category_id: row.category_id ?? null,
+            kind: row.kind ?? (row.amount < 0 ? "expense" : "income"),
             status: row.status,
             selected: row.selected !== false,
           })),
@@ -175,9 +200,16 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
       if (!res.ok) throw new Error(typeof data.error === "string" ? data.error : "Błąd zapisu");
 
       const imported = Number(data.imported) || 0;
-      toast.success(
-        imported > 0 ? `Dodano ${imported} transakcji ze screena` : "Nic nie dodano"
-      );
+      const transferred = Number(data.transferred) || 0;
+      if (imported > 0 && transferred > 0) {
+        toast.success(`Dodano ${imported} wydatków i ${transferred} przelewów Spare change`);
+      } else if (transferred > 0) {
+        toast.success(`Dodano ${transferred} przelewów Spare change`);
+      } else {
+        toast.success(
+          imported > 0 ? `Dodano ${imported} transakcji ze screena` : "Nic nie dodano"
+        );
+      }
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       queryClient.invalidateQueries({ queryKey: ["budget"] });
       queryClient.invalidateQueries({ queryKey: ["accounts"] });
@@ -188,6 +220,11 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
       setSaving(false);
     }
   };
+
+  const confirmDisabled =
+    saving ||
+    selectedCount === 0 ||
+    (needsSavingsAccount && !savingsAccountId);
 
   return (
     <>
@@ -204,12 +241,12 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
           {step === "pick" && (
             <div className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Zrób screen listy operacji w aplikacji banku (mBank, PKO, ING…) — pełne wiersze z
-                datą, kwotą i opisem, nie samo saldo. AI wyciągnie wydatki i dopasuje koperty;
-                duplikaty oznaczy do pominięcia.
+                Zrób screen listy operacji (Revolut, mBank, PKO, ING…) — pełne wiersze z datą i
+                kwotą. AI rozpozna też Spare change i zapyta, na które konto oszczędności je
+                przelać.
               </p>
               <div className="space-y-2">
-                <Label htmlFor="bank-shot-account">Konto</Label>
+                <Label htmlFor="bank-shot-account">Konto źródłowe</Label>
                 <Select value={accountId} onValueChange={setAccountId}>
                   <SelectTrigger id="bank-shot-account" aria-label="Konto do importu">
                     <SelectValue placeholder="Wybierz konto" />
@@ -263,16 +300,46 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
           {step === "review" && (
             <div className="space-y-3">
               <p className="text-sm text-muted-foreground">
-                Zaznacz operacje do dodania. Duplikaty są domyślnie odznaczone.
+                Zaznacz operacje do dodania. Duplikaty są domyślnie odznaczone. Spare change to
+                przelew na konto oszczędności.
               </p>
+
+              {needsSavingsAccount && (
+                <div className="space-y-2 rounded-md border border-dashed p-3">
+                  <Label htmlFor="bank-shot-savings" className="flex items-center gap-2">
+                    <PiggyBank className="h-4 w-4" />
+                    Konto oszczędności (Spare change)
+                  </Label>
+                  <Select value={savingsAccountId} onValueChange={setSavingsAccountId}>
+                    <SelectTrigger id="bank-shot-savings" aria-label="Konto oszczędności">
+                      <SelectValue placeholder="Dokąd przelać Spare change?" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {savingsTargets.map((account) => (
+                        <SelectItem key={account.id} value={account.id}>
+                          {account.type === "savings" ? "🐷 " : "🏦 "}
+                          {account.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Zaznaczono {selectedSpareChange.length} przelewów Spare change z Revoluta.
+                  </p>
+                </div>
+              )}
+
               <ul className="space-y-3">
                 {rows.map((row) => {
                   const isDup = row.status === "duplicate";
+                  const isSpare = row.kind === "spare_change";
                   const checked = row.selected !== false;
                   return (
                     <li
                       key={row.id}
-                      className={`rounded-md border p-3 ${isDup ? "border-dashed opacity-80" : ""}`}
+                      className={`rounded-md border p-3 ${
+                        isDup ? "border-dashed opacity-80" : ""
+                      } ${isSpare ? "border-emerald-600/40 bg-emerald-500/5" : ""}`}
                     >
                       <div className="flex items-start gap-3">
                         <Checkbox
@@ -310,7 +377,11 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
                               className="h-8 w-[10.5rem]"
                               aria-label="Data"
                             />
-                            {row.amount < 0 ? (
+                            {isSpare ? (
+                              <span className="self-center text-xs text-emerald-800 dark:text-emerald-300">
+                                Przelew na oszczędności
+                              </span>
+                            ) : row.amount < 0 ? (
                               <Select
                                 value={row.category_id ?? "none"}
                                 onValueChange={(v) =>
@@ -352,7 +423,7 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
                 <Button variant="outline" onClick={() => setStep("pick")} disabled={saving}>
                   Inny screen
                 </Button>
-                <Button onClick={() => void handleConfirm()} disabled={saving || selectedCount === 0}>
+                <Button onClick={() => void handleConfirm()} disabled={confirmDisabled}>
                   {saving ? "Zapisywanie…" : `Dodaj zaznaczone (${selectedCount})`}
                 </Button>
               </div>

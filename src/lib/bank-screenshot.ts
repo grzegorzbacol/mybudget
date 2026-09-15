@@ -166,21 +166,29 @@ Zwróć wyłącznie JSON:
       "payee": string,
       "memo": string,
       "direction": "expense" | "income",
-      "category_hint": string
+      "category_hint": string,
+      "spare_change_amount": number | null,
+      "failed": boolean
     }
   ]
 }
 
 Zasady:
-- Każdy widoczny wiersz operacji = jeden element (data + kwota + opis). NIE duplikuj wierszy.
-- Ignoruj nagłówki, salda, filtry, zakładki, numery kont, reklamy.
-- "amount" to wartość absolutna (zawsze > 0). Kierunek oddaj w "direction": expense = obciążenie/wydatek/karta/BLIK/przelew wychodzący; income = uznanie/wpłata/zwrot na konto.
-- "payee" to nazwa sklepu / odbiorcy / nadawcy — bez numerów kart i IBAN. Jeśli opis to "PRZY UŻYCIU KARTY;Sklep", weź sam sklep.
-- "memo" opcjonalnie (tytuł przelewu, lokalizacja); inaczej "".
+- Każdy widoczny wiersz operacji = jeden element. NIE duplikuj wierszy.
+- Ignoruj nagłówki, salda, filtry, zakładki, numery kont, reklamy oraz kafelek podsumowania "Spare change N" na dole listy (to nie jest osobna transakcja).
+- "amount" to wartość absolutna (zawsze > 0) GŁÓWNEGO ruchu kartą / przelewem.
+- "spare_change_amount" (Revolut Spare change / zaokrąglenie do skarbonki):
+  - Gdy wiersz ma ikonę monet i DWIE kwoty: kwota w podtytule obok godziny (np. "14:47 · -15 zł") = zakup kartą → "amount";
+    kwota po prawej (np. -3,50 zł) = przelew spare change → "spare_change_amount".
+  - Gdy nie ma spare change, ustaw spare_change_amount na null.
+  - NIGDY nie wstawiaj kwoty spare change jako jedynego "amount" — wtedy gubisz prawdziwy wydatek.
+- "direction": expense = obciążenie/wydatek/karta/BLIK; income = uznanie/wpłata/zwrot.
+- "payee" = nazwa sklepu / odbiorcy (bez IBAN). "memo" opcjonalnie.
+- "failed": true gdy kwota przekreślona, "Card is frozen", declined, rejected — takie wiersze i tak pominiemy.
 - "date" w ISO YYYY-MM-DD:
   - "Today" / "Dziś" / "Dzisiaj" → ${today}
   - "Yesterday" / "Wczoraj" → ${yesterday}
-  - daty bez roku (np. "6 Oct", "06.10", "13 paź") → rok z kontekstu (${today.slice(0, 4)}), nie 2023 ani inny stary rok
+  - daty bez roku (np. "6 Oct", "06.10") → rok z kontekstu (${today.slice(0, 4)})
   - NIGDY nie używaj roku sprzed ${todayYearHint(today)} jeśli na screenie nie widać pełnej daty z rokiem
 - ${buildCategoryRule(categoryNames)}
 - Nie wymyślaj operacji spoza obrazu. Jeśli nic nie widać, zwróć {"operations":[]}.`;
@@ -286,14 +294,48 @@ export function normalizeBankScreenshotAmount(
   return -abs;
 }
 
+/** Absolute spare-change amount, or null if absent/invalid. */
+export function normalizeSpareChangeAmount(raw: unknown): number | null {
+  if (raw == null || raw === "") return null;
+  const abs = money(Math.abs(Number(raw) || 0));
+  return abs > 0 ? abs : null;
+}
+
+/**
+ * If the model swapped purchase and spare change, swap them back.
+ * Round-ups are almost always smaller than the card purchase.
+ */
+export function orderPurchaseAndSpareChange(
+  purchaseAbs: number,
+  spareAbs: number | null
+): { purchaseAbs: number; spareAbs: number | null } {
+  if (spareAbs == null || spareAbs <= 0) return { purchaseAbs, spareAbs: null };
+  if (spareAbs > purchaseAbs) {
+    return { purchaseAbs: spareAbs, spareAbs: purchaseAbs };
+  }
+  return { purchaseAbs, spareAbs };
+}
+
 export function normalizeBankScreenshotOperation(
   raw: BankScreenshotOperation,
   today = todayIso()
 ): BankScreenshotOperation | null {
+  if (raw.failed === true) return null;
+
   const date = normalizeBankScreenshotDate(raw.date, today);
-  const amount = normalizeBankScreenshotAmount(raw.amount, raw.direction);
   const payee = parseBankDescription(raw.payee) || (raw.payee ?? "").trim();
-  if (!date || !payee || amount === 0) return null;
+  if (!date || !payee) return null;
+
+  const signed = normalizeBankScreenshotAmount(raw.amount, raw.direction);
+  if (signed === 0) return null;
+
+  let purchaseAbs = money(Math.abs(signed));
+  let spareAbs = normalizeSpareChangeAmount(raw.spare_change_amount);
+  // Spare change only applies to expenses
+  if (signed > 0) spareAbs = null;
+  ({ purchaseAbs, spareAbs } = orderPurchaseAndSpareChange(purchaseAbs, spareAbs));
+
+  const amount = signed > 0 ? purchaseAbs : -purchaseAbs;
   const memo = (raw.memo ?? "").trim() || null;
   const category_hint = (raw.category_hint ?? "").trim() || null;
   return {
@@ -303,6 +345,8 @@ export function normalizeBankScreenshotOperation(
     memo,
     direction: amount < 0 ? "expense" : "income",
     category_hint,
+    spare_change_amount: spareAbs,
+    failed: false,
   };
 }
 

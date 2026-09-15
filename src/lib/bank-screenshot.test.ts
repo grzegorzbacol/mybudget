@@ -1,21 +1,23 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
+  amountsMatch,
+  dedupeOperationsByAmountDate,
+  findDuplicateTx,
+  matchBankScreenshotOperations,
+  partitionImportRows,
+  resetReviewRowIdSeq,
+  resolveCategoryHint,
+  rowsToImport,
+} from "./bank-screenshot-match";
+import {
   coerceBankScreenshotYear,
   normalizeBankScreenshotAmount,
   normalizeBankScreenshotDate,
   normalizeBankScreenshotOperation,
   normalizeBankScreenshotOperations,
+  orderPurchaseAndSpareChange,
   parseBankScreenshotJson,
 } from "./bank-screenshot";
-import {
-  amountsMatch,
-  dedupeOperationsByAmountDate,
-  findDuplicateTx,
-  matchBankScreenshotOperations,
-  resetReviewRowIdSeq,
-  resolveCategoryHint,
-  rowsToImport,
-} from "./bank-screenshot-match";
 import { bankScreenshotConfirmSchema, bankScreenshotResultSchema } from "./validators";
 
 const TODAY = "2026-09-15";
@@ -104,6 +106,51 @@ describe("normalizeBankScreenshotOperation", () => {
       TODAY
     );
     expect(op?.date).toBe("2026-09-15");
+  });
+
+  it("keeps purchase amount and spare change separately (and swaps if inverted)", () => {
+    const op = normalizeBankScreenshotOperation(
+      {
+        date: "Today",
+        amount: 15,
+        spare_change_amount: 3.5,
+        payee: "AsVending",
+        direction: "expense",
+      },
+      TODAY
+    );
+    expect(op).toMatchObject({
+      amount: -15,
+      spare_change_amount: 3.5,
+    });
+
+    expect(orderPurchaseAndSpareChange(3.5, 15)).toEqual({
+      purchaseAbs: 15,
+      spareAbs: 3.5,
+    });
+
+    const swapped = normalizeBankScreenshotOperation(
+      {
+        date: "Today",
+        amount: 3.5,
+        spare_change_amount: 15,
+        payee: "AsVending",
+        direction: "expense",
+      },
+      TODAY
+    );
+    expect(swapped).toMatchObject({ amount: -15, spare_change_amount: 3.5 });
+  });
+
+  it("drops failed / frozen card rows", () => {
+    expect(
+      normalizeBankScreenshotOperation({
+        date: "Today",
+        amount: 72.36,
+        payee: "Anthropic",
+        failed: true,
+      })
+    ).toBeNull();
   });
 
   it("drops incomplete rows", () => {
@@ -328,10 +375,75 @@ describe("bank-screenshot-match", () => {
       },
     ]);
     expect(inserts).toEqual([
-      { date: "2026-09-01", amount: -10, payee: "A", memo: null, category_id: "c1" },
-      { date: "2026-09-03", amount: 100, payee: "Pensja", memo: null, category_id: null },
-      { date: "2026-09-04", amount: -5, payee: "C", memo: null, category_id: null },
+      {
+        date: "2026-09-01",
+        amount: -10,
+        payee: "A",
+        memo: null,
+        category_id: "c1",
+        kind: "expense",
+      },
+      {
+        date: "2026-09-03",
+        amount: 100,
+        payee: "Pensja",
+        memo: null,
+        category_id: null,
+        kind: "income",
+      },
+      {
+        date: "2026-09-04",
+        amount: -5,
+        payee: "C",
+        memo: null,
+        category_id: null,
+        kind: "expense",
+      },
     ]);
+  });
+
+  it("expands Revolut spare change into expense + transfer rows", () => {
+    const rows = matchBankScreenshotOperations(
+      [
+        {
+          date: "2026-09-15",
+          amount: -15,
+          payee: "AsVending",
+          spare_change_amount: 3.5,
+          category_hint: "Żywność",
+        },
+        {
+          date: "2026-09-15",
+          amount: -148,
+          payee: "mObywatel",
+        },
+      ],
+      [],
+      [{ id: "c-food", name: "Żywność" }]
+    );
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toMatchObject({
+      kind: "expense",
+      amount: -15,
+      payee: "AsVending",
+      category_id: "c-food",
+    });
+    expect(rows[1]).toMatchObject({
+      kind: "spare_change",
+      amount: -3.5,
+      payee: "Spare change · AsVending",
+      category_id: null,
+      selected: true,
+    });
+    expect(rows[2]).toMatchObject({
+      kind: "expense",
+      amount: -148,
+      payee: "mObywatel",
+    });
+
+    const partitioned = partitionImportRows(rowsToImport(rows));
+    expect(partitioned.ledger).toHaveLength(2);
+    expect(partitioned.spareChange).toHaveLength(1);
   });
 });
 
