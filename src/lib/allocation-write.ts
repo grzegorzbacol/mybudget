@@ -97,7 +97,7 @@ async function insertAllocated(
   );
   const data = asAllocation(created.data);
   if (data) return { data };
-  return { error: created.error };
+  return { data: null, error: created.error };
 }
 
 /**
