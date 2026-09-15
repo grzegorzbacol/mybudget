@@ -1,6 +1,6 @@
 import { isTransferTx } from "@/lib/budget";
 import { getMonthLabel } from "@/lib/format";
-import { parseYearMonthFromDate } from "@/lib/money";
+import { isValidYearMonth, parseYearMonthFromDate } from "@/lib/money";
 import { isOpeningBalanceTx } from "@/lib/opening-balance";
 import type { Account, Transaction } from "@/lib/types";
 
@@ -9,7 +9,16 @@ export const ALL_MONTHS_PERIOD = "all";
 
 export type LedgerTx = Pick<
   Transaction,
-  "id" | "account_id" | "amount" | "date" | "payee" | "memo" | "transfer_id" | "transfer_account_id" | "category_id"
+  | "id"
+  | "account_id"
+  | "amount"
+  | "date"
+  | "payee"
+  | "memo"
+  | "transfer_id"
+  | "transfer_account_id"
+  | "category_id"
+  | "category_splits"
 > & {
   account?: Pick<Account, "id" | "name" | "type"> | null;
   transfer_account?: Pick<Account, "id" | "name" | "type"> | null;
@@ -81,14 +90,45 @@ export function transferDirectionLabel(
 }
 
 /** Negative opening debt is not a budget expense that needs a koperta. */
-export function needsBudgetCategory(
-  tx: Pick<LedgerTx, "amount" | "category_id" | "payee" | "memo" | "transfer_id" | "transfer_account_id">
+export function hasEnvelopeSplits(
+  tx: Pick<LedgerTx, "category_splits"> | { category_splits?: LedgerTx["category_splits"] }
 ): boolean {
-  return Number(tx.amount) < 0 && !isTransferTx(tx) && !isOpeningBalanceTx(tx) && !tx.category_id;
+  return (tx.category_splits ?? []).some((line) => Boolean(line.category_id) && Number(line.amount) > 0);
+}
+
+/** Expense that still needs a koperta — matches the budget uncategorizedCount inbox. */
+export function needsBudgetCategory(
+  tx: Pick<LedgerTx, "amount" | "category_id" | "payee" | "memo" | "transfer_id" | "transfer_account_id"> & {
+    category_splits?: LedgerTx["category_splits"];
+  }
+): boolean {
+  if (Number(tx.amount) >= 0 || isTransferTx(tx) || isOpeningBalanceTx(tx) || tx.category_id) return false;
+  return !hasEnvelopeSplits(tx);
+}
+
+export function uncategorizedQueueHref(year: number, month: number): string {
+  return `/transactions?filter=uncategorized&year=${year}&month=${month}`;
+}
+
+export function readLedgerPeriod(
+  searchParams: { get(name: string): string | null },
+  fallbackYear: number,
+  fallbackMonth: number
+): { year: number; month: number; allMonths: boolean } {
+  if (searchParams.get("months") === ALL_MONTHS_PERIOD || searchParams.get("period") === ALL_MONTHS_PERIOD) {
+    return { year: fallbackYear, month: fallbackMonth, allMonths: true };
+  }
+  const year = Number(searchParams.get("year"));
+  const month = Number(searchParams.get("month"));
+  if (isValidYearMonth(year, month)) return { year, month, allMonths: false };
+  return { year: fallbackYear, month: fallbackMonth, allMonths: false };
 }
 
 export function matchesLedgerKind(
-  tx: Pick<LedgerTx, "amount" | "category_id" | "payee" | "memo" | "transfer_id" | "transfer_account_id">,
+  tx: Pick<
+    LedgerTx,
+    "amount" | "category_id" | "payee" | "memo" | "transfer_id" | "transfer_account_id" | "category_splits"
+  >,
   kind: string
 ): boolean {
   if (kind === "expense") return Number(tx.amount) < 0 && !isTransferTx(tx) && !isOpeningBalanceTx(tx);

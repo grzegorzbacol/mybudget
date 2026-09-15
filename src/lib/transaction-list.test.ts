@@ -4,9 +4,11 @@ import {
   groupTransactionsByMonth,
   matchesLedgerKind,
   readAccountFilter,
+  readLedgerPeriod,
   transactionAmountTone,
   transactionRegisterHint,
   transferDirectionLabel,
+  uncategorizedQueueHref,
   visibleLedgerTransactions,
 } from "./transaction-list";
 import type { Transaction } from "./types";
@@ -176,6 +178,27 @@ describe("opening balances in the register", () => {
     expect(transactionRegisterHint(opening)).toBe("Saldo konta");
     expect(transactionRegisterHint(groceryUncat)).toBe("Bez kategorii");
     expect(transactionRegisterHint(salary)).toBe("Do rozdzielenia");
+  });
+
+  it("does not treat a split receipt as Bez kategorii", () => {
+    const split = tx({
+      id: "split",
+      account_id: "checking",
+      amount: -100,
+      payee: "Biedronka",
+      category_splits: [
+        { category_id: "food", amount: 70 },
+        { category_id: "fun", amount: 30 },
+      ],
+    });
+    expect(matchesLedgerKind(split, "uncategorized")).toBe(false);
+    expect(transactionRegisterHint(split)).toBe("Podział (2)");
+  });
+
+  it("opens the uncategorized queue on the budget month", () => {
+    expect(uncategorizedQueueHref(2026, 8)).toBe("/transactions?filter=uncategorized&year=2026&month=8");
+    const params = new URLSearchParams("filter=uncategorized&year=2026&month=8");
+    expect(readLedgerPeriod(params, 2026, 9)).toEqual({ year: 2026, month: 8, allMonths: false });
   });
 
   it("does not count opening debt as account spending", () => {

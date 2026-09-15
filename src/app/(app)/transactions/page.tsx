@@ -19,7 +19,7 @@ import { ReceiptScanner } from "@/components/ReceiptScanner";
 import { PlanForm } from "@/components/plan/PlanForm";
 import { MonthSwitcher } from "@/components/MonthSwitcher";
 import { getCurrentYearMonth } from "@/lib/format";
-import { ALL_ACCOUNTS_FILTER, readAccountFilter } from "@/lib/transaction-list";
+import { ALL_ACCOUNTS_FILTER, readAccountFilter, readLedgerPeriod } from "@/lib/transaction-list";
 import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { useQuery } from "@tanstack/react-query";
@@ -45,10 +45,20 @@ function CaptureFromQuery({
 }
 
 export default function TransactionsPage() {
+  return (
+    <Suspense fallback={<p className="text-center text-muted-foreground">Ładowanie...</p>}>
+      <TransactionsView />
+    </Suspense>
+  );
+}
+
+function TransactionsView() {
+  const searchParams = useSearchParams();
   const { year: initYear, month: initMonth } = getCurrentYearMonth();
-  const [year, setYear] = useState(initYear);
-  const [month, setMonth] = useState(initMonth);
-  const [allMonths, setAllMonths] = useState(false);
+  const initial = readLedgerPeriod(searchParams, initYear, initMonth);
+  const [year, setYear] = useState(initial.year);
+  const [month, setMonth] = useState(initial.month);
+  const [allMonths, setAllMonths] = useState(initial.allMonths);
   const [accountId, setAccountId] = useState<string | undefined>(undefined);
   const [formOpen, setFormOpen] = useState(false);
   const [planOpen, setPlanOpen] = useState(false);

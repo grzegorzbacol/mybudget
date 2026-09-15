@@ -6,10 +6,13 @@ import {
   applyCategorySplitAggregates,
   assembleBudgetMonthData,
   expandCategorySplits,
+  isTransferTx,
+  normalizeBudgetId,
 } from "@/lib/budget";
 import { addDays, monthRange } from "@/lib/money";
 import { isOpeningBalanceTx } from "@/lib/opening-balance";
 import {
+  excludeSplitParentsFromUncategorized,
   monthAmount,
   monthCount,
   tryQueryFamilyBudgetSql,
@@ -38,6 +41,7 @@ export type FamilyBudgetCore = {
   source: "sql" | "rest";
   dialect?: string;
   roundTrips?: number;
+  transferMarkersMissing?: boolean;
 };
 
 /** Budget always falls back to PostgREST. Cashflow only does so when SQL DNS/connect fails. */
@@ -152,6 +156,7 @@ async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<F
     await fetchRestRows(supabase, familyId);
 
   let schemaLag: string | undefined;
+  let transferMarkersMissing = false;
   let transactions = (transactionsRes.data ?? []) as LedgerTransaction[];
   if (transactionsRes.error && isSchemaLagError(transactionsRes.error.message)) {
     const fallback = await supabase
@@ -161,6 +166,7 @@ async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<F
       .limit(20000);
     transactions = fallback.error ? [] : ((fallback.data ?? []) as LedgerTransaction[]);
     schemaLag = transactionsRes.error.message;
+    transferMarkersMissing = true;
   }
   if (transactions.length && !splitRes.error && splitRes.data?.length) {
     transactions = expandCategorySplits(transactions, splitRes.data);
@@ -206,6 +212,7 @@ async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<F
     uncategorized: [],
     schemaLag,
     source: "rest",
+    transferMarkersMissing,
   };
   return attachRestMonthTotals(core, transactions);
 }
@@ -224,11 +231,14 @@ export function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
     activityMap,
     income: payload.income,
     spending: payload.spending,
-    uncategorized: payload.uncategorized,
+    uncategorized: payload.transferMarkersMissing
+      ? []
+      : excludeSplitParentsFromUncategorized(payload.uncategorized, payload.splitLines),
     schemaLag: payload.scheduledMissing ? missingScheduledTableMessage() : undefined,
     source: "sql",
     dialect: payload.dialect,
     roundTrips: payload.roundTrips,
+    transferMarkersMissing: payload.transferMarkersMissing,
   };
 }
 
@@ -343,7 +353,7 @@ export function budgetMonthFromCore(
     accounts: core.accounts,
     activityMap: core.activityMap,
     incomeThisMonth: monthAmount(core.income, year, month),
-    uncategorizedCount: monthCount(core.uncategorized, year, month),
+    uncategorizedCount: core.transferMarkersMissing ? 0 : monthCount(core.uncategorized, year, month),
     upcomingByCategory: upcoming,
     plannedIncome: planned.income,
     plannedExpense: planned.expense,
@@ -360,7 +370,7 @@ export function attachRestMonthTotals(
   const incomeByMonth = new Map<string, number>();
   const spendByMonth = new Map<string, number>();
   const uncategorizedByMonth = new Map<string, number>();
-  const accountsById = new Map(core.accounts.map((account) => [account.id, account]));
+  const accountsById = new Map(core.accounts.map((account) => [normalizeBudgetId(account.id), account]));
 
   for (const tx of transactions) {
     if (typeof tx.date !== "string" || tx.date.length < 7) continue;
@@ -369,15 +379,15 @@ export function attachRestMonthTotals(
     const month = Number(mRaw);
     if (!year || !month) continue;
     const key = `${year}-${month}`;
-    const account = accountsById.get(tx.account_id);
+    const account = accountsById.get(normalizeBudgetId(tx.account_id));
     if (account && account.on_budget === false) continue;
-    if (tx.transfer_account_id || tx.transfer_id) continue;
+    if (isTransferTx(tx)) continue;
     const amount = Number(tx.amount);
     if (amount > 0) {
       incomeByMonth.set(key, (incomeByMonth.get(key) ?? 0) + amount);
     } else if (amount < 0 && !isOpeningBalanceTx(tx)) {
       spendByMonth.set(key, (spendByMonth.get(key) ?? 0) + Math.abs(amount));
-      if (!tx.category_id) {
+      if (!core.transferMarkersMissing && !tx.category_id) {
         uncategorizedByMonth.set(key, (uncategorizedByMonth.get(key) ?? 0) + 1);
       }
     }
