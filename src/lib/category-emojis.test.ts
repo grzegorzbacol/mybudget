@@ -90,6 +90,7 @@ describe("category emoji catalog", () => {
     expect(bestCategoryEmoji("Lekarstwa")).toBe("💊");
     expect(bestCategoryEmoji("Paliwo")).toBe("⛽");
     expect(bestCategoryEmoji("Prezent dla mamy")).toBe("🎁");
+    expect(bestCategoryEmoji("Angielski")).toBe("🇬🇧");
     expect(suggestCategoryEmojis("Lekarstwa")[0]).toBe("💊");
     expect(suggestCategoryEmojis("Apteka / lekarz")).toEqual(expect.arrayContaining(["💊", "🩺"]));
     for (const category of DEFAULT_CATEGORIES) {

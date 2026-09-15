@@ -380,7 +380,7 @@ export function EnvelopesSettings() {
           )}
         </div>
 
-        <div className="space-y-3 rounded-lg border p-3">
+        <div className="min-w-0 space-y-3 rounded-lg border p-3">
           <div>
             <Label htmlFor="envelope-name">Nazwa koperty</Label>
             <Input
@@ -523,11 +523,11 @@ function EnvelopeEditDialog({
 
   return (
     <Dialog open={!!category} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-h-[90vh] max-w-md overflow-x-hidden overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Edytuj kopertę</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="min-w-0 space-y-3">
           <div>
             <Label htmlFor="edit-envelope-name">Nazwa koperty</Label>
             <Input

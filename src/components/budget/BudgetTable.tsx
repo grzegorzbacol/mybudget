@@ -350,11 +350,11 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
       )}
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] max-w-md overflow-x-hidden overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nowa koperta</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
+          <div className="min-w-0 space-y-3">
             <div>
               <Label htmlFor="budget-envelope-name">Nazwa koperty</Label>
               <Input
