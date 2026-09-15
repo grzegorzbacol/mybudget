@@ -443,7 +443,12 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={enterScheduled.isPending}
+                      disabled={enterScheduled.isPending || !item.canEnter}
+                      title={
+                        item.canEnter
+                          ? "Zapisz jako transakcję"
+                          : "Najpierw wprowadź wcześniejszy termin z tego planu"
+                      }
                       onClick={() => enterPlan(item)}
                     >
                       Wprowadź

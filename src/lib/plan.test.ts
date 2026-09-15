@@ -81,6 +81,19 @@ describe("future income and expense plans", () => {
       "2026-09-12:transfer:Oszczędności",
     ]);
     expect(items[0].memo).toBe("mieszkanie");
+    expect(items.find((item) => item.payee === "Czynsz")?.canEnter).toBe(true);
+  });
+
+  it("only the current next_date can be entered when later months are listed", () => {
+    const items = plannedItems({
+      scheduled: [rent],
+      from: "2026-09-01",
+      to: "2026-10-31",
+    });
+    expect(items.map((item) => `${item.date}:${item.canEnter}`)).toEqual([
+      "2026-09-05:true",
+      "2026-10-05:false",
+    ]);
   });
 
   it("skips occurrences already entered on the ledger", () => {

@@ -19,6 +19,8 @@ export type PlannedItem = {
   kind: PlanKind;
   frequency: ScheduleFrequency;
   intervalDays: number | null;
+  /** Only the rule's current next_date can be entered (same guard as payments). */
+  canEnter: boolean;
 };
 
 export function plannedOccurrenceKey(scheduledId: string, date: string): string {
@@ -87,6 +89,7 @@ export function plannedItems(input: {
       kind: kindOf(occ.amount, occ.transferAccountId),
       frequency: occ.frequency,
       intervalDays: rule?.interval_days ?? null,
+      canEnter: Boolean(rule && occ.date === rule.next_date),
     });
   }
 
