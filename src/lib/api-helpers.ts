@@ -132,8 +132,8 @@ const CATEGORY_COLUMNS_SAFE = "id, family_id, group_name, name, icon, color, sor
 const ALLOCATION_COLUMNS =
   "id, family_id, category_id, year, month, allocated, activity, available, rollover, moved";
 const ACCOUNT_COLUMNS = "id, family_id, name, type, balance, currency, owner_user_id, on_budget";
-const LEDGER_COLUMNS = "id, account_id, category_id, amount, date, transfer_account_id, transfer_id";
-const LEDGER_COLUMNS_SAFE = "id, account_id, category_id, amount, date";
+const LEDGER_COLUMNS = "id, account_id, category_id, amount, date, payee, memo, transfer_account_id, transfer_id";
+const LEDGER_COLUMNS_SAFE = "id, account_id, category_id, amount, date, payee, memo";
 const SCHEDULED_COLUMNS =
   "id, family_id, account_id, transfer_account_id, category_id, amount, payee, next_date, frequency, end_date, enabled";
 

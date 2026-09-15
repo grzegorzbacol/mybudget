@@ -34,7 +34,9 @@ import { displayPayee } from "@/lib/display-payee";
 import {
   accountActivitySummary,
   groupTransactionsByMonth,
+  matchesLedgerKind,
   transactionAmountClass,
+  transactionRegisterHint,
   transferDirectionLabel,
 } from "@/lib/transaction-list";
 import { cn } from "@/lib/utils";
@@ -45,9 +47,7 @@ import {
   TRANSACTION_QUERY_PARAM,
   readTransactionQueryId,
   setTransactionQueryPath,
-  showEnvelopeSplitList,
   transactionRowAriaLabel,
-  visibleCategorySplits,
 } from "@/lib/transaction-detail";
 import { TransactionDetail } from "./TransactionDetail";
 import type { Account, Transaction } from "@/lib/types";
@@ -152,10 +152,7 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     return (transactions ?? []).filter((t) => {
-      if (kind === "expense" && (t.amount >= 0 || isTransferTx(t))) return false;
-      if (kind === "income" && (t.amount <= 0 || isTransferTx(t))) return false;
-      if (kind === "transfer" && !isTransferTx(t)) return false;
-      if (kind === "uncategorized" && (isTransferTx(t) || t.amount >= 0 || t.category_id)) return false;
+      if (!matchesLedgerKind(t, kind)) return false;
       if (!q) return true;
       const title = displayPayee(t.payee, t.memo);
       return (
@@ -339,7 +336,6 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
             ) : null}
             {group.items.map((t) => {
           const title = displayPayee(t.payee, t.memo);
-          const envelopeSplits = visibleCategorySplits(t.category_splits);
           const transfer = isTransferTx(t);
           const direction = transfer ? transferDirectionLabel(t, accounts ?? []) : "";
           return (
@@ -397,13 +393,7 @@ export function TransactionList({ year, month, accountId, categoryId }: Transact
                   {t.date}
                   {transfer
                     ? ` · Transfer · ${direction}`
-                    : t.amount > 0
-                      ? " · Do rozdzielenia"
-                      : showEnvelopeSplitList(envelopeSplits)
-                        ? ` · Podział (${envelopeSplits.length})`
-                        : t.category
-                          ? ` · ${t.category.icon} ${t.category.name}`
-                          : " · Bez kategorii"}
+                    : ` · ${transactionRegisterHint(t)}`}
                   {!transfer && t.account && ` · ${t.account.type === "cash" ? "💵 " : "🏦 "}${t.account.name}`}
                 </p>
               </div>

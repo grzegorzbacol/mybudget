@@ -258,6 +258,39 @@ describe("scheduled cashflow", () => {
     expect(timeline[0].plannedOut).toBe(2000);
   });
 
+  it("does not treat a negative opening balance as cash outflow", () => {
+    const checking: Account = {
+      id: "card",
+      family_id: "fam",
+      name: "Karta",
+      type: "credit",
+      balance: -3133,
+      currency: "PLN",
+      owner_user_id: null,
+      created_at: "",
+      on_budget: true,
+    };
+    const timeline = buildCashflowTimeline({
+      from: "2026-09-01",
+      to: "2026-09-30",
+      accounts: [checking],
+      scheduled: [],
+      transactions: [
+        {
+          account_id: "card",
+          category_id: null,
+          amount: -3133.02,
+          date: "2026-09-15",
+          payee: "Saldo początkowe",
+          memo: "Opening balance",
+        },
+        { account_id: "card", category_id: "food", amount: -40, date: "2026-09-16" },
+      ],
+      bucket: "month",
+    });
+    expect(timeline[0].actualOut).toBe(40);
+  });
+
   it("finds next payday and low-balance before it", () => {
     expect(nextPayday([{ kind: "income", date: "2026-09-30" }, { kind: "expense", date: "2026-09-05" }], "2026-09-09")).toBe(
       "2026-09-30"

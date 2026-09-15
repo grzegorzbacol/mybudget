@@ -20,6 +20,7 @@ import { formatCurrency } from "@/lib/format";
 import { displayPayee } from "@/lib/display-payee";
 import { cn } from "@/lib/utils";
 import { isExpenseCategory, isTransferTx } from "@/lib/budget";
+import { isOpeningBalanceTx } from "@/lib/opening-balance";
 import { transferDirectionLabel } from "@/lib/transaction-list";
 import type { Account, BudgetCategory, FamilyMember, Transaction } from "@/lib/types";
 import { fetchJson } from "@/lib/http";
@@ -184,7 +185,9 @@ function TransactionDetailBody({
   onEdit: () => void;
 }) {
   const transfer = isTransferTx(transaction);
-  const isExpense = transaction.amount < 0 && !transfer;
+  const opening = isOpeningBalanceTx(transaction);
+  const openingOutflow = opening && transaction.amount < 0;
+  const isExpense = transaction.amount < 0 && !transfer && !opening;
   const isIncome = transaction.amount > 0 && !transfer;
   const title = displayPayee(transaction.payee, transaction.memo);
   const showRawPayee = title !== transaction.payee && transaction.memo !== transaction.payee;
@@ -213,6 +216,12 @@ function TransactionDetailBody({
           <div className="flex justify-between">
             <span className="text-muted-foreground">Kategoria</span>
             <span className="font-medium">Do rozdzielenia</span>
+          </div>
+        )}
+        {openingOutflow && (
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Kategoria</span>
+            <span className="font-medium">Saldo konta</span>
           </div>
         )}
         {isExpense && envelopeSplitList ? (
@@ -314,7 +323,9 @@ function TransactionDetailBody({
           <span className="font-medium">
             {transfer
               ? "Transfer"
-              : transaction.source === "ocr"
+              : opening
+                ? "Saldo początkowe"
+                : transaction.source === "ocr"
                 ? "Skan paragonu"
                 : transaction.source === "import"
                   ? "Import CSV/OFX"

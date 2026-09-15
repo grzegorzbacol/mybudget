@@ -451,6 +451,19 @@ describe("YNAB envelope math", () => {
     expect(buildBudgetMonthData(2026, 9, [category("groceries", "Zakupy")], [], [account("checking", 100)], txs).uncategorizedCount).toBe(1);
   });
 
+  it("does not ask to classify a negative opening balance", () => {
+    const txs = [
+      tx({ amount: -3133.02, date: "2026-09-15", payee: "Saldo początkowe", memo: "Opening balance" }),
+      tx({ amount: -40, date: "2026-09-16" }),
+    ];
+    expect(uncategorizedExpenses(txs, 2026, 9)).toHaveLength(1);
+    expect(uncategorizedExpenses(txs, 2026, 9)[0]?.amount).toBe(-40);
+    expect(
+      buildBudgetMonthData(2026, 9, [category("groceries", "Zakupy")], [], [account("checking", 100)], txs)
+        .uncategorizedCount
+    ).toBe(1);
+  });
+
   it("keeps envelopes when a transaction date is missing or garbage", () => {
     const data = buildBudgetMonthData(
       2026,

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   accountActivitySummary,
   groupTransactionsByMonth,
+  matchesLedgerKind,
   readAccountFilter,
   transactionAmountTone,
+  transactionRegisterHint,
   transferDirectionLabel,
   visibleLedgerTransactions,
 } from "./transaction-list";
@@ -148,5 +150,37 @@ describe("readAccountFilter", () => {
     expect(readAccountFilter("all")).toBeUndefined();
     expect(readAccountFilter("")).toBeUndefined();
     expect(readAccountFilter("checking")).toBe("checking");
+  });
+});
+
+describe("opening balances in the register", () => {
+  const opening = tx({
+    id: "open",
+    account_id: "card",
+    amount: -3133.02,
+    payee: "Saldo początkowe",
+    memo: "Opening balance",
+  });
+  const groceryUncat = tx({
+    id: "g2",
+    account_id: "checking",
+    amount: -12,
+    payee: "Żabka",
+  });
+
+  it("is not an expense to classify and does not say Bez kategorii", () => {
+    expect(matchesLedgerKind(opening, "uncategorized")).toBe(false);
+    expect(matchesLedgerKind(opening, "expense")).toBe(false);
+    expect(matchesLedgerKind(opening, "all")).toBe(true);
+    expect(matchesLedgerKind(groceryUncat, "uncategorized")).toBe(true);
+    expect(transactionRegisterHint(opening)).toBe("Saldo konta");
+    expect(transactionRegisterHint(groceryUncat)).toBe("Bez kategorii");
+    expect(transactionRegisterHint(salary)).toBe("Do rozdzielenia");
+  });
+
+  it("does not count opening debt as account spending", () => {
+    const summary = accountActivitySummary([opening, grocery]);
+    expect(summary.expense).toBe(-32.4);
+    expect(summary.net).toBe(-32.4);
   });
 });

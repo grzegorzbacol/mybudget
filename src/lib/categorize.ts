@@ -1,4 +1,5 @@
 import { parseBankDescription } from "./display-payee";
+import { isOpeningBalanceTx } from "./opening-balance";
 
 export function normalizePayee(payee: string): string {
   return parseBankDescription(payee)
@@ -16,7 +17,7 @@ export function buildPayeeCategoryRules(
   const sorted = [...txs].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
   const rules = new Map<string, string>();
   for (const tx of sorted) {
-    if (!tx.category_id || (tx.amount != null && tx.amount >= 0)) continue;
+    if (!tx.category_id || (tx.amount != null && tx.amount >= 0) || isOpeningBalanceTx(tx)) continue;
     const key = normalizePayee(tx.payee);
     if (!key) continue;
     rules.set(key, tx.category_id);
@@ -33,7 +34,7 @@ export function applyPayeeRules<T extends { payee: string; category_id?: string 
   rules: Map<string, string>
 ): T[] {
   return rows.map((row) => {
-    if (row.category_id) return row;
+    if (row.category_id || isOpeningBalanceTx(row)) return row;
     const suggested = suggestCategoryForPayee(row.payee, rules);
     return suggested ? { ...row, category_id: suggested } : row;
   });
@@ -46,7 +47,7 @@ export function suggestedUpdatesForUncategorized(
   const rules = buildPayeeCategoryRules(txs);
   const updates: Array<{ id: string; categoryId: string }> = [];
   for (const tx of txs) {
-    if (tx.category_id || (tx.amount != null && tx.amount >= 0)) continue;
+    if (tx.category_id || (tx.amount != null && tx.amount >= 0) || isOpeningBalanceTx(tx)) continue;
     const categoryId = suggestCategoryForPayee(tx.payee, rules);
     if (categoryId) updates.push({ id: tx.id, categoryId });
   }

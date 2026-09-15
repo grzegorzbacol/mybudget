@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { activityMapFromAggregates, assembleBudgetMonthData, normalizeBudgetId } from "./budget";
 import {
   asBudgetCategories,
+  attachRestMonthTotals,
   budgetMonthFromCore,
   coreFromSql,
   ensureFamilyCategories,
@@ -513,5 +514,44 @@ describe("unwrapFamily", () => {
     expect(unwrapFamily({ id: "fam-1", name: "Dom" })?.id).toBe("fam-1");
     expect(unwrapFamily(null)).toBeNull();
     expect(unwrapFamily({})).toBeNull();
+  });
+});
+
+describe("attachRestMonthTotals", () => {
+  it("does not count credit-card opening debt as spending or uncategorized", () => {
+    const empty = core({
+      income: [],
+      spending: [],
+      uncategorized: [],
+      activityMap: activityMapFromAggregates([]),
+    });
+    const next = attachRestMonthTotals(empty, [
+      {
+        account_id: "checking",
+        category_id: null,
+        amount: -3133.02,
+        date: "2026-09-15",
+        payee: "Saldo początkowe",
+        memo: "Opening balance",
+      },
+      {
+        account_id: "checking",
+        category_id: null,
+        amount: -40,
+        date: "2026-09-16",
+        payee: "Żabka",
+      },
+      {
+        account_id: "checking",
+        category_id: null,
+        amount: 1000,
+        date: "2026-09-01",
+        payee: "Saldo początkowe",
+        memo: "Opening balance",
+      },
+    ]);
+    expect(next.uncategorized).toEqual([{ year: 2026, month: 9, n: 1 }]);
+    expect(next.spending).toEqual([{ year: 2026, month: 9, amount: 40 }]);
+    expect(next.income).toEqual([{ year: 2026, month: 9, amount: 1000 }]);
   });
 });

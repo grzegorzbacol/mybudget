@@ -54,4 +54,24 @@ describe("payee categorization rules", () => {
     ]);
     expect(updates).toEqual([{ id: "2", categoryId: "food" }]);
   });
+
+  it("does not treat opening balances as uncategorized expenses", () => {
+    const updates = suggestedUpdatesForUncategorized([
+      { id: "1", payee: "Biedronka", category_id: "food", amount: -20, date: "2026-08-01" },
+      {
+        id: "2",
+        payee: "Saldo początkowe",
+        category_id: null,
+        amount: -3133.02,
+        date: "2026-09-15",
+      },
+    ]);
+    expect(updates).toEqual([]);
+    expect(
+      applyPayeeRules(
+        [{ payee: "Saldo początkowe", category_id: null, memo: "Opening balance" }],
+        new Map([[normalizePayee("Saldo początkowe"), "food"]])
+      )
+    ).toEqual([{ payee: "Saldo początkowe", category_id: null, memo: "Opening balance" }]);
+  });
 });

@@ -43,7 +43,8 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL).toContain("WITH ledger AS MATERIALIZED");
     expect(FAMILY_BUDGET_SQL).toContain("family_id = $1::uuid");
     expect(FAMILY_BUDGET_SQL).toContain("amount > 0");
-    expect(FAMILY_BUDGET_SQL).toContain("amount < 0");
+    expect(FAMILY_BUDGET_SQL).toContain("amount < 0 AND NOT is_opening");
+    expect(FAMILY_BUDGET_SQL).toContain("Saldo początkowe");
     expect(FAMILY_BUDGET_SQL).toContain("GROUP BY 1, 2, 3");
     expect(FAMILY_BUDGET_SQL).not.toContain("transaction_category_splits");
     expect(FAMILY_BUDGET_SQL).not.toContain("COALESCE(kind");

@@ -1,4 +1,5 @@
 import { isOnBudget, isTransferTx } from "./budget";
+import { isOpeningBalanceTx } from "./opening-balance";
 import { addDays, addMonthsToDate, money, yearMonthFromDate } from "./money";
 import type {
   Account,
@@ -268,7 +269,7 @@ export function buildCashflowTimeline(input: {
       const amount = Number(tx.amount);
       // Match budget Przychody / SQL snapshot: categorized inflows still count as cash in.
       if (amount > 0) row.actualIn = money(row.actualIn + amount);
-      if (amount < 0) row.actualOut = money(row.actualOut + Math.abs(amount));
+      if (amount < 0 && !isOpeningBalanceTx(tx)) row.actualOut = money(row.actualOut + Math.abs(amount));
     }
   }
 

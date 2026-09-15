@@ -32,6 +32,7 @@ import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency, todayIso } from "@/lib/format";
 import { isOnBudget } from "@/lib/budget";
+import { OPENING_MEMO, OPENING_PAYEE } from "@/lib/opening-balance";
 import { ACCOUNT_TYPE_META, computeNetWorth, displayBalance, isLiabilityType } from "@/lib/wealth";
 import { isQaLeftoverAccountName } from "@/lib/account-delete-policy";
 import type { Account, Transaction } from "@/lib/types";
@@ -103,8 +104,8 @@ export default function AccountsPage() {
           family_id: familyData!.family.id,
           account_id: created.id,
           amount: signed,
-          payee: "Saldo początkowe",
-          memo: "Opening balance",
+          payee: OPENING_PAYEE,
+          memo: OPENING_MEMO,
           date: todayIso(),
           source: "manual",
           cleared: true,

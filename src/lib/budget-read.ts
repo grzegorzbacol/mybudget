@@ -7,6 +7,7 @@ import {
   expandCategorySplits,
 } from "@/lib/budget";
 import { addDays, monthRange } from "@/lib/money";
+import { isOpeningBalanceTx } from "@/lib/opening-balance";
 import {
   monthAmount,
   monthCount,
@@ -129,7 +130,7 @@ function fetchRestRows(supabase: Supabase, familyId: string) {
       .eq("family_id", familyId),
     supabase
       .from("transactions")
-      .select("id, account_id, category_id, amount, date, transfer_account_id, transfer_id")
+      .select("id, account_id, category_id, amount, date, payee, memo, transfer_account_id, transfer_id")
       .eq("family_id", familyId)
       .limit(20000),
     supabase
@@ -154,7 +155,7 @@ async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<F
   if (transactionsRes.error && isSchemaLagError(transactionsRes.error.message)) {
     const fallback = await supabase
       .from("transactions")
-      .select("id, account_id, category_id, amount, date")
+      .select("id, account_id, category_id, amount, date, payee, memo")
       .eq("family_id", familyId)
       .limit(20000);
     transactions = fallback.error ? [] : ((fallback.data ?? []) as LedgerTransaction[]);
@@ -370,7 +371,7 @@ export function attachRestMonthTotals(
     const amount = Number(tx.amount);
     if (amount > 0) {
       incomeByMonth.set(key, (incomeByMonth.get(key) ?? 0) + amount);
-    } else if (amount < 0) {
+    } else if (amount < 0 && !isOpeningBalanceTx(tx)) {
       spendByMonth.set(key, (spendByMonth.get(key) ?? 0) + Math.abs(amount));
       if (!tx.category_id) {
         uncategorizedByMonth.set(key, (uncategorizedByMonth.get(key) ?? 0) + 1);

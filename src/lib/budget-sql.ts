@@ -2,6 +2,7 @@ import { resolveDatabaseUrl } from "./schema";
 import type { SplitActivityLine } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction, ScheduledTransaction } from "./types";
 import type { ActivityAggregate } from "./budget";
+import { sqlOpeningBalanceExpr } from "./opening-balance";
 
 export type MonthTotal = { year: number; month: number; amount: number };
 export type FamilyPred = "uuid" | "text";
@@ -59,12 +60,14 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind): string {
   const family = familyIdMatch(pred);
   // LEFT JOIN + text id match: INNER JOIN dropped every expense when account_id/id
   // types differed (uuid vs text). Missing account ⇒ on-budget, matching REST.
+  const opening = sqlOpeningBalanceExpr("t");
   const ledger =
     kind === "full"
       ? `SELECT t.category_id::text AS category_id,
                ${sqlWarsawYear("t")} AS year,
                ${sqlWarsawMonth("t")} AS month,
-               t.amount::float8 AS amount
+               t.amount::float8 AS amount,
+               ${opening} AS is_opening
         FROM transactions t
         LEFT JOIN accounts a ON a.id::text = t.account_id::text
         WHERE ${tFamily}
@@ -74,7 +77,8 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind): string {
       : `SELECT t.category_id::text AS category_id,
                ${sqlWarsawYear("t")} AS year,
                ${sqlWarsawMonth("t")} AS month,
-               t.amount::float8 AS amount
+               t.amount::float8 AS amount,
+               ${opening} AS is_opening
         FROM transactions t
         WHERE ${tFamily}`;
 
@@ -145,7 +149,7 @@ SELECT json_build_object(
     SELECT json_agg(x) FROM (
       SELECT year, month, SUM(-amount)::float8 AS amount
       FROM ledger
-      WHERE amount < 0
+      WHERE amount < 0 AND NOT is_opening
       GROUP BY 1, 2
     ) x
   ), '[]'::json),
@@ -153,7 +157,7 @@ SELECT json_build_object(
     SELECT json_agg(x) FROM (
       SELECT year, month, COUNT(*)::int AS n
       FROM ledger
-      WHERE category_id IS NULL AND amount < 0
+      WHERE category_id IS NULL AND amount < 0 AND NOT is_opening
       GROUP BY 1, 2
     ) x
   ), '[]'::json)${flags}
@@ -204,7 +208,7 @@ function dailyActualsSql(pred: FamilyPred, kind: SnapshotKind): string {
   return `
 SELECT t.date::text AS date,
        SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END)::float8 AS actual_in,
-       SUM(CASE WHEN t.amount < 0 THEN -t.amount ELSE 0 END)::float8 AS actual_out
+       SUM(CASE WHEN t.amount < 0 AND NOT ${sqlOpeningBalanceExpr("t")} THEN -t.amount ELSE 0 END)::float8 AS actual_out
 FROM transactions t
 ${onBudgetJoin}
 WHERE ${familyIdMatch(pred, "t")}
