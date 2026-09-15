@@ -3,6 +3,7 @@ import { updateRowWithSchemaRepair } from "@/lib/schema-write";
 import {
   buildCategoryPatch,
   isCategoryId,
+  loadCategoryRow,
   type CategoryClient,
   type CategoryPatchInput,
 } from "@/lib/categories";
@@ -31,18 +32,12 @@ export async function updateCategoryRow(
     return { ok: false, status: 400, error: "Brak zmian" };
   }
 
-  const loaded = await supabase
-    .from("budget_categories")
-    .select("id, family_id, group_name, name, icon, color, sort_order, kind")
-    .eq("id", input.categoryId)
-    .eq("family_id", input.familyId)
-    .maybeSingle();
-
+  const loaded = await loadCategoryRow(supabase, input.familyId, input.categoryId);
   if (loaded.error) {
-    return { ok: false, status: 500, error: loaded.error.message };
+    return { ok: false, status: 500, error: loaded.error };
   }
 
-  const current = (loaded.data as BudgetCategory | null) ?? null;
+  const current = loaded.data;
   if (!current) {
     return { ok: false, status: 404, error: "Nie znaleziono koperty" };
   }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   addDraftGroup,
   applySortOrders,
@@ -10,6 +10,7 @@ import {
   formatCategoryRelatedPart,
   groupCategoriesByName,
   isCategoryId,
+  loadCategoryRow,
   lookupCategoryMonthStats,
   moveCategoryToIndex,
   moveGroupToIndex,
@@ -176,12 +177,13 @@ type MemoryRow = Record<string, unknown>;
 
 function createMemoryClient(
   tables: Record<string, MemoryRow[]>,
-  options?: { missing?: string[] }
+  options?: { missing?: string[]; missingColumns?: string[] }
 ) {
   const store: Record<string, MemoryRow[]> = Object.fromEntries(
     Object.entries(tables).map(([name, rows]) => [name, rows.map((row) => ({ ...row }))])
   );
   const missing = new Set(options?.missing ?? []);
+  const missingColumns = new Set(options?.missingColumns ?? []);
 
   function matches(
     row: MemoryRow,
@@ -190,16 +192,28 @@ function createMemoryClient(
     return filters.every((filter) => filter.type !== "eq" || row[filter.col!] === filter.val);
   }
 
+  function kindMissingError() {
+    return { data: null, error: { message: "column budget_categories.kind does not exist" } };
+  }
+
   return {
     store,
     from(table: string) {
       const filters: Array<{ type: string; col?: string; val?: unknown }> = [];
       let action: "select" | "delete" | "update" = "select";
       let updatePayload: MemoryRow = {};
+      let selectedColumns = "";
 
       const run = async () => {
         if (missing.has(table)) {
           return { data: null, error: { message: `relation "${table}" does not exist` } };
+        }
+        if (
+          missingColumns.has("kind") &&
+          ((action === "select" && /\bkind\b/.test(selectedColumns)) ||
+            (action === "update" && "kind" in updatePayload))
+        ) {
+          return kindMissingError();
         }
         const rows = store[table] ?? [];
         const matched = rows.filter((row) => matches(row, filters));
@@ -215,7 +229,10 @@ function createMemoryClient(
       };
 
       const api = {
-        select: () => api,
+        select: (columns?: string) => {
+          if (action === "select") selectedColumns = columns ?? "*";
+          return api;
+        },
         eq: (col: string, val: unknown) => {
           filters.push({ type: "eq", col, val });
           return api;
@@ -523,6 +540,55 @@ describe("updateCategoryRow", () => {
     });
     expect(result).toMatchObject({ ok: false, status: 404 });
     expect(supabase.store.budget_categories[0]).toMatchObject({ name: "Cudza", icon: "📁" });
+  });
+
+  it("loads and saves an envelope when budget_categories.kind is missing", async () => {
+    vi.resetModules();
+    vi.doMock("./ensure-schema", () => ({
+      applyEnsureSchema: vi.fn().mockResolvedValue({ ok: false, applied: 0, error: "no ddl" }),
+    }));
+    const { updateCategoryRow: updateWithoutKind } = await import("./categories-write");
+
+    const supabase = createMemoryClient(
+      {
+        budget_categories: [
+          {
+            id: CAT_A,
+            family_id: familyId,
+            group_name: "Zdrowie",
+            name: "Wizyty u lekarzy / zabiegi / operacje",
+            icon: "🩺",
+            sort_order: 10,
+          },
+        ],
+      },
+      { missingColumns: ["kind"] }
+    );
+
+    const loaded = await loadCategoryRow(supabase, familyId, CAT_A);
+    expect(loaded.error).toBeUndefined();
+    expect(loaded.data).toMatchObject({ id: CAT_A, name: "Wizyty u lekarzy / zabiegi / operacje" });
+
+    const result = await updateWithoutKind(supabase, {
+      familyId,
+      categoryId: CAT_A,
+      patch: {
+        name: "Wizyty u lekarzy / zabiegi / operacje",
+        group_name: "Zdrowie",
+        icon: "🩺",
+        kind: "expense",
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.category).toMatchObject({
+      id: CAT_A,
+      name: "Wizyty u lekarzy / zabiegi / operacje",
+      group_name: "Zdrowie",
+      icon: "🩺",
+    });
+    expect(supabase.store.budget_categories[0]).not.toHaveProperty("kind");
   });
 });
 

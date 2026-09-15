@@ -284,6 +284,36 @@ export function buildCategoryPatch(input: CategoryPatchInput): CategoryPatchInpu
   return patch;
 }
 
+/** Live 001 DBs / PostgREST cache often lack `kind` — PATCH must still load the row. */
+export const CATEGORY_ROW_SELECTS = [
+  "id, family_id, group_name, name, icon, color, sort_order, kind",
+  "id, family_id, group_name, name, icon, color, sort_order",
+] as const;
+
+export async function loadCategoryRow(
+  supabase: CategoryClient,
+  familyId: string,
+  categoryId: string
+): Promise<{ data: BudgetCategory | null; error?: string }> {
+  let lastError: string | undefined;
+  for (const columns of CATEGORY_ROW_SELECTS) {
+    const loaded = await supabase
+      .from("budget_categories")
+      .select(columns)
+      .eq("id", categoryId)
+      .eq("family_id", familyId)
+      .maybeSingle();
+    if (!loaded.error) {
+      return { data: (loaded.data as BudgetCategory | null) ?? null };
+    }
+    lastError = loaded.error.message;
+    if (!isSchemaLagError(lastError)) {
+      return { data: null, error: lastError };
+    }
+  }
+  return { data: null, error: lastError };
+}
+
 export function categoryMonthStatsMap(
   data: Pick<BudgetMonthData, "groups"> | null | undefined
 ): Map<string, CategoryMonthStats> {
