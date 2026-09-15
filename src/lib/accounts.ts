@@ -93,6 +93,97 @@ export async function createAccountRow(
   return { error: message || "Nie udało się utworzyć konta" };
 }
 
+export type AccountUpdateInput = {
+  name?: string;
+  type?: string;
+  on_budget?: boolean;
+};
+
+export type AccountPatchResult =
+  | { ok: true; row: Record<string, unknown> }
+  | { ok: false; error: string };
+
+export function accountPatchRow(input: AccountUpdateInput): AccountPatchResult {
+  const row: Record<string, unknown> = {};
+  if (typeof input.name === "string") {
+    const name = input.name.trim();
+    if (!name) return { ok: false, error: "Nazwa nie może być pusta" };
+    row.name = name;
+  }
+  if (typeof input.type === "string" && input.type) {
+    row.type = input.type;
+  }
+  if (typeof input.on_budget === "boolean") {
+    row.on_budget = input.on_budget;
+  }
+  if (Object.keys(row).length === 0) {
+    return { ok: false, error: "Brak zmian" };
+  }
+  return { ok: true, row };
+}
+
+export async function updateAccountRow(
+  supabase: AccountClient,
+  input: { familyId: string; accountId: string } & AccountUpdateInput
+): Promise<{ account?: Account; warning?: string; error?: string; status?: number }> {
+  const patch = accountPatchRow(input);
+  if (!patch.ok) {
+    return { error: patch.error, status: 400 };
+  }
+
+  const updateOnce = async (row: Record<string, unknown>) =>
+    supabase
+      .from("accounts")
+      .update(row)
+      .eq("id", input.accountId)
+      .eq("family_id", input.familyId)
+      .select()
+      .maybeSingle();
+
+  let result = await updateOnce(patch.row);
+  if (!result.error && result.data) {
+    return { account: result.data as Account };
+  }
+  if (!result.error && !result.data) {
+    return { error: "Nie znaleziono konta", status: 404 };
+  }
+
+  const firstMessage = result.error?.message ?? "";
+  if (isSchemaLagError(firstMessage) || isAccountTypeCheckError(firstMessage)) {
+    const { applyEnsureSchema } = await import("./ensure-schema");
+    await applyEnsureSchema();
+    result = await updateOnce(patch.row);
+    if (!result.error && result.data) {
+      return { account: result.data as Account };
+    }
+    if (!result.error && !result.data) {
+      return { error: "Nie znaleziono konta", status: 404 };
+    }
+  }
+
+  const message = result.error?.message ?? firstMessage;
+  if (isSchemaLagError(message) && /on_budget/i.test(message) && "on_budget" in patch.row) {
+    const rest = { ...patch.row };
+    delete rest.on_budget;
+    if (Object.keys(rest).length === 0) {
+      return {
+        error: "Nie udało się zapisać on_budget — zredeployuj Coolify, żeby dociągnąć schemat.",
+        status: 500,
+      };
+    }
+    const stripped = await updateOnce(rest);
+    if (!stripped.error && stripped.data) {
+      return {
+        account: stripped.data as Account,
+        warning: "Zapisano bez kolumny on_budget — zredeployuj Coolify, żeby dociągnąć schemat.",
+      };
+    }
+    return { error: stripped.error?.message ?? message, status: 500 };
+  }
+
+  return { error: message || "Nie udało się zapisać konta", status: 500 };
+}
+
 export async function loadAccountForLedger(
   supabase: AccountClient,
   familyId: string,
