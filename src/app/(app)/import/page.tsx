@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CsvImport } from "@/components/transactions/CsvImport";
+import { BankScreenshotImport } from "@/components/transactions/BankScreenshotImport";
 import { BANK_AIS_PROVIDERS } from "@/lib/bank-sync";
 import { Button } from "@/components/ui/button";
 import { RepairPayeesButton } from "@/components/transactions/RepairPayeesButton";
@@ -22,7 +23,8 @@ export default function ImportPage() {
       <div>
         <h1 className="text-2xl font-bold">Import banku</h1>
         <p className="text-sm text-muted-foreground">
-          mBank i inne: wgraj CSV albo OFX. Żywe PSD2 (AIS) jest zaplanowane przez agregator — bez scrapowania banku.
+          mBank i inne: wgraj CSV albo OFX, albo screen historii. Żywe PSD2 (AIS) jest zaplanowane
+          przez agregator — bez scrapowania banku.
         </p>
       </div>
 
@@ -55,6 +57,22 @@ export default function ImportPage() {
           <Button variant="outline" asChild>
             <Link href="/transactions?filter=uncategorized">Kolejka bez kategorii</Link>
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Screen historii (AI)</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <ol className="list-decimal space-y-1 pl-4 text-muted-foreground">
+            <li>Zrób czytelny screen listy operacji w aplikacji banku (pełne wiersze z datą i kwotą).</li>
+            <li>Wybierz konto w budżecie i wgraj zdjęcie — AI wyciągnie operacje i dopasuje koperty.</li>
+            <li>Sprawdź listę: edytuj payee/kategorię, pomiń duplikaty, zatwierdź zaznaczone.</li>
+          </ol>
+          <div className="flex flex-wrap items-center gap-2">
+            <BankScreenshotImport />
+          </div>
         </CardContent>
       </Card>
 

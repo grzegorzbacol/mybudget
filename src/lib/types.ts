@@ -344,6 +344,30 @@ export interface OcrReceiptResult {
   raw_text?: string;
 }
 
+export type BankScreenshotMatchStatus = "new" | "duplicate" | "skip";
+
+export interface BankScreenshotOperation {
+  date: string;
+  amount: number;
+  payee: string;
+  memo?: string | null;
+  direction?: "expense" | "income" | null;
+  category_hint?: string | null;
+}
+
+export interface BankScreenshotMatchedRow {
+  id: string;
+  date: string;
+  amount: number;
+  payee: string;
+  memo?: string | null;
+  category_id?: string | null;
+  category_hint?: string | null;
+  status: BankScreenshotMatchStatus;
+  duplicate_of?: string | null;
+  selected?: boolean;
+}
+
 export interface MonthlyReport {
   year: number;
   month: number;
