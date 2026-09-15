@@ -322,11 +322,13 @@ export function filterCategoryEmojis(
   query: string,
   group: CategoryEmojiGroupId | "all" = "all"
 ): string[] {
-  const q = foldEmojiSearch(query);
+  const raw = String(query ?? "").trim();
+  const q = foldEmojiSearch(raw);
   return CATEGORY_EMOJI_CATALOG.filter((row) => {
     if (group !== "all" && row.group !== group) return false;
     if (!q) return true;
-    const haystack = foldEmojiSearch(`${row.emoji} ${row.keywords} ${groupLabel(row.group)} ${row.group}`);
-    return haystack.includes(q);
+    if (row.emoji.includes(raw)) return true;
+    const haystack = foldEmojiSearch(`${row.keywords} ${groupLabel(row.group)} ${row.group}`);
+    return haystack.split(" ").some((token) => token.startsWith(q));
   }).map((row) => row.emoji);
 }

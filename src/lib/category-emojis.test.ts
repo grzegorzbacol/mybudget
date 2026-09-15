@@ -77,6 +77,8 @@ describe("category emoji catalog", () => {
     expect(filterCategoryEmojis("lekarz")).toEqual(expect.arrayContaining(["🩺"]));
     expect(filterCategoryEmojis("netflix")).toEqual(expect.arrayContaining(["📺", "🎬"]));
     expect(filterCategoryEmojis("groceries")).toEqual(["🛒"]);
+    expect(filterCategoryEmojis("kino")).toEqual(expect.arrayContaining(["🎬"]));
+    expect(filterCategoryEmojis("in")).not.toContain("🎬");
   });
 
   it("scopes chips to a group and returns all icons for an empty query", () => {
