@@ -172,8 +172,8 @@ export const CATEGORY_EMOJI_CATALOG: CategoryEmojiEntry[] = [
   entry("🚧", "transport", "droga remont"),
   entry("🚚", "transport", "kurier dostawa"),
 
-  entry("💊", "health", "apteka leki tabletki"),
-  entry("🩺", "health", "lekarz stetoskop wizyta"),
+  entry("💊", "health", "apteka leki tabletki tabletka lekarstwa lekarstwo lek pigułka pigułki pill pills medicine medycyna"),
+  entry("🩺", "health", "lekarz lekarze stetoskop wizyta przychodnia"),
   entry("🏥", "health", "szpital klinika"),
   entry("💉", "health", "szczepienie zastrzyk"),
   entry("🦷", "health", "dentysta zeby"),
@@ -260,10 +260,10 @@ export const CATEGORY_EMOJI_CATALOG: CategoryEmojiEntry[] = [
   entry("💵", "money", "dolar gotowka"),
   entry("💶", "money", "euro gotowka"),
   entry("💳", "money", "karta platnicza blik"),
-  entry("🏦", "money", "bank oszczednosci lokata"),
+  entry("🏦", "money", "bank oszczednosci lokata fundusz awaryjny"),
   entry("📈", "money", "inwestycje gielda wzrost"),
   entry("📉", "money", "strata spadek"),
-  entry("🎯", "money", "cel oszczednosci"),
+  entry("🎯", "money", "cel cele oszczednosci"),
   entry("💎", "money", "luksus biuteria"),
   entry("🪙", "money", "moneta krypto bitcoin"),
   entry("📊", "money", "wykres finanse"),
@@ -318,17 +318,78 @@ function groupLabel(id: CategoryEmojiGroupId): string {
   return CATEGORY_EMOJI_GROUPS.find((group) => group.id === id)?.label ?? id;
 }
 
+function keywordTokens(row: CategoryEmojiEntry): string[] {
+  return foldEmojiSearch(`${row.keywords} ${groupLabel(row.group)} ${row.group}`)
+    .split(" ")
+    .filter(Boolean);
+}
+
+function sharedPrefixLength(left: string, right: string): number {
+  const n = Math.min(left.length, right.length);
+  let i = 0;
+  while (i < n && left[i] === right[i]) i += 1;
+  return i;
+}
+
+function scoreTokenAgainstKeywords(token: string, keywords: string[]): number {
+  let best = 0;
+  for (const keyword of keywords) {
+    if (keyword === token) best = Math.max(best, 100);
+    else if (token.length >= 3 && keyword.startsWith(token)) best = Math.max(best, 80);
+    else if (keyword.length >= 3 && token.startsWith(keyword)) best = Math.max(best, 70);
+    else if (sharedPrefixLength(token, keyword) >= 5) best = Math.max(best, 50);
+  }
+  return best;
+}
+
+export function nameSearchTokens(value: string): string[] {
+  return foldEmojiSearch(String(value ?? "").replace(/[/_\-,.]+/g, " "))
+    .split(" ")
+    .filter((token) => token.length >= 2);
+}
+
+function scoreEntryForTokens(row: CategoryEmojiEntry, tokens: string[]): number {
+  const keywords = keywordTokens(row);
+  let score = 0;
+  tokens.forEach((token, index) => {
+    const part = scoreTokenAgainstKeywords(token, keywords);
+    if (part) score += part + Math.max(0, 8 - index * 2);
+  });
+  return score;
+}
+
+/** Best icons for an envelope name, strongest match first. */
+export function suggestCategoryEmojis(name: string, limit = 12): string[] {
+  const tokens = nameSearchTokens(name);
+  if (!tokens.length) return [];
+  return CATEGORY_EMOJI_CATALOG.map((row) => ({ emoji: row.emoji, score: scoreEntryForTokens(row, tokens) }))
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((row) => row.emoji);
+}
+
+export function bestCategoryEmoji(name: string): string | null {
+  return suggestCategoryEmojis(name, 1)[0] ?? null;
+}
+
 export function filterCategoryEmojis(
   query: string,
   group: CategoryEmojiGroupId | "all" = "all"
 ): string[] {
   const raw = String(query ?? "").trim();
-  const q = foldEmojiSearch(raw);
+  const tokens = nameSearchTokens(raw);
   return CATEGORY_EMOJI_CATALOG.filter((row) => {
     if (group !== "all" && row.group !== group) return false;
-    if (!q) return true;
+    if (!tokens.length) return true;
     if (row.emoji.includes(raw)) return true;
-    const haystack = foldEmojiSearch(`${row.keywords} ${groupLabel(row.group)} ${row.group}`);
-    return haystack.split(" ").some((token) => token.startsWith(q));
+    return scoreEntryForTokens(row, tokens) > 0;
   }).map((row) => row.emoji);
+}
+
+export function rankEmojisByName(emojis: readonly string[], name: string): string[] {
+  const boost = new Set(suggestCategoryEmojis(name));
+  const first = emojis.filter((emoji) => boost.has(emoji));
+  const rest = emojis.filter((emoji) => !boost.has(emoji));
+  return [...first, ...rest];
 }

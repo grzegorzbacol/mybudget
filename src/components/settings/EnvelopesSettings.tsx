@@ -381,16 +381,6 @@ export function EnvelopesSettings() {
         </div>
 
         <div className="space-y-3 rounded-lg border p-3">
-          <CategoryEmojiPicker value={catIcon} onChange={setCatIcon} id="new-envelope-icon" />
-          <EnvelopeGroupPicker
-            groups={groups}
-            value={groupName}
-            onChange={setGroupName}
-            onGroupsChange={(next) => {
-              const added = next.filter((name) => !existingGroups.includes(name));
-              setDraftGroups(added);
-            }}
-          />
           <div>
             <Label htmlFor="envelope-name">Nazwa koperty</Label>
             <Input
@@ -406,6 +396,21 @@ export function EnvelopesSettings() {
               }}
             />
           </div>
+          <CategoryEmojiPicker
+            value={catIcon}
+            onChange={setCatIcon}
+            id="new-envelope-icon"
+            nameHint={catName}
+          />
+          <EnvelopeGroupPicker
+            groups={groups}
+            value={groupName}
+            onChange={setGroupName}
+            onGroupsChange={(next) => {
+              const added = next.filter((name) => !existingGroups.includes(name));
+              setDraftGroups(added);
+            }}
+          />
           <Button
             variant="outline"
             className="w-full"
@@ -523,7 +528,6 @@ function EnvelopeEditDialog({
           <DialogTitle>Edytuj kopertę</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <CategoryEmojiPicker value={icon} onChange={setIcon} id="edit-envelope-icon" />
           <div>
             <Label htmlFor="edit-envelope-name">Nazwa koperty</Label>
             <Input
@@ -533,6 +537,13 @@ function EnvelopeEditDialog({
               autoFocus
             />
           </div>
+          <CategoryEmojiPicker
+            key={category?.id}
+            value={icon}
+            onChange={setIcon}
+            id="edit-envelope-icon"
+            nameHint={name}
+          />
           <EnvelopeGroupPicker
             id="edit-envelope-group"
             groups={groups}

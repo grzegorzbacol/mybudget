@@ -355,7 +355,21 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             <DialogTitle>Nowa koperta</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <CategoryEmojiPicker value={catIcon} onChange={setCatIcon} id="budget-envelope-icon" />
+            <div>
+              <Label htmlFor="budget-envelope-name">Nazwa koperty</Label>
+              <Input
+                id="budget-envelope-name"
+                value={catName}
+                onChange={(e) => setCatName(e.target.value)}
+                placeholder="np. Prezent dla mamy"
+              />
+            </div>
+            <CategoryEmojiPicker
+              value={catIcon}
+              onChange={setCatIcon}
+              id="budget-envelope-icon"
+              nameHint={catName}
+            />
             <EnvelopeGroupPicker
               id="budget-envelope-group"
               groups={groupOptions}
@@ -367,15 +381,6 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                 if (created) setGroupName(created);
               }}
             />
-            <div>
-              <Label htmlFor="budget-envelope-name">Nazwa koperty</Label>
-              <Input
-                id="budget-envelope-name"
-                value={catName}
-                onChange={(e) => setCatName(e.target.value)}
-                placeholder="np. Prezent dla mamy"
-              />
-            </div>
             <Button
               className="w-full"
               disabled={!catName.trim() || !selectedGroup}
