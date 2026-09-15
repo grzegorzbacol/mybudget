@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
-import { rowsToImport } from "@/lib/bank-screenshot-match";
+import {
+  findDuplicateTx,
+  lookbackCutoffIso,
+  rowsToImport,
+} from "@/lib/bank-screenshot-match";
 import { insertRowsWithSchemaRepair } from "@/lib/schema-write";
 import { bankScreenshotConfirmSchema } from "@/lib/validators";
 
@@ -30,11 +34,46 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Nie znaleziono konta" }, { status: 404 });
   }
 
-  const inserts = rowsToImport(parsed.data.rows);
+  let inserts = rowsToImport(parsed.data.rows);
   if (inserts.length === 0) {
     return NextResponse.json({
       imported: 0,
       skipped: parsed.data.rows.length,
+      transactions: [],
+    });
+  }
+
+  // Server-side guard: skip amount+date pairs already on this account
+  const cutoff = lookbackCutoffIso();
+  const { data: existing, error: existingError } = await ctx.supabase
+    .from("transactions")
+    .select("id, date, amount, payee")
+    .eq("family_id", ctx.family.id)
+    .eq("account_id", parsed.data.account_id)
+    .gte("date", cutoff)
+    .limit(500);
+
+  if (existingError) {
+    return NextResponse.json({ error: existingError.message }, { status: 500 });
+  }
+
+  const existingRows = (existing ?? []).map((tx) => ({
+    id: tx.id as string,
+    date: String(tx.date),
+    amount: Number(tx.amount),
+    payee: String(tx.payee ?? ""),
+  }));
+
+  const beforeDedup = inserts.length;
+  inserts = inserts.filter(
+    (row) => !findDuplicateTx({ date: row.date, amount: row.amount, payee: row.payee }, existingRows)
+  );
+  const skippedExisting = beforeDedup - inserts.length;
+
+  if (inserts.length === 0) {
+    return NextResponse.json({
+      imported: 0,
+      skipped: parsed.data.rows.length - beforeDedup + skippedExisting,
       transactions: [],
     });
   }
