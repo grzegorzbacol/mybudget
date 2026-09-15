@@ -3,9 +3,12 @@ import {
   CATEGORY_EMOJI_CATALOG,
   CATEGORY_EMOJI_CHOICES,
   CATEGORY_EMOJI_GROUPS,
+  bestCategoryEmoji,
   filterCategoryEmojis,
   foldEmojiSearch,
+  suggestCategoryEmojis,
 } from "./category-emojis";
+import { DEFAULT_CATEGORIES } from "./default-categories";
 
 const ORIGINAL_ENVELOPE_EMOJIS = [
   "📁",
@@ -79,6 +82,19 @@ describe("category emoji catalog", () => {
     expect(filterCategoryEmojis("groceries")).toEqual(["🛒"]);
     expect(filterCategoryEmojis("kino")).toEqual(expect.arrayContaining(["🎬"]));
     expect(filterCategoryEmojis("in")).not.toContain("🎬");
+    expect(filterCategoryEmojis("pil")).toEqual(expect.arrayContaining(["💊", "⚽"]));
+    expect(filterCategoryEmojis("lekarstwa")).toEqual(expect.arrayContaining(["💊"]));
+  });
+
+  it("suggests an icon from the envelope name, including default categories", () => {
+    expect(bestCategoryEmoji("Lekarstwa")).toBe("💊");
+    expect(bestCategoryEmoji("Paliwo")).toBe("⛽");
+    expect(bestCategoryEmoji("Prezent dla mamy")).toBe("🎁");
+    expect(suggestCategoryEmojis("Lekarstwa")[0]).toBe("💊");
+    expect(suggestCategoryEmojis("Apteka / lekarz")).toEqual(expect.arrayContaining(["💊", "🩺"]));
+    for (const category of DEFAULT_CATEGORIES) {
+      expect(bestCategoryEmoji(category.name), category.name).toBe(category.icon);
+    }
   });
 
   it("scopes chips to a group and returns all icons for an empty query", () => {

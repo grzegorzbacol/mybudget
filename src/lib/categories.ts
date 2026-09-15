@@ -71,8 +71,11 @@ export {
   CATEGORY_EMOJI_CHOICES,
   CATEGORY_EMOJI_CATALOG,
   CATEGORY_EMOJI_GROUPS,
+  bestCategoryEmoji,
   filterCategoryEmojis,
   foldEmojiSearch,
+  rankEmojisByName,
+  suggestCategoryEmojis,
 } from "./category-emojis";
 export type { CategoryEmojiEntry, CategoryEmojiGroupId } from "./category-emojis";
 

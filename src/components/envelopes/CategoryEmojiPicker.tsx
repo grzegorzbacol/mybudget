@@ -7,8 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   CATEGORY_EMOJI_GROUPS,
+  DEFAULT_CATEGORY_ICON,
+  bestCategoryEmoji,
   filterCategoryEmojis,
   normalizeCategoryIcon,
+  rankEmojisByName,
+  suggestCategoryEmojis,
   type CategoryEmojiGroupId,
 } from "@/lib/categories";
 import { cn } from "@/lib/utils";
@@ -17,25 +21,58 @@ export function CategoryEmojiPicker({
   value,
   onChange,
   id = "envelope-icon",
+  nameHint = "",
 }: {
   value: string;
   onChange: (icon: string) => void;
   id?: string;
+  nameHint?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState("");
   const [query, setQuery] = useState("");
   const [group, setGroup] = useState<CategoryEmojiGroupId | "all">("all");
+  const [pickedManually, setPickedManually] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const lastAutoRef = useRef<string | null>(null);
   const current = normalizeCategoryIcon(value);
-  const visible = useMemo(() => filterCategoryEmojis(query, group), [query, group]);
+  const suggested = useMemo(() => suggestCategoryEmojis(nameHint), [nameHint]);
+  const visible = useMemo(
+    () => rankEmojisByName(filterCategoryEmojis(query, group), nameHint),
+    [query, group, nameHint]
+  );
+  const autoFromName = suggested[0] ?? null;
+  const usedNameSuggestion = Boolean(autoFromName && current === autoFromName && !pickedManually);
 
   useEffect(() => {
     if (!open) return;
     searchRef.current?.focus();
   }, [open]);
 
+  useEffect(() => {
+    if (!nameHint.trim() && normalizeCategoryIcon(value) === DEFAULT_CATEGORY_ICON) {
+      setPickedManually(false);
+      lastAutoRef.current = null;
+    }
+  }, [nameHint, value]);
+
+  useEffect(() => {
+    if (pickedManually) return;
+    const auto = bestCategoryEmoji(nameHint);
+    if (!auto) return;
+    const currentIcon = normalizeCategoryIcon(value);
+    const canReplace =
+      currentIcon === DEFAULT_CATEGORY_ICON ||
+      currentIcon === lastAutoRef.current ||
+      currentIcon === auto;
+    if (!canReplace) return;
+    lastAutoRef.current = auto;
+    if (currentIcon !== auto) onChange(auto);
+  }, [nameHint, pickedManually, value, onChange]);
+
   const pick = (icon: string) => {
+    setPickedManually(true);
+    lastAutoRef.current = null;
     onChange(normalizeCategoryIcon(icon));
     setCustom("");
     setQuery("");
@@ -67,7 +104,11 @@ export function CategoryEmojiPicker({
         >
           {current}
         </button>
-        <p className="text-xs text-muted-foreground">Kliknij, żeby wybrać emoji zamiast folderu.</p>
+        <p className="text-xs text-muted-foreground">
+          {usedNameSuggestion
+            ? "Dobraliśmy emoji z nazwy koperty — kliknij, żeby zmienić."
+            : "Kliknij, żeby wybrać emoji zamiast folderu."}
+        </p>
       </div>
       {open && (
         <div className="space-y-2 rounded-lg border p-2">
@@ -81,10 +122,31 @@ export function CategoryEmojiPicker({
                 if (e.target.value.trim()) setGroup("all");
               }}
               placeholder="Szukaj, np. auto, jedzenie, pies"
-              className="h-9 pl-8"
+              className="h-9 pl-8 focus-visible:ring-1 focus-visible:ring-offset-0"
               aria-label="Szukaj emoji"
             />
           </div>
+          {suggested.length > 0 && (
+            <div className="space-y-1">
+              <p className="px-0.5 text-[11px] text-muted-foreground">Z nazwy koperty</p>
+              <div className="flex flex-wrap gap-1">
+                {suggested.slice(0, 8).map((emoji) => (
+                  <button
+                    key={`suggest-${emoji}`}
+                    type="button"
+                    className={cn(
+                      "flex h-9 w-9 items-center justify-center rounded-md text-lg hover:bg-accent",
+                      emoji === current && "bg-accent ring-1 ring-ring"
+                    )}
+                    aria-label={`Sugerowana ikona ${emoji}`}
+                    onClick={() => pick(emoji)}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="-mx-1 flex gap-1 overflow-x-auto px-1 pb-0.5">
             <Button
               type="button"
@@ -143,6 +205,7 @@ export function CategoryEmojiPicker({
               placeholder="Własne emoji"
               maxLength={16}
               aria-label="Własne emoji"
+              className="focus-visible:ring-1 focus-visible:ring-offset-0"
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
