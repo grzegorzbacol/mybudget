@@ -2,7 +2,6 @@ import { money } from "./money";
 import {
   applyPayeeRules,
   buildPayeeCategoryRules,
-  normalizePayee,
 } from "./categorize";
 import type { BankScreenshotMatchedRow, BankScreenshotMatchStatus } from "./types";
 import type { BankScreenshotOperation } from "./validators";
@@ -41,18 +40,15 @@ export function amountsMatch(a: number, b: number): boolean {
   return money(a) === money(b);
 }
 
-/** Fuzzy payee: exact normalize, or one contains the other (min 4 chars). */
-export function payeesFuzzyMatch(a: string, b: string): boolean {
-  const na = normalizePayee(a);
-  const nb = normalizePayee(b);
-  if (!na || !nb) return false;
-  if (na === nb) return true;
-  if (na.length >= 4 && nb.length >= 4 && (na.includes(nb) || nb.includes(na))) {
-    return true;
-  }
-  return false;
+/** Duplicate key used for exact amount+date matching (within batch and vs ledger). */
+export function amountDateKey(amount: number, date: string): string {
+  return `${money(amount)}|${date.slice(0, 10)}`;
 }
 
+/**
+ * Match duplicates by amount + date only (± slack days).
+ * Payee is ignored — bank screens often rename the same merchant.
+ */
 export function findDuplicateTx(
   op: Pick<BankScreenshotOperation, "date" | "amount" | "payee">,
   existing: ExistingTxForMatch[],
@@ -62,10 +58,24 @@ export function findDuplicateTx(
     if (!amountsMatch(op.amount, tx.amount)) continue;
     const gap = daysBetween(op.date, tx.date);
     if (gap === null || gap > dateSlackDays) continue;
-    if (!payeesFuzzyMatch(op.payee, tx.payee)) continue;
     return tx;
   }
   return null;
+}
+
+/** Drop exact amount+date repeats from the AI output (keep first). */
+export function dedupeOperationsByAmountDate(
+  operations: BankScreenshotOperation[]
+): BankScreenshotOperation[] {
+  const seen = new Set<string>();
+  const out: BankScreenshotOperation[] = [];
+  for (const op of operations) {
+    const key = amountDateKey(op.amount, op.date);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(op);
+  }
+  return out;
 }
 
 export function resolveCategoryHint(
@@ -109,6 +119,7 @@ export function resetReviewRowIdSeq(): void {
 /**
  * Attach duplicate status + category suggestions to parsed screenshot operations.
  * Duplicates default to selected=false; new rows selected=true.
+ * Matching is by amount + date (±1 day) against existing account txs and within the batch.
  */
 export function matchBankScreenshotOperations(
   operations: BankScreenshotOperation[],
@@ -121,6 +132,8 @@ export function matchBankScreenshotOperations(
     date?: string;
   }>
 ): BankScreenshotMatchedRow[] {
+  const uniqueOps = dedupeOperationsByAmountDate(operations);
+
   const rules = buildPayeeCategoryRules(
     pastForRules ??
       existing.map((tx) => ({
@@ -131,7 +144,7 @@ export function matchBankScreenshotOperations(
       }))
   );
 
-  const withHints = operations.map((op) => {
+  const withHints = uniqueOps.map((op) => {
     const fromHint =
       op.amount < 0 ? resolveCategoryHint(op.category_hint, categories) : null;
     return {
@@ -142,10 +155,14 @@ export function matchBankScreenshotOperations(
 
   const tagged = applyPayeeRules(withHints, rules);
 
+  // Track amount+date already claimed in this batch so a second identical
+  // line (or ±1 day twin) is marked duplicate even if not yet in the DB.
+  const claimed: ExistingTxForMatch[] = existing.map((tx) => ({ ...tx }));
+
   return tagged.map((op) => {
-    const dup = findDuplicateTx(op, existing);
+    const dup = findDuplicateTx(op, claimed);
     const status: BankScreenshotMatchStatus = dup ? "duplicate" : "new";
-    return {
+    const row: BankScreenshotMatchedRow = {
       id: nextReviewRowId(),
       date: op.date,
       amount: op.amount,
@@ -157,6 +174,16 @@ export function matchBankScreenshotOperations(
       duplicate_of: dup?.id ?? null,
       selected: status === "new",
     };
+    if (status === "new") {
+      claimed.push({
+        id: row.id,
+        date: row.date,
+        amount: row.amount,
+        payee: row.payee,
+        category_id: row.category_id,
+      });
+    }
+    return row;
   });
 }
 
@@ -178,7 +205,7 @@ export function rowsToImport(
   memo: string | null;
   category_id: string | null;
 }> {
-  return rows
+  const inserts = rows
     .filter((row) => {
       if (row.selected === false) return false;
       if (row.status === "skip") return false;
@@ -194,4 +221,15 @@ export function rowsToImport(
       category_id: row.amount < 0 ? row.category_id ?? null : null,
     }))
     .filter((row) => row.payee && row.date && row.amount !== 0);
+
+  // Final guard: never insert two identical amount+date rows in one confirm
+  const seen = new Set<string>();
+  const unique: typeof inserts = [];
+  for (const row of inserts) {
+    const key = amountDateKey(row.amount, row.date);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(row);
+  }
+  return unique;
 }

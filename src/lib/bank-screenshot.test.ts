@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
+  coerceBankScreenshotYear,
   normalizeBankScreenshotAmount,
   normalizeBankScreenshotDate,
   normalizeBankScreenshotOperation,
@@ -8,29 +9,51 @@ import {
 } from "./bank-screenshot";
 import {
   amountsMatch,
+  dedupeOperationsByAmountDate,
   findDuplicateTx,
   matchBankScreenshotOperations,
-  payeesFuzzyMatch,
   resetReviewRowIdSeq,
   resolveCategoryHint,
   rowsToImport,
 } from "./bank-screenshot-match";
 import { bankScreenshotConfirmSchema, bankScreenshotResultSchema } from "./validators";
 
+const TODAY = "2026-09-15";
+
 describe("normalizeBankScreenshotDate", () => {
-  it("keeps ISO dates", () => {
-    expect(normalizeBankScreenshotDate("2026-09-14")).toBe("2026-09-14");
+  it("keeps recent ISO dates", () => {
+    expect(normalizeBankScreenshotDate("2026-09-14", TODAY)).toBe("2026-09-14");
   });
 
-  it("parses Polish DD.MM.YYYY", () => {
-    expect(normalizeBankScreenshotDate("14.09.2026")).toBe("2026-09-14");
-    expect(normalizeBankScreenshotDate("3/1/26")).toBe("2026-01-03");
+  it("maps Today / Dziś to the provided today", () => {
+    expect(normalizeBankScreenshotDate("Today", TODAY)).toBe("2026-09-15");
+    expect(normalizeBankScreenshotDate("dziś", TODAY)).toBe("2026-09-15");
+    expect(normalizeBankScreenshotDate("Dzisiaj", TODAY)).toBe("2026-09-15");
+  });
+
+  it("maps Yesterday / Wczoraj", () => {
+    expect(normalizeBankScreenshotDate("Yesterday", TODAY)).toBe("2026-09-14");
+    expect(normalizeBankScreenshotDate("wczoraj", TODAY)).toBe("2026-09-14");
+  });
+
+  it("parses dates without year using current year", () => {
+    expect(normalizeBankScreenshotDate("6 Oct", TODAY)).toBe("2025-10-06"); // Oct is after Sep → previous year
+    expect(normalizeBankScreenshotDate("10.09", TODAY)).toBe("2026-09-10");
+    expect(normalizeBankScreenshotDate("13 paź", TODAY)).toBe("2025-10-13");
+  });
+
+  it("parses Polish DD.MM.YYYY and coerces stale years", () => {
+    expect(normalizeBankScreenshotDate("14.09.2026", TODAY)).toBe("2026-09-14");
+    expect(normalizeBankScreenshotDate("3/1/26", TODAY)).toBe("2026-01-03");
+    // Model invents 2023 — remap month/day near today
+    expect(normalizeBankScreenshotDate("2023-10-13", TODAY)).toBe("2025-10-13");
+    expect(coerceBankScreenshotYear("2023-09-10", TODAY)).toBe("2026-09-10");
   });
 
   it("rejects garbage", () => {
-    expect(normalizeBankScreenshotDate("")).toBe("");
-    expect(normalizeBankScreenshotDate("nie-data")).toBe("");
-    expect(normalizeBankScreenshotDate("2026-13-40")).toBe("");
+    expect(normalizeBankScreenshotDate("", TODAY)).toBe("");
+    expect(normalizeBankScreenshotDate("nie-data", TODAY)).toBe("");
+    expect(normalizeBankScreenshotDate("2026-13-40", TODAY)).toBe("");
   });
 });
 
@@ -51,13 +74,16 @@ describe("normalizeBankScreenshotAmount", () => {
 
 describe("normalizeBankScreenshotOperation", () => {
   it("strips mBank card prefix from payee", () => {
-    const op = normalizeBankScreenshotOperation({
-      date: "14.09.2026",
-      amount: 32.99,
-      payee: "PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK",
-      direction: "expense",
-      category_hint: "Żywność",
-    });
+    const op = normalizeBankScreenshotOperation(
+      {
+        date: "14.09.2026",
+        amount: 32.99,
+        payee: "PRZY UŻYCIU KARTY;JMP S.A. BIEDRONKA /RUDA SLASK",
+        direction: "expense",
+        category_hint: "Żywność",
+      },
+      TODAY
+    );
     expect(op).toMatchObject({
       date: "2026-09-14",
       amount: -32.99,
@@ -65,6 +91,19 @@ describe("normalizeBankScreenshotOperation", () => {
       direction: "expense",
       category_hint: "Żywność",
     });
+  });
+
+  it("resolves Today from raw AI date field", () => {
+    const op = normalizeBankScreenshotOperation(
+      {
+        date: "Today",
+        amount: 3.5,
+        payee: "AsVending",
+        direction: "expense",
+      },
+      TODAY
+    );
+    expect(op?.date).toBe("2026-09-15");
   });
 
   it("drops incomplete rows", () => {
@@ -76,48 +115,51 @@ describe("normalizeBankScreenshotOperation", () => {
       })
     ).toBeNull();
     expect(
-      normalizeBankScreenshotOperations([
-        { date: "2026-09-01", amount: 0, payee: "X" },
-        { date: "2026-09-01", amount: 5, payee: "Orlen", direction: "expense" },
-      ])
-    ).toEqual([
-      expect.objectContaining({ payee: "Orlen", amount: -5 }),
-    ]);
+      normalizeBankScreenshotOperations(
+        [
+          { date: "2026-09-01", amount: 0, payee: "X" },
+          { date: "2026-09-01", amount: 5, payee: "Orlen", direction: "expense" },
+        ],
+        TODAY
+      )
+    ).toEqual([expect.objectContaining({ payee: "Orlen", amount: -5 })]);
   });
 });
 
 describe("parseBankScreenshotJson", () => {
-  it("parses mocked vision JSON", () => {
+  it("parses mocked vision JSON and remaps Today", () => {
     const ops = parseBankScreenshotJson(
       JSON.stringify({
         operations: [
           {
-            date: "2026-09-10",
-            amount: 45.2,
-            payee: "Biedronka",
+            date: "Today",
+            amount: 3.5,
+            payee: "AsVending",
             memo: "",
             direction: "expense",
             category_hint: "Żywność",
           },
           {
-            date: "11.09.2026",
-            amount: 3500,
-            payee: "Wynagrodzenie",
-            direction: "income",
+            date: "2023-10-06",
+            amount: 148,
+            payee: "mObywatel",
+            direction: "expense",
             category_hint: "",
           },
         ],
-      })
+      }),
+      TODAY
     );
     expect(ops).toHaveLength(2);
-    expect(ops[0].amount).toBe(-45.2);
-    expect(ops[1].amount).toBe(3500);
-    expect(ops[1].date).toBe("2026-09-11");
+    expect(ops[0].date).toBe("2026-09-15");
+    expect(ops[0].amount).toBe(-3.5);
+    expect(ops[1].date).toBe("2025-10-06");
   });
 
   it("accepts fenced JSON", () => {
     const ops = parseBankScreenshotJson(
-      '```json\n{"operations":[{"date":"2026-01-02","amount":1,"payee":"X","direction":"expense"}]}\n```'
+      '```json\n{"operations":[{"date":"2026-01-02","amount":1,"payee":"X","direction":"expense"}]}\n```',
+      TODAY
     );
     expect(ops).toHaveLength(1);
   });
@@ -135,13 +177,12 @@ describe("bank-screenshot-match", () => {
     resetReviewRowIdSeq();
   });
 
-  it("matches amounts and fuzzy payees", () => {
+  it("matches amounts", () => {
     expect(amountsMatch(-10.1, -10.1)).toBe(true);
-    expect(payeesFuzzyMatch("Biedronka 12", "BIEDRONKA")).toBe(true);
-    expect(payeesFuzzyMatch("Orlen", "Shell")).toBe(false);
+    expect(amountsMatch(-10.1, -10.2)).toBe(false);
   });
 
-  it("finds duplicates within date slack", () => {
+  it("finds duplicates by amount and date only (ignores payee)", () => {
     const dup = findDuplicateTx(
       { date: "2026-09-10", amount: -20, payee: "Biedronka" },
       [
@@ -149,20 +190,36 @@ describe("bank-screenshot-match", () => {
           id: "tx-1",
           date: "2026-09-11",
           amount: -20,
-          payee: "biedronka centrum",
+          payee: "całkiem inna nazwa",
         },
       ]
     );
     expect(dup?.id).toBe("tx-1");
   });
 
-  it("does not match different amounts", () => {
+  it("does not match different amounts or distant dates", () => {
     expect(
       findDuplicateTx(
         { date: "2026-09-10", amount: -20, payee: "Biedronka" },
         [{ id: "tx-1", date: "2026-09-10", amount: -21, payee: "Biedronka" }]
       )
     ).toBeNull();
+    expect(
+      findDuplicateTx(
+        { date: "2026-09-10", amount: -20, payee: "AsVending" },
+        [{ id: "tx-1", date: "2026-09-01", amount: -20, payee: "AsVending" }]
+      )
+    ).toBeNull();
+  });
+
+  it("dedupes identical amount+date rows from AI output", () => {
+    const ops = dedupeOperationsByAmountDate([
+      { date: "2026-09-15", amount: -3.5, payee: "AsVending" },
+      { date: "2026-09-15", amount: -3.5, payee: "As Vending" },
+      { date: "2026-09-15", amount: -2.8, payee: "AsVending" },
+    ]);
+    expect(ops).toHaveLength(2);
+    expect(ops[0].payee).toBe("AsVending");
   });
 
   it("resolves category hints by name", () => {
@@ -175,7 +232,7 @@ describe("bank-screenshot-match", () => {
     expect(resolveCategoryHint("", cats)).toBeNull();
   });
 
-  it("marks duplicates and applies payee rules", () => {
+  it("marks duplicates by amount+date and applies payee rules", () => {
     const rows = matchBankScreenshotOperations(
       [
         {
@@ -190,13 +247,20 @@ describe("bank-screenshot-match", () => {
           payee: "Orlen",
           category_hint: "Paliwo",
         },
+        // exact repeat in same batch
+        {
+          date: "2026-09-12",
+          amount: -50,
+          payee: "ORLEN STACJA",
+          category_hint: "Paliwo",
+        },
       ],
       [
         {
           id: "existing-1",
           date: "2026-09-10",
           amount: -32,
-          payee: "BIEDRONKA",
+          payee: "zupełnie inny opis",
           category_id: "c-food",
         },
       ],
@@ -214,6 +278,7 @@ describe("bank-screenshot-match", () => {
       ]
     );
 
+    expect(rows).toHaveLength(2); // third dropped by amount+date dedupe
     expect(rows[0].status).toBe("duplicate");
     expect(rows[0].selected).toBe(false);
     expect(rows[0].duplicate_of).toBe("existing-1");
@@ -222,7 +287,7 @@ describe("bank-screenshot-match", () => {
     expect(rows[1].category_id).toBe("c-fuel");
   });
 
-  it("rowsToImport skips duplicates and unselected", () => {
+  it("rowsToImport skips duplicates and unselected and amount+date twins", () => {
     const inserts = rowsToImport([
       {
         date: "2026-09-01",
@@ -252,6 +317,13 @@ describe("bank-screenshot-match", () => {
         amount: -5,
         payee: "C",
         status: "duplicate",
+        selected: true,
+      },
+      {
+        date: "2026-09-01",
+        amount: -10,
+        payee: "A kopia",
+        status: "new",
         selected: true,
       },
     ]);
