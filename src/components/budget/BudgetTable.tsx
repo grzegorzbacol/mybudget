@@ -34,6 +34,9 @@ interface BudgetTableProps {
 
 export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
   const { data, isError, error, refetch, isFetching } = useBudget(year, month);
+  const previousYear = month === 1 ? year - 1 : year;
+  const previousMonth = month === 1 ? 12 : month - 1;
+  const { data: previousData } = useBudget(previousYear, previousMonth);
   const [selected, setSelected] = useState<BudgetCategoryRow | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [groupName, setGroupName] = useState("");
@@ -79,6 +82,12 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
 
   const groups = Array.isArray(data?.groups) ? data.groups : [];
   const allRows = envelopeRowsFromBudget(data);
+  const previousRows = envelopeRowsFromBudget(
+    previousData?.year === previousYear && previousData?.month === previousMonth ? previousData : undefined
+  );
+  const previousActivityByCategory = new Map(
+    previousRows.map((row) => [row.category.id, Math.abs(Number(row.activity) || 0)])
+  );
   const groupOptions = uniqueGroupNames([
     ...groups.map((group) => ({ group_name: group.groupName })),
     ...allRows.map((row) => row.category),
@@ -124,7 +133,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
         <p className={cn("text-2xl font-bold", !rtaPositive && "text-red-500")}>
           {formatCurrency(readyToAssign)}
         </p>
-        <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
+        <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
           <div>
             <p className="text-muted-foreground">Przychody w miesiącu</p>
             <p className="font-medium">{formatCurrency(data?.incomeThisMonth ?? 0)}</p>
@@ -132,6 +141,12 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
           <div>
             <p className="text-muted-foreground">Przydzielone</p>
             <p className="font-medium">{formatCurrency(data?.totalAllocated ?? 0)}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">Wydano: {getMonthLabel(previousYear, previousMonth)}</p>
+            <p className="font-medium">
+              {formatCurrency(Math.abs(previousData?.totalActivity ?? 0))}
+            </p>
           </div>
           <div>
             <p className="text-muted-foreground">Saldo kont w budżecie</p>
@@ -214,9 +229,10 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
 
       <div className="overflow-hidden rounded-lg border">
         <div className="hidden grid-cols-12 gap-2 border-b bg-muted/50 px-4 py-2 text-xs font-medium text-muted-foreground md:grid">
-          <div className="col-span-4">Kategoria</div>
+          <div className="col-span-3">Kategoria</div>
           <div className="col-span-2 text-right">Przydzielone</div>
-          <div className="col-span-3 text-right" title="Suma wydatków w tym miesiącu, nie zaległości z koperty">
+          <div className="col-span-2 text-right">Poprz. miesiąc</div>
+          <div className="col-span-2 text-right" title="Suma wydatków w tym miesiącu, nie zaległości z koperty">
             Aktywność
           </div>
           <div className="col-span-3 text-right">Dostępne</div>
@@ -227,7 +243,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             <div className="grid grid-cols-12 items-center gap-2 border-b bg-muted/40 px-4 py-2 text-sm font-semibold">
               <button
                 type="button"
-                className="col-span-12 flex items-center gap-2 text-left md:col-span-4"
+                className="col-span-12 flex items-center gap-2 text-left md:col-span-3"
                 onClick={() => {
                   const next = new Set(collapsed);
                   if (next.has(group.groupName)) next.delete(group.groupName);
@@ -243,7 +259,14 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
               <div className="col-span-4 hidden text-right tabular-nums md:col-span-2 md:block">
                 {formatCurrency(group.assigned)}
               </div>
-              <div className="col-span-4 hidden text-right tabular-nums md:col-span-3 md:block">
+              <div className="col-span-4 hidden text-right tabular-nums md:col-span-2 md:block">
+                {formatCurrency(
+                  Math.abs(
+                    previousData?.groups.find((previousGroup) => previousGroup.groupName === group.groupName)?.activity ?? 0
+                  )
+                )}
+              </div>
+              <div className="col-span-4 hidden text-right tabular-nums md:col-span-2 md:block">
                 {formatCurrency(group.activity)}
               </div>
               <div className="col-span-4 hidden text-right tabular-nums md:col-span-3 md:block">
@@ -264,7 +287,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                   <button
                     type="button"
                     onClick={() => setSelected(row)}
-                    className="col-span-12 text-left md:col-span-4"
+                    className="col-span-12 text-left md:col-span-3"
                   >
                     <div className="flex items-center gap-2">
                       <CategoryIcon icon={row.category.icon} size="sm" />
@@ -279,7 +302,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                     )}
                   </button>
 
-                  <div className="col-span-4 md:col-span-2">
+                  <div className="col-span-3 md:col-span-2">
                     <p className="mb-1 text-xs text-muted-foreground md:hidden">Przydzielone</p>
                     <AssignedInput
                       categoryId={row.category.id}
@@ -291,7 +314,15 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                   <button
                     type="button"
                     onClick={() => setSelected(row)}
-                    className="col-span-4 text-right text-sm md:col-span-3"
+                    className="col-span-3 text-right text-sm md:col-span-2"
+                  >
+                    <p className="mb-1 text-xs text-muted-foreground md:hidden">Poprz. miesiąc</p>
+                    <Money amount={previousActivityByCategory.get(row.category.id) ?? 0} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelected(row)}
+                    className="col-span-3 text-right text-sm md:col-span-2"
                   >
                     <p className="mb-1 text-xs text-muted-foreground md:hidden">Aktywność (ten miesiąc)</p>
                     <Money amount={row.activity} />
@@ -299,7 +330,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                   <button
                     type="button"
                     onClick={() => setSelected(row)}
-                    className="col-span-4 text-right md:col-span-3"
+                    className="col-span-3 text-right md:col-span-3"
                   >
                     <p className="mb-1 text-xs text-muted-foreground md:hidden">Dostępne</p>
                     <p
