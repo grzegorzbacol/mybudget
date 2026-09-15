@@ -113,6 +113,8 @@ export default function ReviewPage() {
     unfundedTotal: overview?.cashflow.unfundedTotal ?? 0,
     behindGoals: behindGoals.length,
     tightOn: overview?.supervision.tightOn ?? null,
+    year,
+    month,
   });
   const doneCount = ritual.filter((item) => item.done).length;
 

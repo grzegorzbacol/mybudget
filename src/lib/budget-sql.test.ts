@@ -10,6 +10,7 @@ import {
   isStatementTimeoutError,
   monthAmount,
   monthCount,
+  excludeSplitParentsFromUncategorized,
   parseFamilyBudgetPayload,
   PG_POOL_GLOBAL_KEY,
   postgresPoolConfig,
@@ -45,6 +46,7 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL).toContain("amount > 0");
     expect(FAMILY_BUDGET_SQL).toContain("amount < 0 AND NOT is_opening");
     expect(FAMILY_BUDGET_SQL).toContain("Saldo początkowe");
+    expect(FAMILY_BUDGET_SQL).toContain("btrim");
     expect(FAMILY_BUDGET_SQL).toContain("GROUP BY 1, 2, 3");
     expect(FAMILY_BUDGET_SQL).not.toContain("transaction_category_splits");
     expect(FAMILY_BUDGET_SQL).not.toContain("COALESCE(kind");
@@ -79,6 +81,46 @@ describe("budget SQL aggregates", () => {
     expect(monthAmount(parsed.spending, 2026, 9)).toBe(2100);
     expect(monthCount(parsed.uncategorized, 2026, 9)).toBe(2);
     expect(monthAmount(parsed.income, 2026, 8)).toBe(0);
+  });
+
+  it("does not keep split receipts in the uncategorized inbox count", () => {
+    const remaining = excludeSplitParentsFromUncategorized(
+      [
+        { year: 2026, month: 9, n: 2 },
+        { year: 2026, month: 8, n: 1 },
+      ],
+      [
+        {
+          transaction_id: "receipt",
+          year: 2026,
+          month: 9,
+          parent_category_id: null,
+          split_category_id: "food",
+          split_activity: -40,
+          parent_amount: -70,
+        },
+        {
+          transaction_id: "receipt",
+          year: 2026,
+          month: 9,
+          parent_category_id: null,
+          split_category_id: "fun",
+          split_activity: -30,
+          parent_amount: -70,
+        },
+        {
+          transaction_id: "categorized",
+          year: 2026,
+          month: 9,
+          parent_category_id: "food",
+          split_category_id: "fun",
+          split_activity: -10,
+          parent_amount: -40,
+        },
+      ]
+    );
+    expect(monthCount(remaining, 2026, 9)).toBe(1);
+    expect(monthCount(remaining, 2026, 8)).toBe(1);
   });
 
   it("parses a JSON string payload and nested string arrays from node-pg", () => {

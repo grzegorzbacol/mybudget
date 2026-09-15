@@ -24,6 +24,7 @@ import { AssignedInput, Money } from "./AssignedInput";
 import type { BudgetCategoryRow } from "@/lib/types";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
+import { uncategorizedQueueHref } from "@/lib/transaction-list";
 
 interface BudgetTableProps {
   year: number;
@@ -168,7 +169,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
         )}
         {(data?.uncategorizedCount ?? 0) > 0 && (
           <a
-            href="/transactions?filter=uncategorized"
+            href={uncategorizedQueueHref(year, month)}
             className="mt-3 block rounded-md border border-amber-500/40 bg-background px-3 py-2 text-sm text-amber-700 dark:text-amber-400"
           >
             {data?.uncategorizedCount}{" "}

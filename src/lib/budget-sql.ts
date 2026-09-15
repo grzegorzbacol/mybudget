@@ -335,6 +335,37 @@ export function monthCount(
   return 0;
 }
 
+/**
+ * Snapshot SQL counts a parent with NULL category_id even when envelope
+ * splits already assign every złoty. Subtract those so the budget banner
+ * matches the Bez kategorii queue.
+ */
+export function excludeSplitParentsFromUncategorized(
+  rows: Array<{ year: number; month: number; n: number }> | null | undefined,
+  splitLines: SplitActivityLine[] | null | undefined
+): Array<{ year: number; month: number; n: number }> {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!splitLines?.length) return list;
+  const byMonth = new Map<string, Set<string>>();
+  for (const line of splitLines) {
+    if (!line?.transaction_id || line.parent_category_id) continue;
+    const year = Number(line.year);
+    const month = Number(line.month);
+    if (!year || !month) continue;
+    const key = `${year}-${month}`;
+    const ids = byMonth.get(key) ?? new Set<string>();
+    ids.add(line.transaction_id);
+    byMonth.set(key, ids);
+  }
+  if (!byMonth.size) return list;
+  return list
+    .map((row) => {
+      const splitCount = byMonth.get(`${Number(row.year)}-${Number(row.month)}`)?.size ?? 0;
+      return { year: Number(row.year), month: Number(row.month), n: Math.max(0, (Number(row.n) || 0) - splitCount) };
+    })
+    .filter((row) => row.n > 0);
+}
+
 type PgPoolClient = {
   query: SqlQueryFn;
   release: () => void;

@@ -1,4 +1,5 @@
 import { money } from "./money";
+import { uncategorizedQueueHref } from "./transaction-list";
 
 export interface LeakageInput {
   uncategorizedCount: number;
@@ -101,6 +102,8 @@ export function weeklyRitual(input: {
   unfundedTotal: number;
   behindGoals: number;
   tightOn: string | null;
+  year?: number;
+  month?: number;
 }): RitualItem[] {
   return [
     {
@@ -119,7 +122,10 @@ export function weeklyRitual(input: {
       id: "uncat",
       label: "Przypisz transakcje bez kategorii",
       done: input.uncategorizedCount === 0,
-      href: "/transactions?filter=uncategorized",
+      href:
+        input.year && input.month
+          ? uncategorizedQueueHref(input.year, input.month)
+          : "/transactions?filter=uncategorized",
       detail:
         input.uncategorizedCount > 0
           ? `${input.uncategorizedCount} bez koperty — koperty nie wiedzą o wydatku`

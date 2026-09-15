@@ -69,7 +69,21 @@ describe("savings analytics", () => {
     });
     expect(items.find((i) => i.id === "rta")?.done).toBe(false);
     expect(items.find((i) => i.id === "uncat")?.done).toBe(true);
+    expect(items.find((i) => i.id === "uncat")?.href).toBe("/transactions?filter=uncategorized");
     expect(items.find((i) => i.id === "save")?.done).toBe(false);
+  });
+
+  it("points the uncategorized ritual at the live budget month", () => {
+    const items = weeklyRitual({
+      readyToAssign: 0,
+      uncategorizedCount: 1,
+      unfundedTotal: 0,
+      behindGoals: 0,
+      tightOn: null,
+      year: 2026,
+      month: 8,
+    });
+    expect(items.find((i) => i.id === "uncat")?.href).toBe("/transactions?filter=uncategorized&year=2026&month=8");
   });
 
   it("does not mark Przydziel Do rozdzielenia done when RTA is negative", () => {

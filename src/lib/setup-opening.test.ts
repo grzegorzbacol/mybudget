@@ -86,6 +86,8 @@ describe("isOpeningBalanceTx", () => {
     expect(isOpeningBalanceTx({ payee: "Saldo początkowe", memo: "Opening balance" })).toBe(true);
     expect(isOpeningBalanceTx({ payee: "Saldo początkowe", memo: "Przykładowe saldo" })).toBe(true);
     expect(isOpeningBalanceTx({ payee: "Karta", memo: "Opening balance" })).toBe(true);
+    expect(isOpeningBalanceTx({ payee: "  SALDO POCZĄTKOWE  ", memo: "" })).toBe(true);
+    expect(isOpeningBalanceTx({ payee: "Karta", memo: " opening balance " })).toBe(true);
     expect(isOpeningBalanceTx({ payee: "Biedronka", memo: "Zakupy" })).toBe(false);
   });
 });

@@ -314,6 +314,48 @@ describe("budgetMonthFromCore", () => {
     expect(food.available).toBe(130);
     expect(fun.available).toBe(20);
   });
+
+  it("drops SQL uncategorized parents that already have envelope splits", () => {
+    const core = coreFromSql({
+      categories: [category],
+      allocations: [allocation],
+      accounts: [account],
+      scheduled: [],
+      activity: [],
+      income: [],
+      spending: [{ year: 2026, month: 9, amount: 100 }],
+      uncategorized: [{ year: 2026, month: 9, n: 1 }],
+      splitLines: [
+        {
+          transaction_id: "receipt",
+          account_id: "checking",
+          parent_category_id: null,
+          year: 2026,
+          month: 9,
+          parent_amount: -100,
+          split_category_id: category.id,
+          split_activity: -100,
+        },
+      ],
+    });
+    expect(budgetMonthFromCore(core, 2026, 9).uncategorizedCount).toBe(0);
+  });
+
+  it("hides the uncategorized banner when transfer markers are missing", () => {
+    const core = coreFromSql({
+      categories: [category],
+      allocations: [allocation],
+      accounts: [account],
+      scheduled: [],
+      activity: [],
+      income: [],
+      spending: [{ year: 2026, month: 9, amount: 200 }],
+      uncategorized: [{ year: 2026, month: 9, n: 1 }],
+      splitLines: [],
+      transferMarkersMissing: true,
+    });
+    expect(budgetMonthFromCore(core, 2026, 9).uncategorizedCount).toBe(0);
+  });
 });
 
 describe("asBudgetCategories", () => {
@@ -601,5 +643,46 @@ describe("attachRestMonthTotals", () => {
     expect(next.uncategorized).toEqual([{ year: 2026, month: 9, n: 1 }]);
     expect(next.spending).toEqual([{ year: 2026, month: 9, amount: 40 }]);
     expect(next.income).toEqual([{ year: 2026, month: 9, amount: 1000 }]);
+  });
+
+  it("does not count a padded opening-balance payee as uncategorized", () => {
+    const empty = core({
+      income: [],
+      spending: [],
+      uncategorized: [],
+      activityMap: activityMapFromAggregates([]),
+    });
+    const next = attachRestMonthTotals(empty, [
+      {
+        account_id: "checking",
+        category_id: null,
+        amount: -250,
+        date: "2026-09-15",
+        payee: "  Saldo początkowe  ",
+        memo: "",
+      },
+    ]);
+    expect(next.uncategorized).toEqual([]);
+    expect(next.spending).toEqual([]);
+  });
+
+  it("does not count markerless transfer-like rows as uncategorized", () => {
+    const empty = core({
+      income: [],
+      spending: [],
+      uncategorized: [],
+      activityMap: activityMapFromAggregates([]),
+      transferMarkersMissing: true,
+    });
+    const next = attachRestMonthTotals(empty, [
+      {
+        account_id: "checking",
+        category_id: null,
+        amount: -200,
+        date: "2026-09-02",
+        payee: "Transfer → Gotówka",
+      },
+    ]);
+    expect(next.uncategorized).toEqual([]);
   });
 });
