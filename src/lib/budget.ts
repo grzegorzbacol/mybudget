@@ -376,6 +376,7 @@ export type ActivityAggregate = {
 /** Optional split lines used to correct SQL category-month aggregates. */
 export type SplitActivityLine = {
   transaction_id: string;
+  is_opening?: boolean;
   account_id?: string | null;
   parent_category_id?: string | null;
   year: number;

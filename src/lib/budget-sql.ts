@@ -181,6 +181,7 @@ function splitLinesSql(pred: FamilyPred, kind: SnapshotKind): string {
       : "";
   return `
 SELECT t.id::text AS transaction_id,
+       ${sqlOpeningBalanceExpr("t")} AS is_opening,
        t.account_id::text AS account_id,
        t.category_id::text AS parent_category_id,
        ${sqlWarsawYear("t")} AS year,
@@ -846,6 +847,7 @@ function parseDailyActuals(rows: Array<Record<string, unknown>>): DailyCashflowA
 function parseSplitLines(rows: Array<Record<string, unknown>>): SplitActivityLine[] {
   return rows.map((row) => ({
     transaction_id: String(row.transaction_id ?? ""),
+    is_opening: Boolean(row.is_opening),
     account_id: row.account_id == null ? null : String(row.account_id),
     parent_category_id: row.parent_category_id == null ? null : String(row.parent_category_id),
     year: Number(row.year) || 0,

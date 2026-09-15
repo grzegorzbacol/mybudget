@@ -211,6 +211,22 @@ async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<F
 }
 
 export function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
+  // The snapshot counts parents; split categories are loaded separately.
+  // Remove each categorized parent once, regardless of its number of splits.
+  const categorizedParents = new Set<string>();
+  const corrections = new Map<string, number>();
+  for (const line of payload.splitLines ?? []) {
+    if (!line.transaction_id || !line.split_category_id || line.parent_category_id ||
+        line.parent_amount >= 0 || line.is_opening || categorizedParents.has(line.transaction_id)) continue;
+    if (payload.accounts.some((account) => account.id === line.account_id && account.on_budget === false)) continue;
+    categorizedParents.add(line.transaction_id);
+    const key = `${line.year}-${line.month}`;
+    corrections.set(key, (corrections.get(key) ?? 0) + 1);
+  }
+  const uncategorized = payload.uncategorized.map((row) => ({
+    ...row,
+    n: Math.max(0, Number(row.n) - (corrections.get(`${row.year}-${row.month}`) ?? 0)),
+  }));
   const activityMap = applyCategorySplitAggregates(
     activityMapFromAggregates(payload.activity),
     payload.splitLines,
@@ -224,7 +240,7 @@ export function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
     activityMap,
     income: payload.income,
     spending: payload.spending,
-    uncategorized: payload.uncategorized,
+    uncategorized,
     schemaLag: payload.scheduledMissing ? missingScheduledTableMessage() : undefined,
     source: "sql",
     dialect: payload.dialect,

@@ -67,6 +67,32 @@ function core(overrides: Partial<FamilyBudgetCore> = {}): FamilyBudgetCore {
 }
 
 describe("budgetMonthFromCore", () => {
+  it("excludes split parents once while retaining genuinely uncategorized expenses", () => {
+    const split = {
+      transaction_id: "split", account_id: account.id, parent_category_id: null,
+      year: 2026, month: 9, parent_amount: -100,
+      split_category_id: category.id, split_activity: -70,
+    };
+    const payload = {
+      categories: [category], allocations: [], accounts: [account, { ...account, id: "off", on_budget: false }],
+      scheduled: [], activity: [], income: [], spending: [],
+      uncategorized: [{ year: 2026, month: 9, n: 2 }, { year: 2026, month: 8, n: 1 }],
+      splitLines: [split, { ...split, split_activity: -30 },
+        { ...split, transaction_id: "opening", is_opening: true },
+        { ...split, transaction_id: "off", account_id: "off" },
+        { ...split, transaction_id: "income", parent_amount: 100 },
+        { ...split, transaction_id: "categorized", parent_category_id: category.id }],
+    };
+    expect(coreFromSql(payload).uncategorized).toEqual([
+      { year: 2026, month: 9, n: 1 }, { year: 2026, month: 8, n: 1 },
+    ]);
+    expect(payload.uncategorized[0].n).toBe(2);
+    payload.uncategorized[0].n = 1;
+    expect(budgetMonthFromCore(coreFromSql(payload), 2026, 9).uncategorizedCount).toBe(0);
+    payload.splitLines = [];
+    expect(budgetMonthFromCore(coreFromSql(payload), 2026, 9).uncategorizedCount).toBe(1);
+  });
+
   afterEach(() => {
     resetFamilyBudgetCache();
   });
