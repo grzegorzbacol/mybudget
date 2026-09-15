@@ -324,6 +324,47 @@ export function envelopeRowsFromBudget(
   );
 }
 
+/**
+ * Optimistic copy for POST /api/budget/allocate. Must not throw when a row is
+ * missing `allocation` (SQL/REST placeholders) — that used to skip the save.
+ */
+export function applyAllocatedOptimistic(
+  previous: BudgetMonthData,
+  input: { category_id: string; allocated: number }
+): BudgetMonthData {
+  const updated = structuredClone(previous);
+  const targetId = normalizeBudgetId(input.category_id);
+  const nextAllocated = money(input.allocated);
+  let previousAssigned = 0;
+  let found = false;
+
+  for (const group of Array.isArray(updated.groups) ? updated.groups : []) {
+    for (const row of Array.isArray(group?.categories) ? group.categories : []) {
+      if (normalizeBudgetId(row?.category?.id) !== targetId) continue;
+      found = true;
+      previousAssigned = Number(row.assigned) || 0;
+      const delta = nextAllocated - previousAssigned;
+      row.assigned = nextAllocated;
+      row.available = money(
+        (Number(row.leftover) || 0) + nextAllocated + (Number(row.moved) || 0) + (Number(row.activity) || 0)
+      );
+      if (row.allocation) {
+        row.allocation.allocated = nextAllocated;
+        row.allocation.available = row.available;
+      }
+      group.assigned = money((Number(group.assigned) || 0) + delta);
+      group.available = money((Number(group.available) || 0) + delta);
+    }
+  }
+
+  if (!found) return updated;
+
+  updated.totalAllocated = money((Number(updated.totalAllocated) || 0) - previousAssigned + nextAllocated);
+  updated.totalAvailable = money((Number(updated.totalAvailable) || 0) - previousAssigned + nextAllocated);
+  updated.readyToAssign = money((Number(updated.readyToAssign) || 0) + previousAssigned - nextAllocated);
+  return updated;
+}
+
 export type ActivityAggregate = {
   category_id: string;
   year: number;

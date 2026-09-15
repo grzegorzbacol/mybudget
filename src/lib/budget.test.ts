@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, assembleBudgetMonthData, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, isOnBudgetCashTx, ledgerRowsForEnvelopeMath, onBudgetCashBalance, planFillEnvelopeGaps, readyToAssignWarning, signedAccountBalance, uncategorizedExpenses, normalizeBudgetId } from "./budget";
+import { applyAllocatedOptimistic, buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, assembleBudgetMonthData, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, isOnBudgetCashTx, ledgerRowsForEnvelopeMath, onBudgetCashBalance, planFillEnvelopeGaps, readyToAssignWarning, signedAccountBalance, uncategorizedExpenses, normalizeBudgetId } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -491,9 +491,28 @@ describe("YNAB envelope math", () => {
     expect(
       envelopeRowsFromBudget({
         groups: [{ groupName: "X", assigned: 0, activity: 0, available: 0, categories: [undefined as never] }],
-      })
-    ).toEqual([]);
+      }).length
+    ).toBe(0);
+    expect(planFillEnvelopeGaps(undefined as never, 100)).toEqual([]);
     expect(planFillEnvelopeGaps([undefined as never], 100)).toEqual([]);
+  });
+
+  it("applyAllocatedOptimistic updates a koperta even without allocation placeholder", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy"), category("rent", "Czynsz", "Zobowiązania", 1)],
+      [alloc("groceries", 2026, 9, 100)],
+      [account("checking", 500)],
+      []
+    );
+    delete (data.groups[0].categories[0] as { allocation?: unknown }).allocation;
+    const next = applyAllocatedOptimistic(data, { category_id: "GROCERIES", allocated: 250 });
+    expect(next.groups[0].categories[0].assigned).toBe(250);
+    expect(next.groups[0].categories[0].available).toBe(250);
+    expect(next.totalAllocated).toBe(250);
+    expect(next.readyToAssign).toBe(250);
+    expect(data.groups[0].categories[0].assigned).toBe(100);
   });
 
   it("ignores implausible year-1 leftover instead of walking millennia", () => {

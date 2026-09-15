@@ -52,10 +52,10 @@ export const transferSchema = z.object({
 });
 
 export const allocateSchema = z.object({
-  category_id: z.string().uuid(),
-  year: z.number().int().min(2000).max(2100),
-  month: z.number().int().min(1).max(12),
-  allocated: z.number(),
+  category_id: z.string().trim().uuid(),
+  year: z.coerce.number().int().min(2000).max(2100),
+  month: z.coerce.number().int().min(1).max(12),
+  allocated: z.coerce.number().finite(),
   rollover: z.boolean().optional(),
 });
 

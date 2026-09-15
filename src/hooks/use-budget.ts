@@ -2,9 +2,15 @@
 
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { fetchJson } from "@/lib/http";
+import { applyAllocatedOptimistic } from "@/lib/budget";
+import { fetchJson, parseResponseJson } from "@/lib/http";
 import type { BudgetMonthData } from "@/lib/types";
 import type { AllocateInput, MoveMoneyInput } from "@/lib/validators";
+
+function apiErrorMessage(error: unknown, fallback: string): string {
+  if (typeof error === "string" && error.trim()) return error;
+  return fallback;
+}
 
 export function useBudget(year: number, month: number, enabled = true) {
   return useQuery<BudgetMonthData>({
@@ -27,11 +33,11 @@ export function useAllocateBudget() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       });
+      const payload = await parseResponseJson<{ error?: unknown }>(res);
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Błąd alokacji");
+        throw new Error(apiErrorMessage(payload.error, "Błąd alokacji"));
       }
-      return res.json();
+      return payload;
     },
     onMutate: async (input) => {
       await queryClient.cancelQueries({ queryKey: ["budget", input.year, input.month] });
@@ -42,28 +48,10 @@ export function useAllocateBudget() {
       ]);
 
       if (previous) {
-        const updated = structuredClone(previous);
-        let previousAssigned = 0;
-        for (const group of updated.groups) {
-          for (const row of group.categories) {
-            if (row.category.id === input.category_id) {
-              previousAssigned = row.assigned;
-              const delta = input.allocated - row.assigned;
-              row.assigned = input.allocated;
-              row.allocation.allocated = input.allocated;
-              row.available = row.leftover + input.allocated + row.moved + row.activity;
-              row.allocation.available = row.available;
-              group.assigned += delta;
-              group.available += delta;
-            }
-          }
-        }
-        updated.totalAllocated = updated.totalAllocated - previousAssigned + input.allocated;
-        updated.totalAvailable =
-          updated.totalAvailable - previousAssigned + input.allocated;
-        updated.readyToAssign =
-          updated.readyToAssign + previousAssigned - input.allocated;
-        queryClient.setQueryData(["budget", input.year, input.month], updated);
+        queryClient.setQueryData(
+          ["budget", input.year, input.month],
+          applyAllocatedOptimistic(previous, input)
+        );
       }
 
       return { previous };
@@ -92,9 +80,9 @@ export function useAllocateMany() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(input),
         });
+        const payload = await parseResponseJson<{ error?: unknown }>(res);
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || "Błąd alokacji");
+          throw new Error(apiErrorMessage(payload.error, "Błąd alokacji"));
         }
       }
     },
@@ -117,11 +105,11 @@ export function useMoveMoney() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
       });
+      const payload = await parseResponseJson<{ error?: unknown }>(res);
       if (!res.ok) {
-        const err = await res.json();
-        throw new Error(typeof err.error === "string" ? err.error : "Błąd przenoszenia");
+        throw new Error(apiErrorMessage(payload.error, "Błąd przenoszenia"));
       }
-      return res.json();
+      return payload;
     },
     onSuccess: (_data, input) => {
       toast.success("Przeniesiono środki");
