@@ -1,3 +1,4 @@
+import { isOpeningBalanceTx } from "./opening-balance";
 import { isPlausibleBudgetYearMonth, isValidYearMonth, money, monthIndex, parseMonthKey, parseYearMonthFromDate } from "./money";
 import type {
   Account,
@@ -153,7 +154,7 @@ export function uncategorizedExpenses(
   accounts: Account[] = []
 ): LedgerTransaction[] {
   return transactions.filter((tx) => {
-    if (isTransferTx(tx) || Number(tx.amount) >= 0 || tx.category_id) return false;
+    if (isTransferTx(tx) || isOpeningBalanceTx(tx) || Number(tx.amount) >= 0 || tx.category_id) return false;
     if (!isOnBudgetAccount(tx, accounts)) return false;
     if (year != null && month != null) {
       const ym = parseYearMonthFromDate(tx.date);

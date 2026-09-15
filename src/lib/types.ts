@@ -233,6 +233,8 @@ export interface LedgerTransaction {
   category_id: string | null;
   amount: number;
   date: string;
+  payee?: string | null;
+  memo?: string | null;
   transfer_account_id?: string | null;
   transfer_id?: string | null;
   cleared?: boolean;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allAccountsHaveOpening,
+  isOpeningBalanceTx,
   openingHint,
   openingTransactionsToInsert,
   parseOpeningAmount,
@@ -77,5 +78,14 @@ describe("setup opening copy", () => {
     expect(allAccountsHaveOpening([funded])).toBe(true);
     expect(allAccountsHaveOpening([checking, funded])).toBe(false);
     expect(allAccountsHaveOpening([])).toBe(false);
+  });
+});
+
+describe("isOpeningBalanceTx", () => {
+  it("matches setup payee or opening memo, not ordinary expenses", () => {
+    expect(isOpeningBalanceTx({ payee: "Saldo początkowe", memo: "Opening balance" })).toBe(true);
+    expect(isOpeningBalanceTx({ payee: "Saldo początkowe", memo: "Przykładowe saldo" })).toBe(true);
+    expect(isOpeningBalanceTx({ payee: "Karta", memo: "Opening balance" })).toBe(true);
+    expect(isOpeningBalanceTx({ payee: "Biedronka", memo: "Zakupy" })).toBe(false);
   });
 });

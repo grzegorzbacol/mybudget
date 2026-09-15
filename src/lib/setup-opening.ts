@@ -1,9 +1,9 @@
 import { parsePolishNumber } from "@/lib/format";
+import { OPENING_MEMO, OPENING_PAYEE } from "@/lib/opening-balance";
 import { isLiabilityType } from "@/lib/wealth";
 import type { Account } from "@/lib/types";
 
-export const OPENING_PAYEE = "Saldo początkowe";
-export const OPENING_MEMO = "Opening balance";
+export { OPENING_MEMO, OPENING_PAYEE, isOpeningBalanceTx } from "@/lib/opening-balance";
 
 export type OpeningAccount = Pick<Account, "id" | "name" | "type" | "balance"> & {
   on_budget?: boolean;

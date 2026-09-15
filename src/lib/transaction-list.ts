@@ -1,6 +1,7 @@
 import { isTransferTx } from "@/lib/budget";
 import { getMonthLabel } from "@/lib/format";
 import { parseYearMonthFromDate } from "@/lib/money";
+import { isOpeningBalanceTx } from "@/lib/opening-balance";
 import type { Account, Transaction } from "@/lib/types";
 
 export const ALL_ACCOUNTS_FILTER = "all";
@@ -8,10 +9,11 @@ export const ALL_MONTHS_PERIOD = "all";
 
 export type LedgerTx = Pick<
   Transaction,
-  "id" | "account_id" | "amount" | "date" | "transfer_id" | "transfer_account_id"
+  "id" | "account_id" | "amount" | "date" | "payee" | "memo" | "transfer_id" | "transfer_account_id" | "category_id"
 > & {
   account?: Pick<Account, "id" | "name" | "type"> | null;
   transfer_account?: Pick<Account, "id" | "name" | "type"> | null;
+  category?: { icon?: string | null; name?: string | null } | null;
 };
 
 export type AmountTone = "in" | "out" | "neutral";
@@ -78,6 +80,39 @@ export function transferDirectionLabel(
   return "Transfer";
 }
 
+/** Negative opening debt is not a budget expense that needs a koperta. */
+export function needsBudgetCategory(
+  tx: Pick<LedgerTx, "amount" | "category_id" | "payee" | "memo" | "transfer_id" | "transfer_account_id">
+): boolean {
+  return Number(tx.amount) < 0 && !isTransferTx(tx) && !isOpeningBalanceTx(tx) && !tx.category_id;
+}
+
+export function matchesLedgerKind(
+  tx: Pick<LedgerTx, "amount" | "category_id" | "payee" | "memo" | "transfer_id" | "transfer_account_id">,
+  kind: string
+): boolean {
+  if (kind === "expense") return Number(tx.amount) < 0 && !isTransferTx(tx) && !isOpeningBalanceTx(tx);
+  if (kind === "income") return Number(tx.amount) > 0 && !isTransferTx(tx);
+  if (kind === "transfer") return isTransferTx(tx);
+  if (kind === "uncategorized") return needsBudgetCategory(tx);
+  return true;
+}
+
+/** Subtitle after the date: budget destination, not a fake "Bez kategorii". */
+export function transactionRegisterHint(
+  tx: Pick<LedgerTx, "amount" | "payee" | "memo" | "transfer_id" | "transfer_account_id" | "category"> & {
+    category_splits?: Array<{ category_id?: string | null; amount?: number | string | null }> | null;
+  }
+): string {
+  if (isTransferTx(tx)) return "Transfer";
+  if (Number(tx.amount) > 0) return "Do rozdzielenia";
+  if (isOpeningBalanceTx(tx)) return "Saldo konta";
+  const splitCount = (tx.category_splits ?? []).filter((line) => line.category_id && Number(line.amount) > 0).length;
+  if (splitCount > 1) return `Podział (${splitCount})`;
+  if (tx.category?.name) return `${tx.category.icon ?? ""} ${tx.category.name}`.trim();
+  return "Bez kategorii";
+}
+
 export function transactionAmountTone(
   tx: Pick<LedgerTx, "amount" | "transfer_id" | "transfer_account_id">,
   accountScoped: boolean
@@ -137,6 +172,8 @@ export function accountActivitySummary<T extends LedgerTx>(transactions: T[]) {
     if (isTransferTx(tx)) {
       if (amount >= 0) transferIn += amount;
       else transferOut += amount;
+    } else if (isOpeningBalanceTx(tx)) {
+      continue;
     } else if (amount >= 0) {
       income += amount;
     } else {
