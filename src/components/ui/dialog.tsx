@@ -28,9 +28,9 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, onFocusOutside, onPointerDownOutside, onInteractOutside, ...props }, ref) => (
   <DialogPortal>
-    <DialogOverlay />
+    <DialogOverlay data-dialog-overlay="" />
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
@@ -38,6 +38,24 @@ const DialogContent = React.forwardRef<
         className
       )}
       {...props}
+      onFocusOutside={(event) => {
+        // iOS camera / photo library steal focus. Radix would dismiss the dialog
+        // before the file input's change event, so the tap looks like a no-op.
+        onFocusOutside?.(event);
+        if (!event.defaultPrevented) event.preventDefault();
+      }}
+      onPointerDownOutside={(event) => {
+        onPointerDownOutside?.(event);
+        if (event.defaultPrevented) return;
+        const target = event.target as HTMLElement | null;
+        if (target?.closest("input[type='file']")) event.preventDefault();
+      }}
+      onInteractOutside={(event) => {
+        onInteractOutside?.(event);
+        if (event.defaultPrevented) return;
+        const target = event.target as HTMLElement | null;
+        if (target?.closest("input[type='file']")) event.preventDefault();
+      }}
     >
       {children}
       <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">

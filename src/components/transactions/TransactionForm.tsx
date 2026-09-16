@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,9 +30,11 @@ import { toast } from "sonner";
 import { isExpenseCategory, isOnBudget, isTransferTx } from "@/lib/budget";
 import { customSplits, equalSplits, splitsMatchTotal } from "@/lib/splits";
 import { buildPayeeCategoryRules, suggestCategoryForPayee } from "@/lib/categorize";
-import { RECEIPTS_BUCKET, receiptObjectPath, sniffReceiptImage } from "@/lib/receipts";
+import { RECEIPTS_BUCKET, receiptObjectPath } from "@/lib/receipts";
+import { rasterizeImageFile } from "@/lib/rasterize-image";
 import { ReceiptPhoto } from "@/components/ReceiptPhoto";
 import { AiCategoryPanel } from "@/components/transactions/AiCategoryPanel";
+import { ImageFileButton } from "@/components/ImageFileButton";
 import { cn } from "@/lib/utils";
 
 interface TransactionFormProps {
@@ -60,7 +62,6 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction, 
   const updateTransaction = useUpdateTransaction();
   const queryClient = useQueryClient();
   const supabase = createClient();
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [type, setType] = useState<EntryType>(
     prefill?.amount != null && prefill.amount > 0 ? "income" : "expense"
@@ -244,13 +245,12 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction, 
     setUploading(true);
     setReceiptPreview(URL.createObjectURL(file));
     try {
-      const buffer = await file.arrayBuffer();
-      const imageMime = sniffReceiptImage(buffer);
-      if (!imageMime) throw new Error("not a raster image");
-      const fileName = receiptObjectPath(familyData.family.id, file.name, Date.now(), imageMime);
+      const { blob, mime } = await rasterizeImageFile(file);
+      const buffer = await blob.arrayBuffer();
+      const fileName = receiptObjectPath(familyData.family.id, file.name, Date.now(), mime);
       const { data, error } = await supabase.storage
         .from(RECEIPTS_BUCKET)
-        .upload(fileName, buffer, { contentType: imageMime, upsert: false });
+        .upload(fileName, buffer, { contentType: mime, upsert: false });
       if (error) throw error;
       setReceiptUrl(data.path);
     } catch {
@@ -756,22 +756,17 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction, 
                   </button>
                 </div>
               ) : (
-                <Button type="button" variant="outline" className="mt-1 w-full" onClick={() => fileInputRef.current?.click()}>
+                <ImageFileButton
+                  variant="outline"
+                  className="mt-1 w-full"
+                  disabled={uploading}
+                  aria-label="Dołącz zdjęcie paragonu"
+                  onFile={(picked) => void handlePhotoUpload(picked)}
+                >
                   <Upload className="mr-2 h-4 w-4" />
-                  Dodaj zdjęcie
-                </Button>
+                  {uploading ? "Wysyłanie…" : "Dodaj zdjęcie"}
+                </ImageFileButton>
               )}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handlePhotoUpload(file);
-                }}
-              />
             </div>
           )}
 

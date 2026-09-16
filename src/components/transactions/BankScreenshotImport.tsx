@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Camera, PiggyBank, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ImageFileButton } from "@/components/ImageFileButton";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +26,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatCurrency } from "@/lib/format";
 import { toast } from "sonner";
 import type { Account, BankScreenshotMatchedRow, BudgetCategory } from "@/lib/types";
+import { rasterizeImageFile } from "@/lib/rasterize-image";
 
 type Step = "pick" | "processing" | "review";
 
@@ -32,8 +34,6 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
   const { data: familyData } = useFamily();
   const supabase = createClient();
   const queryClient = useQueryClient();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
   const [open, setOpen] = useState(false);
   const [accountId, setAccountId] = useState(defaultAccountId ?? "");
   const [savingsAccountId, setSavingsAccountId] = useState("");
@@ -113,8 +113,9 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
     const timeoutId = setTimeout(() => controller.abort(), 90_000);
 
     try {
+      const { blob, mime } = await rasterizeImageFile(file);
       const formData = new FormData();
-      formData.append("file", file, file.name || "bank-screenshot.jpg");
+      formData.append("file", blob, file.name || `bank-screenshot.${mime === "image/png" ? "png" : "jpg"}`);
       formData.append("account_id", accountId);
 
       const res = await fetch("/api/bank/screenshot", {
@@ -153,7 +154,6 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
       toast.error(message);
     } finally {
       clearTimeout(timeoutId);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -266,25 +266,15 @@ export function BankScreenshotImport({ defaultAccountId }: { defaultAccountId?: 
                   {processingError}
                 </p>
               )}
-              <Button
-                variant="outline"
+              <ImageFileButton
                 className="w-full"
                 disabled={!accountId}
-                onClick={() => fileInputRef.current?.click()}
+                aria-label="Wybierz zdjęcie screena"
+                onFile={(file) => void processFile(file)}
               >
                 <Upload className="mr-2 h-4 w-4" />
                 Wybierz zdjęcie screena
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp,image/gif"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) void processFile(file);
-                }}
-              />
+              </ImageFileButton>
             </div>
           )}
 
