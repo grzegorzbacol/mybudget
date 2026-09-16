@@ -247,7 +247,7 @@ describe("createAccountRow", () => {
 });
 
 describe("loadAccountForLedger", () => {
-  it("falls back to id-only select when on_budget is not in the schema cache", async () => {
+  it("falls back to id+name when on_budget is not in the schema cache", async () => {
     const supabase = {
       from: () => ({
         select: (columns: string) => ({
@@ -258,10 +258,10 @@ describe("loadAccountForLedger", () => {
                   ? {
                       data: null,
                       error: {
-                        message: "Could not find the 'on_budget' column of 'accounts' in the schema cache",
+                        message: "column accounts.on_budget does not exist",
                       },
                     }
-                  : { data: { id: "acc1" }, error: null },
+                  : { data: { id: "acc1", name: "REVOLUT Oszczędności" }, error: null },
             }),
           }),
         }),
@@ -269,7 +269,11 @@ describe("loadAccountForLedger", () => {
     };
 
     const result = await loadAccountForLedger(supabase, "fam", "acc1");
-    expect(result.account).toEqual({ id: "acc1", on_budget: true });
+    expect(result.account).toEqual({
+      id: "acc1",
+      name: "REVOLUT Oszczędności",
+      on_budget: true,
+    });
   });
 });
 

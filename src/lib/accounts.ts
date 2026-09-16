@@ -184,31 +184,52 @@ export async function updateAccountRow(
   return { error: message || "Nie udało się zapisać konta", status: 500 };
 }
 
+export type LedgerAccount = {
+  id: string;
+  name: string;
+  on_budget?: boolean;
+};
+
 export async function loadAccountForLedger(
   supabase: AccountClient,
   familyId: string,
   accountId: string
-): Promise<{ account: { id: string; on_budget?: boolean } | null; error?: string }> {
+): Promise<{ account: LedgerAccount | null; error?: string }> {
   const withBudget = await supabase
     .from("accounts")
-    .select("id, on_budget")
+    .select("id, name, on_budget")
     .eq("id", accountId)
     .eq("family_id", familyId)
     .maybeSingle();
 
   if (!withBudget.error) {
-    return { account: withBudget.data };
+    const row = withBudget.data;
+    if (!row) return { account: null };
+    return {
+      account: {
+        id: row.id,
+        name: typeof row.name === "string" ? row.name : "",
+        on_budget: row.on_budget,
+      },
+    };
   }
 
   if (isSchemaLagError(withBudget.error.message)) {
     const fallback = await supabase
       .from("accounts")
-      .select("id")
+      .select("id, name")
       .eq("id", accountId)
       .eq("family_id", familyId)
       .maybeSingle();
     if (fallback.data) {
-      return { account: { id: fallback.data.id, on_budget: true } };
+      return {
+        account: {
+          id: fallback.data.id,
+          name: typeof fallback.data.name === "string" ? fallback.data.name : "",
+          // Live Coolify may still lack accounts.on_budget; default is on-budget.
+          on_budget: true,
+        },
+      };
     }
   }
 
