@@ -25,13 +25,18 @@ export interface ParsedReceiptText {
   total: number | null;
 }
 
+const MONEY_RE = /-?\d+(?:\s?\d{3})*[.,]\d{2}/;
 const ITEM_NUMBERS_RE =
   /^(.*?)(\d+(?:[.,]\d+)?)\s*[xX×*]\s*(\d+(?:\s?\d{3})*[.,]\d{2})\s+(-?\d+(?:\s?\d{3})*[.,]\d{2})\s*([A-G])?$/;
 const BARE_AMOUNT_RE = /^(-?\d+(?:\s?\d{3})*[.,]\d{2})\s*([A-G])?$/;
+const INLINE_AMOUNT_RE = new RegExp(`(${MONEY_RE.source})\\s*([A-G])?\\s*$`, "i");
+const QTY_X_TAIL_RE = /\s+\d+(?:[.,]\d+)?\s*[xX×*]\s*\d*(?:[.,]\d{2})?\s*$/;
 const DISCOUNT_RE = /\b(rabat|opust|upust)\b/i;
 const SUMMARY_RE =
-  /SPRZEDA[ZŻ]\s+OPODAT|SUMA\s+PTU|^PTU\b|ROZLICZENIE|PŁATNO|GOTÓWKA|KARTA|RESZTA/i;
-const TOTAL_RE = /SUMA\s+PLN\s*:?\s*(-?\d+(?:\s?\d{3})*[.,]\d{2})/i;
+  /SPREDZA|SPRZEDA[ZŻ]\s+OPODAT|SUMA\s+PTU|^PTU\b|ROZLICZENIE|PŁATNO|GOT[OÓ]WKA|KARTA|RESZTA|PODSUM/i;
+const TOTAL_RE =
+  /(?:SUMA\s+PLN|PODSUM(?:A)?|RAZEM|DO\s+ZAP(?:Ł|L)ATY)\s*:?\s*(-?\d+(?:\s?\d{3})*[.,]\d{2})/i;
+const SKIP_HEADER_RE = /^(NIP|REGON|KASA|FISKAL|NR\s*SYS)/i;
 
 function parseAmount(raw: string): number {
   return parseFloat(raw.replace(/\s/g, "").replace(",", "."));
@@ -39,6 +44,35 @@ function parseAmount(raw: string): number {
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function hasProductLetters(value: string): boolean {
+  return /[a-ząćęłńóśźż]{2,}/i.test(value);
+}
+
+/** Strip qty × price junk so "Pinsa Margherita 1   x1 4,99" → "Pinsa Margherita". */
+function productNameFromLine(raw: string): string {
+  let name = raw.trim().replace(/\s+[A-G]$/i, "").trim();
+  name = name.replace(new RegExp(`(?:\\s+${MONEY_RE.source})+$`), "").trim();
+  name = name.replace(QTY_X_TAIL_RE, "").trim();
+  name = name.replace(/\s+\d+$/, "").trim();
+  return name.replace(/\s+[A-G]$/i, "").trim();
+}
+
+/**
+ * OCR often emits `1   x1 4,99 4,99C` instead of `1 x4,99 4,99C`.
+ * On a Polish fiscal line the LAST money amount is the line value — never
+ * the unit price or a glued qty digit after `x`.
+ */
+function parseInlineItemLine(line: string): { name: string; amount: number } | null {
+  const tail = line.match(INLINE_AMOUNT_RE);
+  if (!tail || tail.index == null) return null;
+  const hasVat = Boolean(tail[2]);
+  const hasTimes = /[xX×*]/.test(line);
+  if (!hasVat && !hasTimes) return null;
+  const name = productNameFromLine(line.slice(0, tail.index));
+  if (!hasProductLetters(name)) return null;
+  return { name, amount: parseAmount(tail[1]) };
 }
 
 export function parseReceiptText(rawText: string): ParsedReceiptText {
@@ -59,6 +93,8 @@ export function parseReceiptText(rawText: string): ParsedReceiptText {
   let discountPending = false;
 
   for (const line of lines) {
+    if (SKIP_HEADER_RE.test(line)) continue;
+
     const totalMatch = line.match(TOTAL_RE);
     if (totalMatch) {
       total = parseAmount(totalMatch[1]);
@@ -72,10 +108,10 @@ export function parseReceiptText(rawText: string): ParsedReceiptText {
     if (inSummary) continue;
 
     if (DISCOUNT_RE.test(line)) {
-      const discount = line.match(/(\d+(?:\s?\d{3})*[.,]\d{2})/);
+      const discount = line.match(MONEY_RE);
       if (discount && amounts.length > 0) {
         amounts[amounts.length - 1] = round2(
-          amounts[amounts.length - 1] - parseAmount(discount[1])
+          amounts[amounts.length - 1] - parseAmount(discount[0])
         );
         discountPending = true; // pod rabatem bywa wydrukowana cena po rabacie
       }
@@ -87,6 +123,9 @@ export function parseReceiptText(rawText: string): ParsedReceiptText {
       if (discountPending && amounts.length > 0) {
         amounts[amounts.length - 1] = parseAmount(bare[1]);
         discountPending = false;
+      } else if (bare[2]) {
+        // Osobna linia "14,94A" — wartość przesunięta względem nazwy.
+        amounts.push(parseAmount(bare[1]));
       }
       continue;
     }
@@ -94,14 +133,22 @@ export function parseReceiptText(rawText: string): ParsedReceiptText {
     const numbers = line.match(ITEM_NUMBERS_RE);
     if (numbers) {
       discountPending = false;
-      const inlineName = numbers[1].trim().replace(/\s+[A-G]$/, "");
-      if (inlineName && /[a-ząćęłńóśźż]/i.test(inlineName)) names.push(inlineName);
+      const inlineName = productNameFromLine(numbers[1]);
+      if (inlineName && hasProductLetters(inlineName)) names.push(inlineName);
       amounts.push(parseAmount(numbers[4]));
       continue;
     }
 
-    if (/[a-ząćęłńóśźż]{2,}/i.test(line) && !/^\d/.test(line)) {
-      names.push(line.replace(/\s+[A-G]$/, "").trim());
+    const inline = parseInlineItemLine(line);
+    if (inline) {
+      discountPending = false;
+      names.push(inline.name);
+      amounts.push(inline.amount);
+      continue;
+    }
+
+    if (hasProductLetters(line) && !/^\d/.test(line)) {
+      names.push(productNameFromLine(line));
     }
   }
 
@@ -114,7 +161,7 @@ export function parseReceiptText(rawText: string): ParsedReceiptText {
   };
 }
 
-const TRANSCRIBE_PROMPT = `Jesteś systemem OCR. Przepisz cały tekst z obrazu paragonu DOKŁADNIE, linia po linii, od góry do dołu, zachowując oryginalną pisownię, liczby i kolejność. Jeśli nazwa produktu i jej liczby (ILOŚĆ xCENA WARTOŚĆ) są wydrukowane w osobnych wierszach, przepisz je jako osobne linie — nie łącz ich i nie zmieniaj kolejności. Nie interpretuj, nie podsumowuj, nie dodawaj komentarzy — zwróć wyłącznie przepisany tekst.`;
+const TRANSCRIBE_PROMPT = `Jesteś systemem OCR. Przepisz cały tekst z obrazu paragonu DOKŁADNIE, linia po linii, od góry do dołu, zachowując oryginalną pisownię, liczby i kolejność. Jeśli nazwa produktu i jej liczby (ILOŚĆ xCENA WARTOŚĆ) są wydrukowane w osobnych wierszach, przepisz je jako osobne linie — nie łącz ich i nie zmieniaj kolejności. Gdy są w jednej linii, zachowaj kolejność: nazwa, ilość, x, cena jednostkowa, wartość linii, litera VAT. Nie interpretuj, nie podsumowuj, nie dodawaj komentarzy — zwróć wyłącznie przepisany tekst.`;
 
 async function transcribeReceipt(openai: OpenAI, dataUrl: string): Promise<string> {
   const completion = await openai.chat.completions.create({
