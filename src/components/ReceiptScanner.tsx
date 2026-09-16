@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Camera, Upload, X, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ImageFileButton } from "@/components/ImageFileButton";
 import {
   Dialog,
   DialogContent,
@@ -24,8 +25,10 @@ import { createClient } from "@/lib/supabase/client";
 import { useQuery } from "@tanstack/react-query";
 import type { OcrReceiptResult } from "@/lib/types";
 import { formatCurrency } from "@/lib/format";
+import { rasterizeImageFile } from "@/lib/rasterize-image";
 import { buildReceiptTransaction } from "@/lib/receipt-transaction";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
 
 interface ReceiptScannerProps {
   open: boolean;
@@ -52,7 +55,6 @@ function matchCategory(
 export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [cameraActive, setCameraActive] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [processingError, setProcessingError] = useState<string | null>(null);
@@ -95,29 +97,66 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
     },
   });
 
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: 1920, height: 1080 },
-      });
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        setCameraActive(true);
-      }
-    } catch {
-      toast.error("Nie udało się uruchomić kamery");
-    }
-  };
-
   const stopCamera = () => {
-    const stream = videoRef.current?.srcObject as MediaStream | null;
+    const video = videoRef.current;
+    const stream = video?.srcObject as MediaStream | null;
     stream?.getTracks().forEach((t) => t.stop());
+    if (video) video.srcObject = null;
     setCameraActive(false);
   };
 
-  const processReceipt = async (blob: Blob) => {
+  useEffect(() => {
+    if (!open) stopCamera();
+    return () => stopCamera();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const startCamera = async () => {
+    setProcessingError(null);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      const message = "Kamera w przeglądarce jest niedostępna — użyj „Zrób zdjęcie” albo „Dołącz zdjęcie”.";
+      setProcessingError(message);
+      toast.error(message);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: "environment" } },
+        audio: false,
+      });
+      const video = videoRef.current;
+      if (!video) {
+        stream.getTracks().forEach((t) => t.stop());
+        return;
+      }
+      video.srcObject = stream;
+      video.muted = true;
+      video.playsInline = true;
+      await video.play();
+      setCameraActive(true);
+    } catch (err) {
+      const denied = err instanceof DOMException && err.name === "NotAllowedError";
+      const message = denied
+        ? "Brak zgody na kamerę — użyj „Zrób zdjęcie” albo „Dołącz zdjęcie”."
+        : "Nie udało się uruchomić kamery — użyj „Zrób zdjęcie” albo „Dołącz zdjęcie”.";
+      setProcessingError(message);
+      toast.error(message);
+    }
+  };
+
+  const processReceipt = async (source: Blob) => {
     setProcessing(true);
     setProcessingError(null);
+    let blob: Blob;
+    try {
+      blob = (await rasterizeImageFile(source)).blob;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Nie udało się odczytać zdjęcia";
+      setProcessingError(message);
+      toast.error(message);
+      setProcessing(false);
+      return;
+    }
     setPreviewUrl(URL.createObjectURL(blob));
 
     const controller = new AbortController();
@@ -184,11 +223,6 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
     canvas.toBlob((blob) => blob && processReceipt(blob), "image/jpeg", 0.9);
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) processReceipt(file);
-  };
-
   const handleSave = async () => {
     if (!preview || !accountId || !familyData?.family.id) return;
 
@@ -221,6 +255,7 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
     setItemCategories({});
     setItemNames({});
     setItemAmounts({});
+    setProcessingError(null);
     onOpenChange(false);
   };
 
@@ -237,60 +272,83 @@ export function ReceiptScanner({ open, onOpenChange }: ReceiptScannerProps) {
     Math.abs(editedItemsSum - (preview?.total ?? 0)) > 0.05;
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto">
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) handleClose();
+      }}
+    >
+      <DialogContent className="inset-x-0 bottom-0 top-auto max-h-[90dvh] w-full max-w-lg translate-x-0 translate-y-0 overflow-y-auto rounded-b-none rounded-t-2xl pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:inset-auto sm:bottom-auto sm:left-[50%] sm:top-[50%] sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:pb-6">
         <DialogHeader>
           <DialogTitle>Skanuj paragon</DialogTitle>
         </DialogHeader>
 
         {!preview ? (
           <div className="space-y-4">
-            <div className="relative aspect-[3/4] overflow-hidden rounded-lg bg-muted">
+            <div
+              className={cn(
+                "relative overflow-hidden rounded-lg bg-muted",
+                cameraActive ? "aspect-[3/4]" : "flex min-h-[8.5rem] items-center justify-center py-8"
+              )}
+            >
               <video
                 ref={videoRef}
                 autoPlay
                 playsInline
                 muted
-                className="h-full w-full object-cover"
+                className={cn("h-full w-full object-cover", !cameraActive && "hidden")}
               />
               {!cameraActive && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
-                  <Camera className="h-12 w-12 text-muted-foreground" />
+                <div className="flex flex-col items-center justify-center gap-2 px-4 text-center">
+                  <Camera className="h-10 w-10 text-muted-foreground" />
                   <p className="text-sm text-muted-foreground">
-                    Uruchom kamerę lub prześlij zdjęcie
+                    Zrób zdjęcie aparatem albo dołącz zdjęcie z galerii
                   </p>
                 </div>
               )}
             </div>
             <canvas ref={canvasRef} className="hidden" />
 
-            <div className="flex gap-2">
-              {!cameraActive ? (
-                <Button onClick={startCamera} className="flex-1">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {cameraActive ? (
+                <Button onClick={capturePhoto} className="w-full" disabled={processing}>
                   <Camera className="mr-2 h-4 w-4" />
-                  Kamera
-                </Button>
-              ) : (
-                <Button onClick={capturePhoto} className="flex-1" disabled={processing}>
                   Zrób zdjęcie
                 </Button>
+              ) : (
+                <ImageFileButton
+                  variant="default"
+                  className="w-full"
+                  disabled={processing}
+                  capture="environment"
+                  aria-label="Zrób zdjęcie paragonu"
+                  onFile={(file) => void processReceipt(file)}
+                >
+                  <Camera className="mr-2 h-4 w-4" />
+                  Zrób zdjęcie
+                </ImageFileButton>
               )}
-              <Button
-                variant="outline"
-                onClick={() => fileInputRef.current?.click()}
+              <ImageFileButton
+                className="w-full"
                 disabled={processing}
+                aria-label="Dołącz zdjęcie paragonu"
+                onFile={(file) => void processReceipt(file)}
               >
-                <Upload className="h-4 w-4" />
-              </Button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={handleFileUpload}
-              />
+                <Upload className="mr-2 h-4 w-4" />
+                Dołącz zdjęcie
+              </ImageFileButton>
             </div>
+            {!cameraActive && (
+              <Button
+                type="button"
+                variant="ghost"
+                className="hidden w-full sm:inline-flex"
+                disabled={processing}
+                onClick={() => void startCamera()}
+              >
+                Kamera w przeglądarce
+              </Button>
+            )}
 
             {processing && (
               <p className="text-center text-sm text-muted-foreground">

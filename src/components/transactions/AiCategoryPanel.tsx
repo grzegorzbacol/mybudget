@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { ImagePlus, Sparkles, X } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { ImageFileButton } from "@/components/ImageFileButton";
 import { Input } from "@/components/ui/input";
 import {
   CLASSIFY_DEFAULT_GROUP,
@@ -14,6 +15,7 @@ import {
   type ClassifyResult,
 } from "@/lib/ai-classify";
 import { parseResponseJson } from "@/lib/http";
+import { rasterizeImageFile } from "@/lib/rasterize-image";
 import { cn } from "@/lib/utils";
 
 type AiCategoryPanelProps = {
@@ -35,7 +37,6 @@ export function AiCategoryPanel({
   announce = true,
 }: AiCategoryPanelProps) {
   const queryClient = useQueryClient();
-  const fileRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -48,15 +49,22 @@ export function AiCategoryPanel({
     setFile(null);
     if (preview) URL.revokeObjectURL(preview);
     setPreview(null);
-    if (fileRef.current) fileRef.current.value = "";
   };
 
-  const attachFile = (next: File | undefined) => {
+  const attachFile = async (next: File | undefined) => {
     if (!next) return;
-    if (preview) URL.revokeObjectURL(preview);
-    setFile(next);
-    setPreview(URL.createObjectURL(next));
-    setError(null);
+    try {
+      const { blob, mime } = await rasterizeImageFile(next);
+      const converted = new File([blob], next.name.replace(/\.[^.]+$/, "") + (mime === "image/png" ? ".png" : ".jpg"), {
+        type: mime,
+      });
+      if (preview) URL.revokeObjectURL(preview);
+      setFile(converted);
+      setPreview(URL.createObjectURL(converted));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Nie udało się odczytać zdjęcia.");
+    }
   };
 
   const classify = async () => {
@@ -177,18 +185,16 @@ export function AiCategoryPanel({
           }}
           aria-label="Opis zakupu dla AI"
         />
-        <Button
-          type="button"
+        <ImageFileButton
           variant="outline"
           size="icon"
           className="shrink-0"
           disabled={disabled || loading}
-          onClick={() => fileRef.current?.click()}
           aria-label="Dołącz zdjęcie do AI"
-          title="Zdjęcie lub zrzut ekranu"
+          onFile={(picked) => void attachFile(picked)}
         >
           <ImagePlus className="h-4 w-4" />
-        </Button>
+        </ImageFileButton>
         <Button
           type="button"
           size="sm"
@@ -200,14 +206,6 @@ export function AiCategoryPanel({
           {loading ? "Analiza…" : "Dobierz"}
         </Button>
       </div>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={(e) => attachFile(e.target.files?.[0])}
-      />
       {preview && (
         <div className="relative inline-block">
           {/* eslint-disable-next-line @next/next/no-img-element */}
