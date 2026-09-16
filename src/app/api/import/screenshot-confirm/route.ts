@@ -7,6 +7,7 @@ import {
   partitionImportRows,
   rowsToImport,
 } from "@/lib/bank-screenshot-match";
+import { loadAccountForLedger } from "@/lib/accounts";
 import { insertRowsWithSchemaRepair } from "@/lib/schema-write";
 import { buildTransferLegs, insertTransferPair } from "@/lib/transfer-write";
 import { bankScreenshotConfirmSchema } from "@/lib/validators";
@@ -23,18 +24,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { data: account, error: accountError } = await ctx.supabase
-    .from("accounts")
-    .select("id, name, on_budget")
-    .eq("id", parsed.data.account_id)
-    .eq("family_id", ctx.family.id)
-    .maybeSingle();
-
-  if (accountError) {
-    return NextResponse.json({ error: accountError.message }, { status: 500 });
-  }
+  const loadedAccount = await loadAccountForLedger(
+    ctx.supabase,
+    ctx.family.id,
+    parsed.data.account_id
+  );
+  const account = loadedAccount.account;
   if (!account) {
-    return NextResponse.json({ error: "Nie znaleziono konta" }, { status: 404 });
+    return NextResponse.json(
+      { error: loadedAccount.error ?? "Nie znaleziono konta" },
+      { status: loadedAccount.error ? 500 : 404 }
+    );
   }
 
   const inserts = rowsToImport(parsed.data.rows);
@@ -56,23 +56,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const { data: savingsRow, error: savingsError } = await ctx.supabase
-      .from("accounts")
-      .select("id, name, on_budget")
-      .eq("id", savingsId)
-      .eq("family_id", ctx.family.id)
-      .maybeSingle();
-
-    if (savingsError) {
-      return NextResponse.json({ error: savingsError.message }, { status: 500 });
-    }
-    if (!savingsRow) {
+    const loadedSavings = await loadAccountForLedger(ctx.supabase, ctx.family.id, savingsId);
+    if (!loadedSavings.account) {
       return NextResponse.json(
-        { error: "Nie znaleziono konta oszczędności" },
-        { status: 404 }
+        { error: loadedSavings.error ?? "Nie znaleziono konta oszczędności" },
+        { status: loadedSavings.error ? 500 : 404 }
       );
     }
-    savings = savingsRow;
+    savings = loadedSavings.account;
 
     const involvesTracking =
       account.on_budget === false || savings.on_budget === false;
