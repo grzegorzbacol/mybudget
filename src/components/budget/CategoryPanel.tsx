@@ -136,11 +136,10 @@ export function CategoryPanel({
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent
+          aria-describedby={undefined}
           className={cn(
-            "flex max-h-[min(92dvh,52rem)] w-[calc(100%-1rem)] max-w-lg flex-col gap-0 overflow-hidden p-0",
-            "sm:max-w-2xl md:max-w-3xl lg:max-w-4xl",
-            "bottom-20 top-auto translate-y-0 data-[state=open]:slide-in-from-bottom-3",
-            "sm:bottom-auto sm:top-[50%] sm:translate-y-[-50%] sm:data-[state=open]:slide-in-from-top-[48%]"
+            "flex max-h-[min(90dvh,56rem)] w-[calc(100%-1rem)] max-w-lg flex-col gap-0 overflow-hidden p-0 sm:rounded-xl",
+            "sm:w-[calc(100%-2rem)] sm:max-w-3xl md:max-w-4xl lg:max-w-5xl xl:max-w-6xl"
           )}
         >
           <div className="overflow-y-auto overscroll-contain p-5 pb-6 sm:p-6">
@@ -202,8 +201,8 @@ export function CategoryPanel({
                 </p>
               )}
 
-              <div className="grid items-start gap-5 lg:grid-cols-2 lg:gap-8">
-                <div className="space-y-5">
+              <div className="grid items-start gap-5 md:grid-cols-2 md:gap-8">
+                <div className="min-w-0 space-y-5">
                   <section className="space-y-3">
                     <div>
                       <Label htmlFor="category-panel-allocated">Przydziel w tym miesiącu</Label>
@@ -313,7 +312,7 @@ export function CategoryPanel({
                   </section>
                 </div>
 
-                <div className="space-y-5">
+                <div className="min-w-0 space-y-5">
                   {(cashSpent > 0 || bankSpent > 0) && (
                     <section className="rounded-xl border p-4">
                       <p className="mb-3 text-sm font-medium">Podział wydatków</p>
