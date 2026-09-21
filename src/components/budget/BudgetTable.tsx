@@ -23,6 +23,7 @@ import {
   readyToAssignWarning,
 } from "@/lib/budget";
 import { AccountsBudgetCheckBanner } from "./AccountsBudgetCheck";
+import { BudgetMonthSummary } from "./BudgetMonthSummary";
 import { DEFAULT_CATEGORY_ICON, uniqueGroupNames } from "@/lib/categories";
 import { cn } from "@/lib/utils";
 import { CategoryPanel } from "./CategoryPanel";
@@ -132,56 +133,15 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
         </Button>
       </div>
 
-      <div
-        className={cn(
-          "sticky top-14 z-20 rounded-lg border p-4 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/90",
-          rtaPositive ? "border-green-500/30 bg-green-500/10" : "border-red-500/30 bg-red-500/10"
-        )}
+      <BudgetMonthSummary
+        readyToAssign={readyToAssign}
+        totalAvailable={totalAvailable}
+        incomeThisMonth={data?.incomeThisMonth ?? 0}
+        totalAllocated={data?.totalAllocated ?? 0}
+        previousSpendLabel={`Wydano: ${getMonthLabel(previousYear, previousMonth)}`}
+        previousSpend={Math.abs(previousData?.totalActivity ?? 0)}
+        onBudgetBalance={data?.onBudgetBalance ?? 0}
       >
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm text-muted-foreground">Do rozdzielenia</p>
-            <p className={cn("text-2xl font-bold tabular-nums", !rtaPositive && "text-red-500")}>
-              {formatCurrency(readyToAssign)}
-            </p>
-          </div>
-          <div className="sm:text-right">
-            <p className="text-sm text-muted-foreground">Dostępne w kopertach</p>
-            <p
-              className={cn(
-                "text-2xl font-bold tabular-nums",
-                totalAvailable < 0
-                  ? "text-red-500"
-                  : totalAvailable > 0
-                    ? "text-green-600 dark:text-green-400"
-                    : "text-muted-foreground"
-              )}
-              title="Suma kolumny Dostępne — ile możesz wydać z kopert"
-            >
-              {formatCurrency(totalAvailable)}
-            </p>
-          </div>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-          <div>
-            <p className="text-muted-foreground">Przychody w miesiącu</p>
-            <p className="font-medium">{formatCurrency(data?.incomeThisMonth ?? 0)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Przydzielone</p>
-            <p className="font-medium">{formatCurrency(data?.totalAllocated ?? 0)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Wydano: {getMonthLabel(previousYear, previousMonth)}</p>
-            <p className="font-medium">
-              {formatCurrency(Math.abs(previousData?.totalActivity ?? 0))}
-            </p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Saldo kont w budżecie</p>
-            <p className="font-medium">{formatCurrency(data?.onBudgetBalance ?? 0)}</p>
-          </div>
-        </div>
         {(Number(data?.plannedIncome) > 0 || Number(data?.plannedExpense) > 0) && (
           <div className="mt-3 rounded-md border bg-background/80 px-3 py-2 text-sm">
             <p className="font-medium">Plan miesiąca (jeszcze nie w rejestrze)</p>
@@ -257,7 +217,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             </ol>
           </div>
         )}
-      </div>
+      </BudgetMonthSummary>
 
       <div className="overflow-hidden rounded-lg border">
         <div className="hidden grid-cols-12 gap-2 border-b bg-muted/50 px-4 py-2 text-xs font-medium text-muted-foreground md:grid">
