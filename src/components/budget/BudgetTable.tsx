@@ -23,6 +23,7 @@ import {
   readyToAssignWarning,
 } from "@/lib/budget";
 import { AccountsBudgetCheckBanner } from "./AccountsBudgetCheck";
+import { BudgetMonthSummary } from "./BudgetMonthSummary";
 import { DEFAULT_CATEGORY_ICON, uniqueGroupNames } from "@/lib/categories";
 import { cn } from "@/lib/utils";
 import { CategoryPanel } from "./CategoryPanel";
@@ -101,6 +102,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
   ]);
   const selectedGroup = groupName || groupOptions[0] || "";
   const readyToAssign = Number(data?.readyToAssign) || 0;
+  const totalAvailable = Number(data?.totalAvailable) || 0;
   const rtaPositive = readyToAssign >= 0;
   const rtaWarning = readyToAssignWarning({
     readyToAssign,
@@ -131,36 +133,15 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
         </Button>
       </div>
 
-      <div
-        className={cn(
-          "sticky top-14 z-20 rounded-lg border p-4 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/90",
-          rtaPositive ? "border-green-500/30 bg-green-500/10" : "border-red-500/30 bg-red-500/10"
-        )}
+      <BudgetMonthSummary
+        readyToAssign={readyToAssign}
+        totalAvailable={totalAvailable}
+        incomeThisMonth={data?.incomeThisMonth ?? 0}
+        totalAllocated={data?.totalAllocated ?? 0}
+        previousSpendLabel={`Wydano: ${getMonthLabel(previousYear, previousMonth)}`}
+        previousSpend={Math.abs(previousData?.totalActivity ?? 0)}
+        onBudgetBalance={data?.onBudgetBalance ?? 0}
       >
-        <p className="text-sm text-muted-foreground">Do rozdzielenia</p>
-        <p className={cn("text-2xl font-bold", !rtaPositive && "text-red-500")}>
-          {formatCurrency(readyToAssign)}
-        </p>
-        <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
-          <div>
-            <p className="text-muted-foreground">Przychody w miesiącu</p>
-            <p className="font-medium">{formatCurrency(data?.incomeThisMonth ?? 0)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Przydzielone</p>
-            <p className="font-medium">{formatCurrency(data?.totalAllocated ?? 0)}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Wydano: {getMonthLabel(previousYear, previousMonth)}</p>
-            <p className="font-medium">
-              {formatCurrency(Math.abs(previousData?.totalActivity ?? 0))}
-            </p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">Saldo kont w budżecie</p>
-            <p className="font-medium">{formatCurrency(data?.onBudgetBalance ?? 0)}</p>
-          </div>
-        </div>
         {(Number(data?.plannedIncome) > 0 || Number(data?.plannedExpense) > 0) && (
           <div className="mt-3 rounded-md border bg-background/80 px-3 py-2 text-sm">
             <p className="font-medium">Plan miesiąca (jeszcze nie w rejestrze)</p>
@@ -236,7 +217,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             </ol>
           </div>
         )}
-      </div>
+      </BudgetMonthSummary>
 
       <div className="overflow-hidden rounded-lg border">
         <div className="hidden grid-cols-12 gap-2 border-b bg-muted/50 px-4 py-2 text-xs font-medium text-muted-foreground md:grid">
@@ -465,11 +446,20 @@ function BudgetSkeleton() {
         <div className="h-6 w-40 animate-pulse rounded bg-muted" />
       </div>
       <div className="rounded-lg border p-4">
-        <div className="h-4 w-28 animate-pulse rounded bg-muted" />
-        <div className="mt-2 h-8 w-36 animate-pulse rounded bg-muted" />
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="flex flex-col gap-4 sm:flex-row sm:justify-between">
+          <div>
+            <div className="h-4 w-28 animate-pulse rounded bg-muted" />
+            <div className="mt-2 h-8 w-36 animate-pulse rounded bg-muted" />
+          </div>
+          <div className="sm:text-right">
+            <div className="h-4 w-40 animate-pulse rounded bg-muted sm:ml-auto" />
+            <div className="mt-2 h-8 w-36 animate-pulse rounded bg-muted sm:ml-auto" />
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="h-10 animate-pulse rounded bg-muted" />
           <div className="h-10 animate-pulse rounded bg-muted" />
+          <div className="hidden h-10 animate-pulse rounded bg-muted sm:block" />
           <div className="hidden h-10 animate-pulse rounded bg-muted sm:block" />
         </div>
       </div>
