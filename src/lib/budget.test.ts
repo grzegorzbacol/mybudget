@@ -1,4 +1,6 @@
+import { describe, expect, it } from "vitest";
 import { applyAllocatedOptimistic, buildBudgetMonthData, checkAccountsMatchAllocatedBudget, checkBudgetMonthAccounts, accountsBudgetMismatchWarning, allocatedBudgetTotal, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, assembleBudgetMonthData, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, isOnBudgetCashTx, isTransferTx, ledgerRowsForEnvelopeMath, onBudgetCashBalance, planFillEnvelopeGaps, readyToAssignWarning, signedAccountBalance, uncategorizedExpenses, normalizeBudgetId } from "./budget";
+import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
 
