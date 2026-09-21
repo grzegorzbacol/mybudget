@@ -30,14 +30,16 @@ import {
 } from "@/components/ui/select";
 import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
-import { formatCurrency, todayIso } from "@/lib/format";
-import { isOnBudget } from "@/lib/budget";
+import { formatCurrency, getCurrentYearMonth, todayIso } from "@/lib/format";
+import { checkBudgetMonthAccounts, isOnBudget } from "@/lib/budget";
 import { OPENING_MEMO, OPENING_PAYEE } from "@/lib/opening-balance";
 import { ACCOUNT_TYPE_META, computeNetWorth, displayBalance, isLiabilityType } from "@/lib/wealth";
 import { isQaLeftoverAccountName } from "@/lib/account-delete-policy";
 import type { Account, Transaction } from "@/lib/types";
 import { toast } from "sonner";
 import { TransactionList } from "@/components/transactions/TransactionList";
+import { AccountsBudgetCheckBanner } from "@/components/budget/AccountsBudgetCheck";
+import { useBudget } from "@/hooks/use-budget";
 import Link from "next/link";
 
 export default function AccountsPage() {
@@ -236,6 +238,14 @@ export default function AccountsPage() {
   const wealth = computeNetWorth(accounts ?? []);
   const onBudgetWealth = computeNetWorth(onBudgetAccounts);
   const trackingWealth = computeNetWorth(trackingAccounts);
+  const { year: budgetYear, month: budgetMonth } = getCurrentYearMonth();
+  const { data: budget, isSuccess: budgetReady } = useBudget(
+    budgetYear,
+    budgetMonth,
+    Boolean(familyData?.family.id && accounts)
+  );
+  const accountsBudgetCheck =
+    budgetReady && accounts ? checkBudgetMonthAccounts(budget, accounts) : null;
 
   const clearedByAccount = useMemo(() => {
     const map = new Map<string, number>();
@@ -360,6 +370,8 @@ export default function AccountsPage() {
           </CardContent>
         </Card>
       </div>
+
+      {accountsBudgetCheck ? <AccountsBudgetCheckBanner check={accountsBudgetCheck} /> : null}
 
       {chartData.length > 0 && (
         <Card>

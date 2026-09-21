@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyAllocatedOptimistic, buildBudgetMonthData, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, assembleBudgetMonthData, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, isOnBudgetCashTx, ledgerRowsForEnvelopeMath, onBudgetCashBalance, planFillEnvelopeGaps, readyToAssignWarning, signedAccountBalance, uncategorizedExpenses, normalizeBudgetId } from "./budget";
+import { applyAllocatedOptimistic, buildBudgetMonthData, checkAccountsMatchAllocatedBudget, checkBudgetMonthAccounts, accountsBudgetMismatchWarning, allocatedBudgetTotal, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, assembleBudgetMonthData, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, isOnBudgetCashTx, ledgerRowsForEnvelopeMath, onBudgetCashBalance, planFillEnvelopeGaps, readyToAssignWarning, signedAccountBalance, uncategorizedExpenses, normalizeBudgetId } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -597,5 +597,108 @@ describe("YNAB envelope math", () => {
     );
     expect(data.incomeThisMonth).toBe(0);
     expect(data.uncategorizedCount).toBe(0);
+  });
+});
+
+describe("accounts vs allocated budget", () => {
+  it("matches on-budget cash to Ready to Assign plus envelope available", () => {
+    const accounts = [account("checking", 3000), account("cash", 200)];
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 500)],
+      accounts,
+      [tx({ amount: 3200, date: "2026-09-01" })]
+    );
+    expect(data.onBudgetCash).toBe(3200);
+    expect(allocatedBudgetTotal(data.readyToAssign, data.totalAvailable)).toBe(3200);
+    const check = checkBudgetMonthAccounts(data, accounts);
+    expect(check).toEqual({
+      matches: true,
+      accountsTotal: 3200,
+      allocatedTotal: 3200,
+      difference: 0,
+    });
+    expect(accountsBudgetMismatchWarning(check)).toBeNull();
+  });
+
+  it("ignores tracking accounts and credit-card debt", () => {
+    const accounts = [
+      account("checking", 12000),
+      { ...account("cc", 2400), type: "credit" as const },
+      account("broker", 8000, false),
+    ];
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 2000)],
+      accounts,
+      []
+    );
+    expect(data.onBudgetBalance).toBe(9600);
+    expect(data.onBudgetCash).toBe(12000);
+    expect(data.readyToAssign).toBe(10000);
+    expect(data.totalAvailable).toBe(2000);
+    const check = checkAccountsMatchAllocatedBudget({
+      accounts,
+      readyToAssign: data.readyToAssign,
+      totalAvailable: data.totalAvailable,
+    });
+    expect(check.matches).toBe(true);
+    expect(check.accountsTotal).toBe(12000);
+    expect(onBudgetCashBalance(accounts)).toBe(12000);
+  });
+
+  it("flags when envelope available plus Ready to Assign drifts from cash", () => {
+    const short = checkAccountsMatchAllocatedBudget({
+      onBudgetCash: 1000,
+      readyToAssign: 200,
+      totalAvailable: 900,
+    });
+    expect(short.matches).toBe(false);
+    expect(short.difference).toBe(-100);
+    expect(accountsBudgetMismatchWarning(short)).toMatch(/o 100,00 zł większe niż saldo kont/);
+
+    const extra = checkAccountsMatchAllocatedBudget({
+      onBudgetCash: 1500,
+      readyToAssign: 400,
+      totalAvailable: 900,
+    });
+    expect(extra.matches).toBe(false);
+    expect(extra.difference).toBe(200);
+    expect(accountsBudgetMismatchWarning(extra)).toMatch(/o 200,00 zł więcej niż w Do rozdzielenia/);
+  });
+
+  it("treats grosze rounding as a match and prefers live accounts over stale cash", () => {
+    expect(
+      checkAccountsMatchAllocatedBudget({
+        onBudgetCash: 10.001,
+        readyToAssign: 5,
+        totalAvailable: 5,
+      }).matches
+    ).toBe(true);
+    const check = checkBudgetMonthAccounts(
+      { readyToAssign: 100, totalAvailable: 50, onBudgetCash: 999 },
+      [account("checking", 150)]
+    );
+    expect(check.matches).toBe(true);
+    expect(check.accountsTotal).toBe(150);
+  });
+
+  it("keeps the identity after an optimistic assign", () => {
+    const accounts = [account("checking", 800)];
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 200)],
+      accounts,
+      []
+    );
+    const next = applyAllocatedOptimistic(data, { category_id: "groceries", allocated: 500 });
+    expect(checkBudgetMonthAccounts(next, accounts).matches).toBe(true);
+    expect(next.readyToAssign + next.totalAvailable).toBe(800);
   });
 });

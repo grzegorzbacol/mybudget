@@ -113,6 +113,7 @@ export function useCreateTransaction() {
         next.incomeThisMonth += Number(input.amount);
         next.readyToAssign += Number(input.amount);
         next.onBudgetBalance += Number(input.amount);
+        if (next.onBudgetCash != null) next.onBudgetCash += Number(input.amount);
       } else {
         const lines = input.category_splits?.length
           ? input.category_splits
@@ -134,6 +135,7 @@ export function useCreateTransaction() {
           }
         }
         next.onBudgetBalance += Number(input.amount);
+        if (next.onBudgetCash != null) next.onBudgetCash += Number(input.amount);
       }
       queryClient.setQueryData(key, next);
       return { previous, key };

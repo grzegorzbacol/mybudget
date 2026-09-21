@@ -18,6 +18,7 @@ export function degradedCashflowOverview(warning: string): CashflowOverview {
       totalActivity: 0,
       totalAvailable: 0,
       onBudgetBalance: 0,
+      onBudgetCash: 0,
       uncategorizedCount: 0,
       plannedIncome: 0,
       plannedExpense: 0,

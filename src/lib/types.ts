@@ -204,6 +204,8 @@ export interface BudgetMonthData {
   totalActivity: number;
   totalAvailable: number;
   onBudgetBalance: number;
+  /** On-budget cash only — identity: onBudgetCash = readyToAssign + totalAvailable. */
+  onBudgetCash?: number;
   uncategorizedCount: number;
   /** Scheduled inflows in this month that are not yet on the ledger. */
   plannedIncome?: number;

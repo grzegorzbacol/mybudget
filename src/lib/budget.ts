@@ -265,6 +265,69 @@ export function computeReadyToAssign(onBudgetCash: number, expenseAvailable: num
   return money(onBudgetCash - expenseAvailable);
 }
 
+/** Same grosze window as readyToAssignWarning. */
+export const ACCOUNTS_BUDGET_MATCH_EPS = 0.005;
+
+export type AccountsBudgetCheck = {
+  matches: boolean;
+  /** On-budget cash (checking/savings/cash), not credit-card / loan balances. */
+  accountsTotal: number;
+  /** Do rozdzielenia + Dostępne in envelopes — every złoty's job. */
+  allocatedTotal: number;
+  difference: number;
+};
+
+/** Przydzielony budżet = Ready to Assign + money sitting in expense envelopes. */
+export function allocatedBudgetTotal(readyToAssign: number, totalAvailable: number): number {
+  return money((Number(readyToAssign) || 0) + (Number(totalAvailable) || 0));
+}
+
+/**
+ * YNAB identity: on-budget cash equals Ready to Assign plus envelope available.
+ * Tracking accounts are ignored. Credit-card / loan debt lives in Saldo w budżecie, not here.
+ */
+export function checkAccountsMatchAllocatedBudget(input: {
+  accounts?: Account[];
+  onBudgetCash?: number;
+  readyToAssign: number;
+  totalAvailable: number;
+}): AccountsBudgetCheck {
+  const cashInput = input.onBudgetCash;
+  const accountsTotal = money(
+    cashInput != null && Number.isFinite(Number(cashInput))
+      ? Number(cashInput)
+      : onBudgetCashBalance(input.accounts ?? [])
+  );
+  const allocatedTotal = allocatedBudgetTotal(input.readyToAssign, input.totalAvailable);
+  const difference = money(accountsTotal - allocatedTotal);
+  return {
+    matches: Math.abs(difference) <= ACCOUNTS_BUDGET_MATCH_EPS,
+    accountsTotal,
+    allocatedTotal,
+    difference,
+  };
+}
+
+export function checkBudgetMonthAccounts(
+  data: (Pick<BudgetMonthData, "readyToAssign" | "totalAvailable"> & { onBudgetCash?: number }) | null | undefined,
+  accounts?: Account[]
+): AccountsBudgetCheck {
+  return checkAccountsMatchAllocatedBudget({
+    ...(accounts ? { accounts } : { onBudgetCash: data?.onBudgetCash }),
+    readyToAssign: Number(data?.readyToAssign) || 0,
+    totalAvailable: Number(data?.totalAvailable) || 0,
+  });
+}
+
+export function accountsBudgetMismatchWarning(check: AccountsBudgetCheck): string | null {
+  if (check.matches) return null;
+  const gap = Math.abs(check.difference).toFixed(2).replace(".", ",");
+  if (check.difference > 0) {
+    return `Suma gotówki na kontach w budżecie nie zgadza się z przydzielonym budżetem — na kontach jest o ${gap} zł więcej niż w Do rozdzielenia i kopertach.`;
+  }
+  return `Suma gotówki na kontach w budżecie nie zgadza się z przydzielonym budżetem — Do rozdzielenia i koperty są o ${gap} zł większe niż saldo kont.`;
+}
+
 /** Header copy when Do rozdzielenia is red. Assigned=0 must not blame this month's przydział. */
 export function readyToAssignWarning(input: {
   readyToAssign: number;
@@ -601,6 +664,7 @@ export function assembleBudgetMonthData(input: {
     totalActivity,
     totalAvailable,
     onBudgetBalance: balance,
+    onBudgetCash: cash,
     uncategorizedCount: Math.max(0, Math.trunc(Number(input.uncategorizedCount) || 0)),
     plannedIncome: money(input.plannedIncome ?? 0),
     plannedExpense: money(input.plannedExpense ?? 0),

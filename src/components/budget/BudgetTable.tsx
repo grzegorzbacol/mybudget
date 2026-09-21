@@ -16,7 +16,13 @@ import { CategoryIcon } from "@/components/envelopes/CategoryIcon";
 import { EnvelopeGroupPicker } from "@/components/envelopes/EnvelopeGroupPicker";
 import { useAllocateMany, useBudget } from "@/hooks/use-budget";
 import { formatCurrency, getMonthLabel } from "@/lib/format";
-import { envelopeRowsFromBudget, planFillEnvelopeGaps, readyToAssignWarning } from "@/lib/budget";
+import {
+  checkBudgetMonthAccounts,
+  envelopeRowsFromBudget,
+  planFillEnvelopeGaps,
+  readyToAssignWarning,
+} from "@/lib/budget";
+import { AccountsBudgetCheckBanner } from "./AccountsBudgetCheck";
 import { DEFAULT_CATEGORY_ICON, uniqueGroupNames } from "@/lib/categories";
 import { cn } from "@/lib/utils";
 import { CategoryPanel } from "./CategoryPanel";
@@ -100,6 +106,8 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
     readyToAssign,
     assignedThisMonth: data?.totalAllocated ?? 0,
   });
+  const accountsBudgetCheck =
+    data && data.onBudgetCash != null ? checkBudgetMonthAccounts(data) : null;
   const gapPlan = planFillEnvelopeGaps(allRows, readyToAssign);
   const gapTotal = gapPlan.reduce((sum, row) => sum + row.add, 0);
   const selectedRow = selected
@@ -176,6 +184,9 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
         )}
         {rtaWarning && (
           <p className="mt-3 text-sm text-red-600 dark:text-red-400">{rtaWarning}</p>
+        )}
+        {accountsBudgetCheck && !accountsBudgetCheck.matches && !isFetching && (
+          <AccountsBudgetCheckBanner check={accountsBudgetCheck} compact />
         )}
         {rtaPositive && readyToAssign > 0 && (
           <p className="mt-3 text-sm text-muted-foreground">
