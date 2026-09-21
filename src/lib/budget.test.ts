@@ -71,6 +71,22 @@ describe("YNAB envelope math", () => {
     });
   });
 
+  it("sums envelope available for the budget header Dostępne w kopertach", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("food", "Jedzenie"), category("fun", "Hobby", "Życie", 1)],
+      [alloc("food", 2026, 9, 200), alloc("fun", 2026, 9, 50)],
+      [account("checking", 3000)],
+      [tx({ amount: 3000, date: "2026-09-01" })]
+    );
+    const rows = envelopeRowsFromBudget(data);
+    expect(data.totalAvailable).toBe(250);
+    expect(data.totalAvailable).toBe(rows.reduce((sum, row) => sum + row.available, 0));
+    expect(data.readyToAssign).toBe(2750);
+    expect(allocatedBudgetTotal(data.readyToAssign, data.totalAvailable)).toBe(3000);
+  });
+
   it("puts unassigned income into Ready to Assign", () => {
     const data = buildBudgetMonthData(
       2026,

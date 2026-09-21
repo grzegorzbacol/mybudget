@@ -101,6 +101,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
   ]);
   const selectedGroup = groupName || groupOptions[0] || "";
   const readyToAssign = Number(data?.readyToAssign) || 0;
+  const totalAvailable = Number(data?.totalAvailable) || 0;
   const rtaPositive = readyToAssign >= 0;
   const rtaWarning = readyToAssignWarning({
     readyToAssign,
@@ -137,10 +138,30 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
           rtaPositive ? "border-green-500/30 bg-green-500/10" : "border-red-500/30 bg-red-500/10"
         )}
       >
-        <p className="text-sm text-muted-foreground">Do rozdzielenia</p>
-        <p className={cn("text-2xl font-bold", !rtaPositive && "text-red-500")}>
-          {formatCurrency(readyToAssign)}
-        </p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-sm text-muted-foreground">Do rozdzielenia</p>
+            <p className={cn("text-2xl font-bold tabular-nums", !rtaPositive && "text-red-500")}>
+              {formatCurrency(readyToAssign)}
+            </p>
+          </div>
+          <div className="sm:text-right">
+            <p className="text-sm text-muted-foreground">Dostępne w kopertach</p>
+            <p
+              className={cn(
+                "text-2xl font-bold tabular-nums",
+                totalAvailable < 0
+                  ? "text-red-500"
+                  : totalAvailable > 0
+                    ? "text-green-600 dark:text-green-400"
+                    : "text-muted-foreground"
+              )}
+              title="Suma kolumny Dostępne — ile możesz wydać z kopert"
+            >
+              {formatCurrency(totalAvailable)}
+            </p>
+          </div>
+        </div>
         <div className="mt-3 grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
           <div>
             <p className="text-muted-foreground">Przychody w miesiącu</p>
@@ -465,11 +486,20 @@ function BudgetSkeleton() {
         <div className="h-6 w-40 animate-pulse rounded bg-muted" />
       </div>
       <div className="rounded-lg border p-4">
-        <div className="h-4 w-28 animate-pulse rounded bg-muted" />
-        <div className="mt-2 h-8 w-36 animate-pulse rounded bg-muted" />
-        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <div className="flex flex-col gap-4 sm:flex-row sm:justify-between">
+          <div>
+            <div className="h-4 w-28 animate-pulse rounded bg-muted" />
+            <div className="mt-2 h-8 w-36 animate-pulse rounded bg-muted" />
+          </div>
+          <div className="sm:text-right">
+            <div className="h-4 w-40 animate-pulse rounded bg-muted sm:ml-auto" />
+            <div className="mt-2 h-8 w-36 animate-pulse rounded bg-muted sm:ml-auto" />
+          </div>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div className="h-10 animate-pulse rounded bg-muted" />
           <div className="h-10 animate-pulse rounded bg-muted" />
+          <div className="hidden h-10 animate-pulse rounded bg-muted sm:block" />
           <div className="hidden h-10 animate-pulse rounded bg-muted sm:block" />
         </div>
       </div>
