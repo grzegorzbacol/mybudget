@@ -1,5 +1,11 @@
 import { resolveDatabaseUrl } from "./schema";
-import { SQL_TRANSFER_PAYEE_PRED, type ActivityAggregate, type SplitActivityLine } from "./budget";
+import {
+  SQL_IS_TRANSFER_PRED,
+  SQL_TRANSFER_PAYEE_MATCH,
+  SQL_TRANSFER_PAYEE_PRED,
+  type ActivityAggregate,
+  type SplitActivityLine,
+} from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction, ScheduledTransaction } from "./types";
 import { sqlOpeningBalanceExpr } from "./opening-balance";
 
@@ -85,30 +91,33 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind): string {
         WHERE ${tFamily}
           AND ${SQL_TRANSFER_PAYEE_PRED}`;
 
-  const rtaAdjust =
+  const isTransfer = kind === "full" ? SQL_IS_TRANSFER_PRED : `(${SQL_TRANSFER_PAYEE_MATCH})`;
+  const cashPool =
     kind === "full"
-      ? `,
+      ? `dest.on_budget IS DISTINCT FROM FALSE AND dest.type NOT IN ('credit', 'loan', 'mortgage', 'other_liability')`
+      : `dest.type NOT IN ('credit', 'loan', 'mortgage', 'other_liability')`;
+  const liabilityAccounts =
+    kind === "full"
+      ? `a.on_budget IS DISTINCT FROM FALSE AND a.type IN ('credit', 'loan', 'mortgage', 'other_liability')`
+      : `a.type IN ('credit', 'loan', 'mortgage', 'other_liability')`;
+  const rtaAdjust = `,
   'liabilityDelta', COALESCE((
     SELECT SUM(t.amount)::float8
     FROM transactions t
     JOIN accounts a ON a.id::text = t.account_id::text
     WHERE ${tFamily}
-      AND a.on_budget IS DISTINCT FROM FALSE
-      AND a.type IN ('credit', 'loan', 'mortgage', 'other_liability')
+      AND ${liabilityAccounts}
       AND NOT ${opening}
+      AND NOT ${isTransfer}
   ), 0),
   'trackingInflows', COALESCE((
     SELECT SUM(t.amount)::float8
     FROM transactions t
     JOIN accounts dest ON dest.id::text = t.account_id::text
-    JOIN accounts src ON src.id::text = t.transfer_account_id::text
     WHERE ${tFamily}
-      AND t.amount > 0
-      AND dest.on_budget IS DISTINCT FROM FALSE
-      AND dest.type NOT IN ('credit', 'loan', 'mortgage', 'other_liability')
-      AND src.on_budget = FALSE
-  ), 0)`
-      : "";
+      AND ${cashPool}
+      AND ${isTransfer}
+  ), 0)`;
 
   const allocationSelect =
     kind === "full"

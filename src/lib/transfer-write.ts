@@ -285,13 +285,16 @@ export async function insertTransferRowsViaSql(
   try {
     client = await connectPg(databaseUrl);
     await ensureTransferColumnsOnClientAllowingOwnerMiss(client);
+    await client.query("BEGIN");
     const inserted: Record<string, unknown>[] = [];
     for (const row of rows) {
       const result = await client.query(INSERT_TRANSFER_SQL, insertValues(row));
       inserted.push(result.rows[0] as Record<string, unknown>);
     }
+    await client.query("COMMIT");
     return { data: inserted };
   } catch (error) {
+    if (client) await client.query("ROLLBACK").catch(() => undefined);
     return { error: sqlWriteError(error, "SQL transfer insert failed") };
   } finally {
     await client?.end().catch(() => undefined);

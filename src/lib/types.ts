@@ -206,9 +206,9 @@ export interface BudgetMonthData {
   onBudgetBalance: number;
   /** On-budget cash used for Ready to Assign (transfers from tracking/CC do not inflate it). Identity: onBudgetCash = readyToAssign + totalAvailable. */
   onBudgetCash?: number;
-  /** Posted non-opening activity on on-budget credit/loan accounts. */
+  /** Posted non-opening, non-transfer activity on on-budget credit/loan accounts. */
   liabilityDelta?: number;
-  /** Transfer inflows onto cash accounts from tracking accounts. */
+  /** Net transfer amounts on Ready to Assign cash accounts (not new income). */
   trackingInflows?: number;
   uncategorizedCount: number;
   /** Scheduled inflows in this month that are not yet on the ledger. */

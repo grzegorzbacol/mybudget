@@ -180,6 +180,28 @@ describe("markScheduledPaid / undoScheduledPaid", () => {
     });
   });
 
+  it("writes scheduled transfers with Transfer payees so they are not income", async () => {
+    const db = createMemoryClient({
+      scheduled_transactions: [{ ...rule, id: "s-move", transfer_account_id: "cash", amount: -200, payee: "Na oszczędności", category_id: null }],
+      scheduled_occurrences: [],
+      transactions: [],
+    });
+    const paid = await markScheduledPaid({
+      supabase: db,
+      familyId: "fam",
+      userId: "user-1",
+      scheduledId: "s-move",
+      createTransaction: true,
+    });
+    expect(paid.ok).toBe(true);
+    expect(db.store.transactions).toHaveLength(2);
+    const outgoing = db.store.transactions.find((row) => Number(row.amount) < 0);
+    const incoming = db.store.transactions.find((row) => Number(row.amount) > 0);
+    expect(outgoing).toMatchObject({ payee: "Transfer →", transfer_account_id: "cash", amount: -200 });
+    expect(incoming).toMatchObject({ payee: "Transfer ←", transfer_account_id: "checking", amount: 200 });
+    expect(outgoing?.transfer_id).toBe(incoming?.transfer_id);
+  });
+
   it("refuses to pay a later occurrence before the next due date", async () => {
     const db = createMemoryClient({
       scheduled_transactions: [{ ...rule }],

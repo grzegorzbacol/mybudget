@@ -13,9 +13,15 @@ import type {
 /** App-written transfer payees: "Transfer → Gotówka" / "Transfer ← mBank". */
 export const TRANSFER_PAYEE_RE = /^\s*transfer\s*(→|←|->|<-)\s*/i;
 
+/** Postgres: payee looks like an app-written transfer. */
+export const SQL_TRANSFER_PAYEE_MATCH =
+  "lower(btrim(COALESCE(t.payee, ''))) ~ '^transfer[[:space:]]*(→|←|->|<-)'";
+
 /** Postgres: skip markerless transfer rows when transfer_* columns are missing. */
-export const SQL_TRANSFER_PAYEE_PRED =
-  "NOT (lower(btrim(COALESCE(t.payee, ''))) ~ '^transfer[[:space:]]*(→|←|->|<-)')";
+export const SQL_TRANSFER_PAYEE_PRED = `NOT (${SQL_TRANSFER_PAYEE_MATCH})`;
+
+/** Postgres: pairing columns or Transfer payee — moving money, not income. */
+export const SQL_IS_TRANSFER_PRED = `(t.transfer_account_id IS NOT NULL OR t.transfer_id IS NOT NULL OR ${SQL_TRANSFER_PAYEE_MATCH})`;
 
 export function isTransferPayee(payee?: string | null): boolean {
   return TRANSFER_PAYEE_RE.test(String(payee ?? ""));
@@ -242,9 +248,8 @@ export function onBudgetCashBalance(accounts: Account[]): number {
 }
 
 /**
- * Posted activity on on-budget liabilities (not opening debt). Paying a card or
- * spending on it changes this by the same amount as cash, so transfers do not
- * create or destroy Ready to Assign.
+ * Posted non-opening, non-transfer activity on on-budget liabilities (card spend).
+ * Card payments are transfers — those are undone via transferInflowsFromTracking.
  */
 export function onBudgetLiabilityLedgerDelta(
   transactions: LedgerTransaction[],
@@ -258,7 +263,7 @@ export function onBudgetLiabilityLedgerDelta(
   if (!ids.size) return 0;
   return money(
     transactions.reduce((sum, tx) => {
-      if (isOpeningBalanceTx(tx)) return sum;
+      if (isOpeningBalanceTx(tx) || isTransferTx(tx)) return sum;
       if (!ids.has(normalizeBudgetId(tx.account_id))) return sum;
       return sum + Number(tx.amount);
     }, 0)
@@ -266,8 +271,10 @@ export function onBudgetLiabilityLedgerDelta(
 }
 
 /**
- * Inflows onto cash accounts that came from tracking (off-budget) accounts.
- * That money already existed — moving it must not inflate Do rozdzielenia.
+ * Net transfer amounts posted on Ready to Assign cash accounts.
+ * Subtracted from on-budget cash so moving money cannot create Do rozdzielenia:
+ * cash↔cash nets to 0, inflows from tracking/CC/a lone incoming leg are removed,
+ * outflows to tracking/CC are added back. Does not require transfer_account_id.
  */
 export function transferInflowsFromTracking(
   transactions: LedgerTransaction[],
@@ -277,17 +284,15 @@ export function transferInflowsFromTracking(
   const byId = new Map(accounts.map((account) => [normalizeBudgetId(account.id), account]));
   return money(
     transactions.reduce((sum, tx) => {
-      if (Number(tx.amount) <= 0 || !isTransferTx(tx)) return sum;
-      const dest = byId.get(normalizeBudgetId(tx.account_id));
-      if (!dest || !inRtaCashPool(dest)) return sum;
-      const src = byId.get(normalizeBudgetId(tx.transfer_account_id));
-      if (!src || src.on_budget !== false) return sum;
+      if (!isTransferTx(tx)) return sum;
+      const account = byId.get(normalizeBudgetId(tx.account_id));
+      if (!account || !inRtaCashPool(account)) return sum;
       return sum + Number(tx.amount);
     }, 0)
   );
 }
 
-/** Cash that is actually new to assign: on-budget cash, CC/loan changes, minus tracking inflows. */
+/** Cash that is actually new to assign: on-budget cash, CC purchases, minus cash-pool transfers. */
 export function rtaCashBalance(
   accounts: Account[],
   options?: { liabilityDelta?: number; trackingInflows?: number }

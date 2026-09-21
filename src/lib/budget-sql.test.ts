@@ -61,13 +61,16 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL).toContain("id::text AS id");
     expect(FAMILY_BUDGET_SQL).toContain("::jsonb AS payload");
     expect(FAMILY_BUDGET_SQL).not.toContain("JOIN accounts a ON a.id = t.account_id");
+    expect(FAMILY_BUDGET_SQL).not.toContain("src.on_budget = FALSE");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("WITH ledger AS MATERIALIZED");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("amount > 0");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("family_id = $1::uuid");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("GROUP BY 1, 2, 3");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("Europe/Warsaw");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("^transfer[[:space:]]*(→|←|->|<-)");
-    expect(FAMILY_BUDGET_SQL_SAFE).not.toContain("liabilityDelta");
+    expect(FAMILY_BUDGET_SQL_SAFE).toContain("liabilityDelta");
+    expect(FAMILY_BUDGET_SQL_SAFE).toContain("trackingInflows");
+    expect(FAMILY_BUDGET_SQL_SAFE).not.toContain("transfer_account_id IS NOT NULL");
   });
 
   it("parses a compact payload into month totals", () => {
@@ -88,6 +91,7 @@ describe("budget SQL aggregates", () => {
     expect(monthAmount(parsed.income, 2026, 8)).toBe(0);
     expect(parsed.liabilityDelta).toBe(0);
     expect(parsed.trackingInflows).toBe(0);
+    expect(parseFamilyBudgetPayload({ trackingInflows: -200 }).trackingInflows).toBe(-200);
   });
 
   it("does not keep split receipts in the uncategorized inbox count", () => {

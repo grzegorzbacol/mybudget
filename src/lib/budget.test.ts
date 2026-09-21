@@ -453,6 +453,89 @@ describe("YNAB envelope math", () => {
     ).toBe(true);
   });
 
+  it("does not increase Ready to Assign for a tracking→cash transfer without pairing columns", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 0)],
+      [account("checking", 1200, true), account("broker", 4800, false)],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({
+          amount: -200,
+          date: "2026-09-02",
+          account_id: "broker",
+          payee: "Transfer → Konto",
+        }),
+        tx({
+          amount: 200,
+          date: "2026-09-02",
+          account_id: "checking",
+          payee: "Transfer ← IKE",
+        }),
+      ]
+    );
+    expect(data.incomeThisMonth).toBe(1000);
+    expect(data.readyToAssign).toBe(1000);
+    expect(data.trackingInflows).toBe(200);
+    expect(
+      checkBudgetMonthAccounts(data, [account("checking", 1200, true), account("broker", 4800, false)]).matches
+    ).toBe(true);
+  });
+
+  it("does not increase Ready to Assign when only the incoming transfer leg is posted", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 0)],
+      [account("checking", 1200), account("cash", 0)],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({
+          amount: 200,
+          date: "2026-09-02",
+          account_id: "checking",
+          payee: "Transfer ← Gotówka",
+        }),
+      ]
+    );
+    expect(data.incomeThisMonth).toBe(1000);
+    expect(data.readyToAssign).toBe(1000);
+    expect(data.onBudgetCash).toBe(1000);
+    expect(checkBudgetMonthAccounts(data, [account("checking", 1200), account("cash", 0)]).matches).toBe(true);
+  });
+
+  it("does not increase Ready to Assign when pairing has transfer_id but no transfer_account_id", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 0)],
+      [account("checking", 1200, true), account("broker", 4800, false)],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({
+          amount: -200,
+          date: "2026-09-02",
+          account_id: "broker",
+          transfer_id: "tr-only",
+          payee: "Na oszczędności",
+        }),
+        tx({
+          amount: 200,
+          date: "2026-09-02",
+          account_id: "checking",
+          transfer_id: "tr-only",
+          payee: "Na oszczędności",
+        }),
+      ]
+    );
+    expect(data.incomeThisMonth).toBe(1000);
+    expect(data.readyToAssign).toBe(1000);
+  });
+
   it("excludes tracking accounts from Ready to Assign", () => {
     const data = buildBudgetMonthData(
       2026,
