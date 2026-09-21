@@ -8,6 +8,8 @@ import {
   expandCategorySplits,
   isTransferTx,
   normalizeBudgetId,
+  onBudgetLiabilityLedgerDelta,
+  transferInflowsFromTracking,
 } from "@/lib/budget";
 import { addDays, monthRange } from "@/lib/money";
 import { isOpeningBalanceTx } from "@/lib/opening-balance";
@@ -42,6 +44,8 @@ export type FamilyBudgetCore = {
   dialect?: string;
   roundTrips?: number;
   transferMarkersMissing?: boolean;
+  liabilityDelta?: number;
+  trackingInflows?: number;
 };
 
 /** Budget always falls back to PostgREST. Cashflow only does so when SQL DNS/connect fails. */
@@ -213,6 +217,8 @@ async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<F
     schemaLag,
     source: "rest",
     transferMarkersMissing,
+    liabilityDelta: onBudgetLiabilityLedgerDelta(transactions, accounts),
+    trackingInflows: transferInflowsFromTracking(transactions, accounts),
   };
   return attachRestMonthTotals(core, transactions);
 }
@@ -239,6 +245,8 @@ export function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
     dialect: payload.dialect,
     roundTrips: payload.roundTrips,
     transferMarkersMissing: payload.transferMarkersMissing,
+    liabilityDelta: payload.liabilityDelta,
+    trackingInflows: payload.trackingInflows,
   };
 }
 
@@ -357,6 +365,8 @@ export function budgetMonthFromCore(
     upcomingByCategory: upcoming,
     plannedIncome: planned.income,
     plannedExpense: planned.expense,
+    liabilityDelta: core.liabilityDelta,
+    trackingInflows: core.trackingInflows,
   });
 }
 

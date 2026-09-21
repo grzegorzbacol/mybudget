@@ -1,7 +1,6 @@
 import { resolveDatabaseUrl } from "./schema";
-import type { SplitActivityLine } from "./budget";
+import { SQL_TRANSFER_PAYEE_PRED, type ActivityAggregate, type SplitActivityLine } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction, ScheduledTransaction } from "./types";
-import type { ActivityAggregate } from "./budget";
 import { sqlOpeningBalanceExpr } from "./opening-balance";
 
 export type MonthTotal = { year: number; month: number; amount: number };
@@ -25,6 +24,8 @@ export type FamilyBudgetSqlPayload = {
   scheduledMissing?: boolean;
   dialect?: string;
   roundTrips?: number;
+  liabilityDelta?: number;
+  trackingInflows?: number;
 };
 
 export type SqlQueryFn = (
@@ -73,6 +74,7 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind): string {
         WHERE ${tFamily}
           AND t.transfer_account_id IS NULL
           AND t.transfer_id IS NULL
+          AND ${SQL_TRANSFER_PAYEE_PRED}
           AND a.on_budget IS DISTINCT FROM FALSE`
       : `SELECT t.category_id::text AS category_id,
                ${sqlWarsawYear("t")} AS year,
@@ -80,7 +82,33 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind): string {
                t.amount::float8 AS amount,
                ${opening} AS is_opening
         FROM transactions t
-        WHERE ${tFamily}`;
+        WHERE ${tFamily}
+          AND ${SQL_TRANSFER_PAYEE_PRED}`;
+
+  const rtaAdjust =
+    kind === "full"
+      ? `,
+  'liabilityDelta', COALESCE((
+    SELECT SUM(t.amount)::float8
+    FROM transactions t
+    JOIN accounts a ON a.id::text = t.account_id::text
+    WHERE ${tFamily}
+      AND a.on_budget IS DISTINCT FROM FALSE
+      AND a.type IN ('credit', 'loan', 'mortgage', 'other_liability')
+      AND NOT ${opening}
+  ), 0),
+  'trackingInflows', COALESCE((
+    SELECT SUM(t.amount)::float8
+    FROM transactions t
+    JOIN accounts dest ON dest.id::text = t.account_id::text
+    JOIN accounts src ON src.id::text = t.transfer_account_id::text
+    WHERE ${tFamily}
+      AND t.amount > 0
+      AND dest.on_budget IS DISTINCT FROM FALSE
+      AND dest.type NOT IN ('credit', 'loan', 'mortgage', 'other_liability')
+      AND src.on_budget = FALSE
+  ), 0)`
+      : "";
 
   const allocationSelect =
     kind === "full"
@@ -160,7 +188,7 @@ SELECT json_build_object(
       WHERE category_id IS NULL AND amount < 0 AND NOT is_opening
       GROUP BY 1, 2
     ) x
-  ), '[]'::json)${flags}
+  ), '[]'::json)${rtaAdjust}${flags}
 )::jsonb AS payload
 `;
 }
@@ -177,8 +205,9 @@ function splitLinesSql(pred: FamilyPred, kind: SnapshotKind): string {
   const transferFilter =
     kind === "full"
       ? `AND t.transfer_account_id IS NULL
-  AND t.transfer_id IS NULL`
-      : "";
+  AND t.transfer_id IS NULL
+  AND ${SQL_TRANSFER_PAYEE_PRED}`
+      : `AND ${SQL_TRANSFER_PAYEE_PRED}`;
   return `
 SELECT t.id::text AS transaction_id,
        t.account_id::text AS account_id,
@@ -199,8 +228,9 @@ function dailyActualsSql(pred: FamilyPred, kind: SnapshotKind): string {
   const transferFilter =
     kind === "full"
       ? `AND t.transfer_account_id IS NULL
-  AND t.transfer_id IS NULL`
-      : "";
+  AND t.transfer_id IS NULL
+  AND ${SQL_TRANSFER_PAYEE_PRED}`
+      : `AND ${SQL_TRANSFER_PAYEE_PRED}`;
   // Same on-budget rule as the snapshot ledger so chart Wpływy match Przychody / Ten miesiąc.
   const onBudgetJoin =
     kind === "full" ? "LEFT JOIN accounts a ON a.id::text = t.account_id::text" : "";
@@ -306,6 +336,8 @@ export function parseFamilyBudgetPayload(raw: unknown): FamilyBudgetSqlPayload {
     splitLines: asArray<SplitActivityLine>(data.splitLines),
     transferMarkersMissing: Boolean(data.transferMarkersMissing),
     scheduledMissing: Boolean(data.scheduledMissing),
+    liabilityDelta: Number(data.liabilityDelta) || 0,
+    trackingInflows: Number(data.trackingInflows) || 0,
   };
 }
 

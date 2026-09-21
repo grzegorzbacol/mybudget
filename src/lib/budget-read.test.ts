@@ -682,7 +682,16 @@ describe("attachRestMonthTotals", () => {
         date: "2026-09-02",
         payee: "Transfer → Gotówka",
       },
+      {
+        account_id: "cash",
+        category_id: null,
+        amount: 200,
+        date: "2026-09-02",
+        payee: "Transfer ← Konto",
+      },
     ]);
     expect(next.uncategorized).toEqual([]);
+    expect(next.income).toEqual([]);
+    expect(next.spending).toEqual([]);
   });
 });

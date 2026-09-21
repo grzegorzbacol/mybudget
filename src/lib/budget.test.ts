@@ -1,6 +1,4 @@
-import { describe, expect, it } from "vitest";
-import { applyAllocatedOptimistic, buildBudgetMonthData, checkAccountsMatchAllocatedBudget, checkBudgetMonthAccounts, accountsBudgetMismatchWarning, allocatedBudgetTotal, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, assembleBudgetMonthData, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, isOnBudgetCashTx, ledgerRowsForEnvelopeMath, onBudgetCashBalance, planFillEnvelopeGaps, readyToAssignWarning, signedAccountBalance, uncategorizedExpenses, normalizeBudgetId } from "./budget";
-import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction } from "./types";
+import { applyAllocatedOptimistic, buildBudgetMonthData, checkAccountsMatchAllocatedBudget, checkBudgetMonthAccounts, accountsBudgetMismatchWarning, allocatedBudgetTotal, computeCategoryMonth, computeReadyToAssign, envelopeGap, envelopeRowsFromBudget, expandCategorySplits, applyCategorySplitAggregates, activityMapFromAggregates, assembleBudgetMonthData, isEnvelopeCategory, isExpenseCategory, isIncomeToReadyToAssign, isOnBudgetCashTx, isTransferTx, ledgerRowsForEnvelopeMath, onBudgetCashBalance, planFillEnvelopeGaps, readyToAssignWarning, signedAccountBalance, uncategorizedExpenses, normalizeBudgetId } from "./budget";
 
 const family = "fam-1";
 
@@ -273,6 +271,7 @@ describe("YNAB envelope math", () => {
           account_id: "checking",
           transfer_id: "tr1",
           transfer_account_id: "cash",
+          payee: "Transfer → Gotówka",
         }),
         tx({
           amount: 100,
@@ -280,12 +279,176 @@ describe("YNAB envelope math", () => {
           account_id: "cash",
           transfer_id: "tr1",
           transfer_account_id: "checking",
+          payee: "Transfer ← Konto",
         }),
       ]
     );
     expect(data.onBudgetBalance).toBe(1000);
+    expect(data.incomeThisMonth).toBe(1000);
     expect(data.readyToAssign).toBe(800);
     expect(data.groups[0].categories[0].activity).toBe(0);
+  });
+
+  it("does not treat markerless Transfer payees as income that inflates Ready to Assign", () => {
+    expect(isTransferTx({ payee: "Transfer → Gotówka", amount: -200 } as never)).toBe(true);
+    expect(isTransferTx({ payee: "Transfer ← mBank", amount: 200 } as never)).toBe(true);
+    expect(isIncomeToReadyToAssign(tx({ amount: 200, date: "2026-09-02", payee: "Transfer ← mBank" }))).toBe(
+      false
+    );
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 0)],
+      [account("checking", 1000), account("cash", 0)],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({
+          amount: -200,
+          date: "2026-09-02",
+          account_id: "checking",
+          payee: "Transfer → Gotówka",
+        }),
+        tx({
+          amount: 200,
+          date: "2026-09-02",
+          account_id: "cash",
+          payee: "Transfer ← Konto",
+        }),
+      ]
+    );
+    expect(data.incomeThisMonth).toBe(1000);
+    expect(data.onBudgetBalance).toBe(1000);
+    expect(data.readyToAssign).toBe(1000);
+    expect(data.groups[0].categories[0].activity).toBe(0);
+    expect(checkBudgetMonthAccounts(data, [account("checking", 1000), account("cash", 0)]).matches).toBe(true);
+  });
+
+  it("does not increase Ready to Assign when moving cash onto a credit card or off it", () => {
+    const checking = { ...account("checking", 900), type: "checking" as const };
+    const cc = { ...account("cc", -400), type: "credit" as const };
+    const paid = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 0)],
+      [checking, cc],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({
+          amount: -100,
+          date: "2026-09-02",
+          account_id: "checking",
+          transfer_id: "tr-cc",
+          transfer_account_id: "cc",
+          payee: "Transfer → Karta",
+        }),
+        tx({
+          amount: 100,
+          date: "2026-09-02",
+          account_id: "cc",
+          transfer_id: "tr-cc",
+          transfer_account_id: "checking",
+          payee: "Transfer ← Konto",
+        }),
+      ]
+    );
+    expect(paid.incomeThisMonth).toBe(1000);
+    expect(paid.readyToAssign).toBe(1000);
+    expect(paid.onBudgetBalance).toBe(500);
+    expect(checkBudgetMonthAccounts(paid, [checking, cc]).matches).toBe(true);
+
+    const cashAdvance = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 0)],
+      [{ ...account("checking", 1100), type: "checking" as const }, { ...account("cc", -600), type: "credit" as const }],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({
+          amount: 100,
+          date: "2026-09-03",
+          account_id: "checking",
+          transfer_id: "tr-out",
+          transfer_account_id: "cc",
+          payee: "Transfer ← Karta",
+        }),
+        tx({
+          amount: -100,
+          date: "2026-09-03",
+          account_id: "cc",
+          transfer_id: "tr-out",
+          transfer_account_id: "checking",
+          payee: "Transfer → Konto",
+        }),
+      ]
+    );
+    expect(cashAdvance.incomeThisMonth).toBe(1000);
+    expect(cashAdvance.readyToAssign).toBe(1000);
+    expect(
+      checkBudgetMonthAccounts(cashAdvance, [
+        { ...account("checking", 1100), type: "checking" as const },
+        { ...account("cc", -600), type: "credit" as const },
+      ]).matches
+    ).toBe(true);
+  });
+
+  it("does not treat a credit-card purchase as new money to assign", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 0)],
+      [{ ...account("checking", 1000), type: "checking" as const }, { ...account("cc", -550), type: "credit" as const }],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({ amount: -50, date: "2026-09-04", account_id: "cc", category_id: "groceries" }),
+      ]
+    );
+    expect(data.groups[0].categories[0].activity).toBe(-50);
+    expect(data.readyToAssign).toBe(1000);
+    expect(
+      checkBudgetMonthAccounts(data, [
+        { ...account("checking", 1000), type: "checking" as const },
+        { ...account("cc", -550), type: "credit" as const },
+      ]).matches
+    ).toBe(true);
+  });
+
+  it("does not increase Ready to Assign when moving money from a tracking account", () => {
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [alloc("groceries", 2026, 9, 0)],
+      [account("checking", 1200, true), account("broker", 4800, false)],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({
+          amount: -200,
+          date: "2026-09-02",
+          account_id: "broker",
+          transfer_id: "tr-inv",
+          transfer_account_id: "checking",
+          payee: "Transfer → Konto",
+        }),
+        tx({
+          amount: 200,
+          date: "2026-09-02",
+          account_id: "checking",
+          transfer_id: "tr-inv",
+          transfer_account_id: "broker",
+          payee: "Transfer ← IKE",
+        }),
+      ]
+    );
+    expect(data.incomeThisMonth).toBe(1000);
+    expect(data.onBudgetBalance).toBe(1200);
+    expect(data.readyToAssign).toBe(1000);
+    expect(
+      checkBudgetMonthAccounts(data, [account("checking", 1200, true), account("broker", 4800, false)]).matches
+    ).toBe(true);
   });
 
   it("excludes tracking accounts from Ready to Assign", () => {
