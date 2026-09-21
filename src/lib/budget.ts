@@ -10,14 +10,26 @@ import type {
   LedgerTransaction,
 } from "./types";
 
+/** App-written transfer payees: "Transfer → Gotówka" / "Transfer ← mBank". */
+export const TRANSFER_PAYEE_RE = /^\s*transfer\s*(→|←|->|<-)\s*/i;
+
+/** Postgres: skip markerless transfer rows when transfer_* columns are missing. */
+export const SQL_TRANSFER_PAYEE_PRED =
+  "NOT (lower(btrim(COALESCE(t.payee, ''))) ~ '^transfer[[:space:]]*(→|←|->|<-)')";
+
+export function isTransferPayee(payee?: string | null): boolean {
+  return TRANSFER_PAYEE_RE.test(String(payee ?? ""));
+}
+
 export function isTransferTx(tx: {
   transfer_account_id?: string | null;
   transfer_id?: string | null;
+  payee?: string | null;
 }): boolean {
-  return Boolean(tx.transfer_account_id || tx.transfer_id);
+  return Boolean(tx.transfer_account_id || tx.transfer_id) || isTransferPayee(tx.payee);
 }
 
-export function isOnBudget(account: Account): boolean {
+export function isOnBudget(account: Pick<Account, "on_budget">): boolean {
   return account.on_budget !== false;
 }
 
@@ -40,9 +52,14 @@ export function signedAccountBalance(account: Pick<Account, "type" | "balance">)
   return raw;
 }
 
+/** Cash/savings in the Ready to Assign pool — not credit cards, loans, or tracking. */
+export function inRtaCashPool(account: Pick<Account, "on_budget" | "type">): boolean {
+  return isOnBudget(account) && !isLiabilityAccountType(account.type);
+}
+
 /** On-budget cash movement: skip transfers and tracking accounts. */
 export function isOnBudgetCashTx(
-  tx: Pick<LedgerTransaction, "account_id" | "transfer_account_id" | "transfer_id">,
+  tx: Pick<LedgerTransaction, "account_id" | "transfer_account_id" | "transfer_id" | "payee">,
   accounts: Account[] = []
 ): boolean {
   if (isTransferTx(tx)) return false;
@@ -220,9 +237,65 @@ export function onBudgetBalance(accounts: Account[]): number {
 /** Cash/savings only — credit cards and loans are on-budget for Saldo, not for RTA. */
 export function onBudgetCashBalance(accounts: Account[]): number {
   return money(
+    accounts.filter(inRtaCashPool).reduce((sum, account) => sum + signedAccountBalance(account), 0)
+  );
+}
+
+/**
+ * Posted activity on on-budget liabilities (not opening debt). Paying a card or
+ * spending on it changes this by the same amount as cash, so transfers do not
+ * create or destroy Ready to Assign.
+ */
+export function onBudgetLiabilityLedgerDelta(
+  transactions: LedgerTransaction[],
+  accounts: Account[] = []
+): number {
+  const ids = new Set(
     accounts
-      .filter((account) => isOnBudget(account) && !isLiabilityAccountType(account.type))
-      .reduce((sum, account) => sum + signedAccountBalance(account), 0)
+      .filter((account) => isOnBudget(account) && isLiabilityAccountType(account.type))
+      .map((account) => normalizeBudgetId(account.id))
+  );
+  if (!ids.size) return 0;
+  return money(
+    transactions.reduce((sum, tx) => {
+      if (isOpeningBalanceTx(tx)) return sum;
+      if (!ids.has(normalizeBudgetId(tx.account_id))) return sum;
+      return sum + Number(tx.amount);
+    }, 0)
+  );
+}
+
+/**
+ * Inflows onto cash accounts that came from tracking (off-budget) accounts.
+ * That money already existed — moving it must not inflate Do rozdzielenia.
+ */
+export function transferInflowsFromTracking(
+  transactions: LedgerTransaction[],
+  accounts: Account[] = []
+): number {
+  if (!accounts.length) return 0;
+  const byId = new Map(accounts.map((account) => [normalizeBudgetId(account.id), account]));
+  return money(
+    transactions.reduce((sum, tx) => {
+      if (Number(tx.amount) <= 0 || !isTransferTx(tx)) return sum;
+      const dest = byId.get(normalizeBudgetId(tx.account_id));
+      if (!dest || !inRtaCashPool(dest)) return sum;
+      const src = byId.get(normalizeBudgetId(tx.transfer_account_id));
+      if (!src || src.on_budget !== false) return sum;
+      return sum + Number(tx.amount);
+    }, 0)
+  );
+}
+
+/** Cash that is actually new to assign: on-budget cash, CC/loan changes, minus tracking inflows. */
+export function rtaCashBalance(
+  accounts: Account[],
+  options?: { liabilityDelta?: number; trackingInflows?: number }
+): number {
+  return money(
+    onBudgetCashBalance(accounts) +
+      (Number(options?.liabilityDelta) || 0) -
+      (Number(options?.trackingInflows) || 0)
   );
 }
 
@@ -289,6 +362,8 @@ export function allocatedBudgetTotal(readyToAssign: number, totalAvailable: numb
 export function checkAccountsMatchAllocatedBudget(input: {
   accounts?: Account[];
   onBudgetCash?: number;
+  liabilityDelta?: number;
+  trackingInflows?: number;
   readyToAssign: number;
   totalAvailable: number;
 }): AccountsBudgetCheck {
@@ -296,7 +371,10 @@ export function checkAccountsMatchAllocatedBudget(input: {
   const accountsTotal = money(
     cashInput != null && Number.isFinite(Number(cashInput))
       ? Number(cashInput)
-      : onBudgetCashBalance(input.accounts ?? [])
+      : rtaCashBalance(input.accounts ?? [], {
+          liabilityDelta: input.liabilityDelta,
+          trackingInflows: input.trackingInflows,
+        })
   );
   const allocatedTotal = allocatedBudgetTotal(input.readyToAssign, input.totalAvailable);
   const difference = money(accountsTotal - allocatedTotal);
@@ -309,11 +387,24 @@ export function checkAccountsMatchAllocatedBudget(input: {
 }
 
 export function checkBudgetMonthAccounts(
-  data: (Pick<BudgetMonthData, "readyToAssign" | "totalAvailable"> & { onBudgetCash?: number }) | null | undefined,
+  data:
+    | (Pick<BudgetMonthData, "readyToAssign" | "totalAvailable"> & {
+        onBudgetCash?: number;
+        liabilityDelta?: number;
+        trackingInflows?: number;
+      })
+    | null
+    | undefined,
   accounts?: Account[]
 ): AccountsBudgetCheck {
   return checkAccountsMatchAllocatedBudget({
-    ...(accounts ? { accounts } : { onBudgetCash: data?.onBudgetCash }),
+    ...(accounts
+      ? {
+          accounts,
+          liabilityDelta: data?.liabilityDelta,
+          trackingInflows: data?.trackingInflows,
+        }
+      : { onBudgetCash: data?.onBudgetCash }),
     readyToAssign: Number(data?.readyToAssign) || 0,
     totalAvailable: Number(data?.totalAvailable) || 0,
   });
@@ -537,6 +628,8 @@ export function assembleBudgetMonthData(input: {
   incomeThisMonth: number;
   uncategorizedCount: number;
   upcomingByCategory?: Map<string, number>;
+  liabilityDelta?: number;
+  trackingInflows?: number;
 }): BudgetMonthData {
   const { categories, allocations, accounts } = input;
   const activityMap = input.activityMap ?? new Map();
@@ -652,7 +745,10 @@ export function assembleBudgetMonthData(input: {
   const totalActivity = money(groups.reduce((sum, group) => sum + group.activity, 0));
   const totalAvailable = money(groups.reduce((sum, group) => sum + group.available, 0));
   const balance = onBudgetBalance(accounts);
-  const cash = onBudgetCashBalance(accounts);
+  const cash = rtaCashBalance(accounts, {
+    liabilityDelta: input.liabilityDelta,
+    trackingInflows: input.trackingInflows,
+  });
 
   return {
     year: safeYear,
@@ -665,6 +761,8 @@ export function assembleBudgetMonthData(input: {
     totalAvailable,
     onBudgetBalance: balance,
     onBudgetCash: cash,
+    liabilityDelta: money(input.liabilityDelta ?? 0),
+    trackingInflows: money(input.trackingInflows ?? 0),
     uncategorizedCount: Math.max(0, Math.trunc(Number(input.uncategorizedCount) || 0)),
     plannedIncome: money(input.plannedIncome ?? 0),
     plannedExpense: money(input.plannedExpense ?? 0),
@@ -681,16 +779,20 @@ export function buildBudgetMonthData(
   transactions: LedgerTransaction[] = [],
   upcomingByCategory: Map<string, number> = new Map()
 ): BudgetMonthData {
+  const ledger = transactions ?? [];
+  const accountList = accounts ?? [];
   return assembleBudgetMonthData({
     year,
     month,
     categories,
     allocations,
-    accounts,
-    activityMap: activityByCategoryMonth(transactions ?? [], accounts ?? []),
-    incomeThisMonth: incomeInMonth(transactions, year, month, accounts),
-    uncategorizedCount: uncategorizedExpenses(transactions, year, month, accounts).length,
+    accounts: accountList,
+    activityMap: activityByCategoryMonth(ledger, accountList),
+    incomeThisMonth: incomeInMonth(ledger, year, month, accountList),
+    uncategorizedCount: uncategorizedExpenses(ledger, year, month, accountList).length,
     upcomingByCategory,
+    liabilityDelta: onBudgetLiabilityLedgerDelta(ledger, accountList),
+    trackingInflows: transferInflowsFromTracking(ledger, accountList),
   });
 }
 

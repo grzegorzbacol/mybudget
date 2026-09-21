@@ -510,6 +510,11 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction, 
             </div>
           )}
 
+          {type === "transfer" && (
+            <p className="text-sm text-muted-foreground">
+              Przelew między kontami nie zwiększa <strong>Do rozdzielenia</strong> — suma pieniędzy zostaje ta sama.
+            </p>
+          )}
           {type === "income" && (
             <p className="text-sm text-muted-foreground">
               {selectedOnBudget ? (

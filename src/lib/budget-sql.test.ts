@@ -51,6 +51,9 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL).not.toContain("transaction_category_splits");
     expect(FAMILY_BUDGET_SQL).not.toContain("COALESCE(kind");
     expect(FAMILY_BUDGET_SQL).toContain("transfer_account_id IS NULL");
+    expect(FAMILY_BUDGET_SQL).toContain("liabilityDelta");
+    expect(FAMILY_BUDGET_SQL).toContain("trackingInflows");
+    expect(FAMILY_BUDGET_SQL).toContain("^transfer[[:space:]]*(→|←|->|<-)");
     expect(FAMILY_BUDGET_SQL).toContain("LEFT JOIN accounts");
     expect(FAMILY_BUDGET_SQL).toContain("a.id::text = t.account_id::text");
     expect(FAMILY_BUDGET_SQL).toContain("on_budget IS DISTINCT FROM FALSE");
@@ -63,6 +66,8 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("family_id = $1::uuid");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("GROUP BY 1, 2, 3");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("Europe/Warsaw");
+    expect(FAMILY_BUDGET_SQL_SAFE).toContain("^transfer[[:space:]]*(→|←|->|<-)");
+    expect(FAMILY_BUDGET_SQL_SAFE).not.toContain("liabilityDelta");
   });
 
   it("parses a compact payload into month totals", () => {
@@ -81,6 +86,8 @@ describe("budget SQL aggregates", () => {
     expect(monthAmount(parsed.spending, 2026, 9)).toBe(2100);
     expect(monthCount(parsed.uncategorized, 2026, 9)).toBe(2);
     expect(monthAmount(parsed.income, 2026, 8)).toBe(0);
+    expect(parsed.liabilityDelta).toBe(0);
+    expect(parsed.trackingInflows).toBe(0);
   });
 
   it("does not keep split receipts in the uncategorized inbox count", () => {

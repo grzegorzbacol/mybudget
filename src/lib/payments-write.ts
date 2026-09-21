@@ -1,7 +1,8 @@
 import { nextScheduleDate } from "./cashflow";
 import { polishPaymentsWarning } from "./payments-http";
 import { isMissingRelationError, isScheduledIdSchemaError, writeErrorMessage } from "./schema";
-import { insertRowWithSchemaRepair, insertRowsWithSchemaRepair } from "./schema-write";
+import { insertRowWithSchemaRepair } from "./schema-write";
+import { insertTransferPair } from "./transfer-write";
 import { deleteFamilyTransaction } from "./transaction-delete";
 import { nextUnpaidDate, occurrenceKey, rewindNextDate } from "./payments";
 import type { ScheduledOccurrence, ScheduledTransaction } from "./types";
@@ -119,7 +120,7 @@ async function insertLedger(
   if (isTransfer) {
     const transferId = crypto.randomUUID();
     const abs = Math.abs(Number(rule.amount));
-    const result = await insertRowsWithSchemaRepair<{ id?: string; amount?: number }>(
+    const result = await insertTransferPair<{ id?: string; amount?: number }>(
       async (rows) => {
         const inserted = await supabase.from("transactions").insert(rows).select("id,amount");
         return {
@@ -156,8 +157,7 @@ async function insertLedger(
           source: "manual",
           added_by: userId,
         },
-      ],
-      ["scheduled_id"]
+      ]
     );
     if (result.error) {
       return { transactionId: null, error: polishPaymentsWarning(result.error) ?? result.error };
