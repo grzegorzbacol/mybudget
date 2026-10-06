@@ -271,6 +271,7 @@ describe("schema lag helpers", () => {
       "utf8"
     );
     expect(paymentColumnSql).toContain("ADD COLUMN IF NOT EXISTS payment_account_id");
+    expect(paymentColumnSql).toContain("split_part(c.name, chr(8288), 1)");
     expect(paymentColumnSql).toContain("NOTIFY pgrst, 'reload schema'");
     expect(boot).toContain("NOTIFY pgrst");
     expect(boot).toContain("DATABASE_OWNER_URL");

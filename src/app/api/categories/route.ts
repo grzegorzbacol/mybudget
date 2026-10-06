@@ -3,6 +3,7 @@ import { getAuthContext } from "@/lib/api-helpers";
 import { fetchFamilyCategories, invalidateFamilyBudgetCache } from "@/lib/budget-read";
 import { normalizeCategoryIcon, uniqueGroupNames } from "@/lib/categories";
 import { insertRowWithSchemaRepair } from "@/lib/schema-write";
+import { paymentCategoryVisibleName } from "@/lib/credit-cards";
 import { categorySchema } from "@/lib/validators";
 
 export async function GET() {
@@ -17,7 +18,10 @@ export async function GET() {
   }
 
   return NextResponse.json({
-    categories: fetched.data,
+    categories: fetched.data.map((category) => ({
+      ...category,
+      name: paymentCategoryVisibleName(category.name),
+    })),
     groups: uniqueGroupNames(fetched.data),
   });
 }

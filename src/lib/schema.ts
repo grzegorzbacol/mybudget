@@ -518,7 +518,17 @@ WHERE c.payment_account_id IS NULL
   AND c.family_id = a.family_id
   AND a.type = 'credit'
   AND c.group_name = 'Karty kredytowe'
-  AND c.name = 'Płatność: ' || a.name`,
+  AND split_part(c.name, chr(8288), 1) = 'Płatność: ' || a.name
+  AND (
+    SELECT count(*) FROM public.accounts a2
+    WHERE a2.family_id = a.family_id AND a2.type = 'credit' AND a2.name = a.name
+  ) = 1
+  AND (
+    SELECT count(*) FROM public.budget_categories c2
+    WHERE c2.family_id = c.family_id
+      AND c2.group_name = 'Karty kredytowe'
+      AND split_part(c2.name, chr(8288), 1) = 'Płatność: ' || a.name
+  ) = 1`,
   `INSERT INTO public.budget_categories (family_id, group_name, name, icon, color, sort_order, kind, payment_account_id)
 SELECT a.family_id, 'Karty kredytowe', 'Płatność: ' || a.name, '💳', '#0f766e', 9000, 'expense', a.id
 FROM public.accounts a
@@ -529,7 +539,10 @@ WHERE a.type = 'credit'
   WHERE c.family_id = a.family_id
     AND (
       c.payment_account_id = a.id
-      OR (c.group_name = 'Karty kredytowe' AND c.name = 'Płatność: ' || a.name)
+      OR (
+        c.group_name = 'Karty kredytowe'
+        AND split_part(c.name, chr(8288), 1) = 'Płatność: ' || a.name
+      )
     )
 )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS budget_categories_payment_account_uidx

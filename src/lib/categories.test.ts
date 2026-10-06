@@ -21,6 +21,7 @@ import {
   uniqueGroupNames,
 } from "./categories";
 import { updateCategoryRow } from "./categories-write";
+import { paymentAccountMarker, paymentCategoryStoredName } from "./credit-cards";
 import type { BudgetCategory, BudgetCategoryRow, BudgetMonthData } from "./types";
 
 const UUID = "2c1d3e4f-5a6b-4789-8abc-def012345678";
@@ -589,6 +590,37 @@ describe("updateCategoryRow", () => {
       icon: "🩺",
     });
     expect(supabase.store.budget_categories[0]).not.toHaveProperty("kind");
+  });
+
+  it("keeps the hidden card id when a payment category is renamed", async () => {
+    const stored = paymentCategoryStoredName({ id: "visa-1", name: "Visa" });
+    const supabase = createMemoryClient({
+      budget_categories: [
+        {
+          id: CAT_A,
+          family_id: familyId,
+          group_name: "Karty kredytowe",
+          name: stored,
+          icon: "💳",
+          sort_order: 9000,
+          kind: "expense",
+        },
+      ],
+    });
+
+    const result = await updateCategoryRow(supabase, {
+      familyId,
+      categoryId: CAT_A,
+      patch: { name: "Płatność: Visa Firmowa" },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.category.name).toBe("Płatność: Visa Firmowa");
+    expect(result.category.name.includes("visa-1")).toBe(false);
+    const saved = String(supabase.store.budget_categories[0].name);
+    expect(saved.includes("visa-1")).toBe(false);
+    expect(paymentAccountMarker(saved)).toBe("visa-1");
   });
 });
 

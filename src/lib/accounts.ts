@@ -1,5 +1,6 @@
 import type { Account } from "@/lib/types";
 import { isMissingRelationError, isSchemaLagError } from "@/lib/schema";
+import { removeCreditPaymentCategory } from "@/lib/credit-cards-write";
 import {
   decideAccountDelete,
   type AccountDeleteDecision,
@@ -403,7 +404,7 @@ export async function deleteAccountRow(
 > {
   const loaded = await supabase
     .from("accounts")
-    .select("id, name")
+    .select("id, name, type")
     .eq("id", input.accountId)
     .eq("family_id", input.familyId)
     .maybeSingle();
@@ -412,7 +413,7 @@ export async function deleteAccountRow(
     return { ok: false, status: 500, reason: "failed", error: loaded.error.message };
   }
 
-  const account = (loaded.data as { id: string; name: string } | null) ?? null;
+  const account = (loaded.data as { id: string; name: string; type?: string } | null) ?? null;
   const related = await loadRelatedTransactions(supabase, input.familyId, input.accountId);
   if (related.error) {
     return { ok: false, status: 500, reason: "failed", error: related.error };
@@ -446,6 +447,14 @@ export async function deleteAccountRow(
     if (removed.error) {
       return { ok: false, status: 500, reason: "failed", error: removed.error, account };
     }
+  }
+
+  if (account.type === "credit") {
+    await removeCreditPaymentCategory(supabase, input.familyId, {
+      id: account.id,
+      name: account.name,
+      type: "credit",
+    });
   }
 
   const deleted = await supabase

@@ -4,6 +4,7 @@ import { isAccountId } from "@/lib/account-delete-policy";
 import { deleteAccountRow, updateAccountRow } from "@/lib/accounts";
 import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
 import { ensureCreditPaymentCategoryForAccount } from "@/lib/credit-cards-write";
+import { loadAccountForLedger } from "@/lib/accounts";
 import { accountUpdateSchema } from "@/lib/validators";
 import { ACCOUNT_TYPE_META } from "@/lib/wealth";
 
@@ -46,6 +47,7 @@ export async function PATCH(
   }
 
   const meta = parsed.data.type ? ACCOUNT_TYPE_META[parsed.data.type] : undefined;
+  const previous = await loadAccountForLedger(ctx.supabase, ctx.family.id, id);
   const result = await updateAccountRow(ctx.supabase, {
     familyId: ctx.family.id,
     accountId: id,
@@ -61,8 +63,13 @@ export async function PATCH(
     );
   }
 
-  if (result.account.type === "credit" && result.account.on_budget !== false) {
-    await ensureCreditPaymentCategoryForAccount(ctx.supabase, ctx.family.id, result.account);
+  if (result.account.type === "credit") {
+    await ensureCreditPaymentCategoryForAccount(
+      ctx.supabase,
+      ctx.family.id,
+      result.account,
+      previous.account?.name
+    );
     invalidateFamilyBudgetCache(ctx.family.id);
   }
 

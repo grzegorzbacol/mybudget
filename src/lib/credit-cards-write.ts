@@ -1,8 +1,11 @@
 import { CREDIT_PAYMENT_GROUP, normalizeBudgetId } from "./budget";
 import {
   CREDIT_PAYMENT_SORT,
+  findCreditPaymentCategoryForAccount,
   isOnBudgetCreditAccount,
   isSyntheticPaymentCategoryId,
+  paymentAccountMarker,
+  paymentCategoryStoredName,
   storedCreditPaymentCategory,
   syntheticPaymentAccountId,
   withCreditPaymentCategories,
@@ -17,7 +20,7 @@ function paymentRow(familyId: string, account: Account): Record<string, unknown>
   return {
     family_id: account.family_id || familyId,
     group_name: CREDIT_PAYMENT_GROUP,
-    name: `Płatność: ${account.name}`,
+    name: paymentCategoryStoredName(account),
     icon: "💳",
     color: "#0f766e",
     sort_order: CREDIT_PAYMENT_SORT,
@@ -128,7 +131,10 @@ export async function ensureCreditPaymentCategoriesResult(
     if (!isOnBudgetCreditAccount(account)) return false;
     return !storedCreditPaymentCategory(prepared, account, list);
   });
-  if (!missingAccounts.length) return { categories: prepared };
+  if (!missingAccounts.length) {
+    await rememberPaymentLinks(supabase, familyId, list, categories ?? []);
+    return { categories: prepared };
+  }
 
   const inserted = await insertPaymentCategories(
     supabase,
@@ -142,7 +148,10 @@ export async function ensureCreditPaymentCategoriesResult(
   const kept = (categories ?? []).filter((category) => !isSyntheticPaymentCategoryId(category.id));
   const merged = withCreditPaymentCategories(dedupeCategories([...kept, ...recovered]), list);
   const unresolved = missingAccounts.filter((account) => !storedCreditPaymentCategory(merged, account, list));
-  if (!unresolved.length) return { categories: merged };
+  if (!unresolved.length) {
+    await rememberPaymentLinks(supabase, familyId, list, dedupeCategories([...kept, ...recovered]));
+    return { categories: merged };
+  }
   return {
     categories: merged,
     error: paymentCategoryWriteError(unresolved[0].name, inserted.error),
@@ -215,34 +224,89 @@ async function fetchCategoriesLoose(supabase: CategoryClient, familyId: string):
   return fallback.error ? [] : ((fallback.data ?? []) as BudgetCategory[]);
 }
 
+async function rememberPaymentLinks(
+  supabase: CategoryClient,
+  familyId: string,
+  accounts: Account[],
+  categories: BudgetCategory[]
+): Promise<void> {
+  for (const account of accounts) {
+    if (!isOnBudgetCreditAccount(account)) continue;
+    const category = storedCreditPaymentCategory(categories, account, accounts);
+    if (!category || isSyntheticPaymentCategoryId(category.id)) continue;
+    const raw = categories.find((row) => normalizeBudgetId(row.id) === normalizeBudgetId(category.id)) ?? category;
+    if (normalizeBudgetId(paymentAccountMarker(raw.name) ?? "") === normalizeBudgetId(account.id)) continue;
+    const nextName = paymentCategoryStoredName(account);
+    const withColumn = await supabase
+      .from("budget_categories")
+      .update({ name: nextName, payment_account_id: account.id })
+      .eq("id", category.id)
+      .eq("family_id", familyId);
+    if (!isSchemaLagWriteError(withColumn.error)) continue;
+    await supabase
+      .from("budget_categories")
+      .update({ name: nextName })
+      .eq("id", category.id)
+      .eq("family_id", familyId);
+  }
+}
+
 export async function syncCreditPaymentCategoryName(
+  supabase: CategoryClient,
+  familyId: string,
+  account: Pick<Account, "id" | "name" | "type">,
+  previousName?: string | null
+): Promise<void> {
+  if (account.type !== "credit" || !account.name) return;
+  const nextName = paymentCategoryStoredName(account);
+  const byColumn = await supabase
+    .from("budget_categories")
+    .update({ name: nextName })
+    .eq("family_id", familyId)
+    .eq("payment_account_id", account.id)
+    .select("id");
+  if (!isSchemaLagWriteError(byColumn.error) && asCategoryList(byColumn.data).length) return;
+
+  const existing = await fetchCategoriesLoose(supabase, familyId);
+  const target = findCreditPaymentCategoryForAccount(existing, account, previousName);
+  if (!target?.id) return;
+  await supabase
+    .from("budget_categories")
+    .update({ name: nextName })
+    .eq("id", target.id)
+    .eq("family_id", familyId);
+}
+
+/** Drop the payment envelope when its card is deleted and the FK column cannot cascade. */
+export async function removeCreditPaymentCategory(
   supabase: CategoryClient,
   familyId: string,
   account: Pick<Account, "id" | "name" | "type">
 ): Promise<void> {
-  if (account.type !== "credit" || !account.name) return;
+  if (account.type !== "credit") return;
   const byColumn = await supabase
     .from("budget_categories")
-    .update({ name: `Płatność: ${account.name}` })
+    .delete()
     .eq("family_id", familyId)
-    .eq("payment_account_id", account.id);
+    .eq("payment_account_id", account.id)
+    .select("id");
   if (!isSchemaLagWriteError(byColumn.error)) return;
-  await supabase
-    .from("budget_categories")
-    .update({ name: `Płatność: ${account.name}` })
-    .eq("family_id", familyId)
-    .eq("group_name", CREDIT_PAYMENT_GROUP)
-    .eq("name", `Płatność: ${account.name}`);
+  const existing = await fetchCategoriesLoose(supabase, familyId);
+  const target = findCreditPaymentCategoryForAccount(existing, account, account.name);
+  if (!target?.id) return;
+  await supabase.from("budget_categories").delete().eq("id", target.id).eq("family_id", familyId);
 }
 
 /** Create or rename the payment envelope after an account is saved. */
 export async function ensureCreditPaymentCategoryForAccount(
   supabase: CategoryClient,
   familyId: string,
-  account: Account
+  account: Account,
+  previousName?: string | null
 ): Promise<void> {
-  if (account.type !== "credit" || account.on_budget === false) return;
+  if (account.type !== "credit") return;
+  await syncCreditPaymentCategoryName(supabase, familyId, account, previousName);
+  if (account.on_budget === false) return;
   const existing = await fetchCategoriesLoose(supabase, familyId);
   await ensureCreditPaymentCategories(supabase, familyId, existing, [account]);
-  await syncCreditPaymentCategoryName(supabase, familyId, account);
 }

@@ -13,6 +13,10 @@ import {
   creditCardOverspendNote,
   creditCardRowStatus,
   creditLedgerWouldGoPositive,
+  findCreditPaymentCategoryForAccount,
+  paymentAccountMarker,
+  paymentCategoryStoredName,
+  paymentCategoryVisibleName,
   withCreditPaymentCategories,
 } from "./credit-cards";
 import { formatCurrency } from "./format";
@@ -453,5 +457,321 @@ describe("payment category identity", () => {
     const payments = next.filter((item) => item.name.startsWith("Płatność:"));
     expect(payments).toHaveLength(1);
     expect(String(payments[0].id).startsWith("cc-payment:")).toBe(false);
+  });
+});
+
+describe("several credit cards", () => {
+  const groceries = category("groceries", "Zakupy");
+
+  function namedAccount(id: string, name: string, balance: number, type: Account["type"] = "credit"): Account {
+    return { ...account(id, balance, type), name };
+  }
+
+  function payment(id: string, card: Account, withColumn: boolean): BudgetCategory {
+    const row = category(id, withColumn ? `Płatność: ${card.name}` : paymentCategoryStoredName(card), "Karty kredytowe");
+    if (withColumn) row.payment_account_id = card.id;
+    return row;
+  }
+
+  function cardStatus(data: BudgetMonthData, accountId: string) {
+    const found = data.creditCards?.find((card) => card.accountId === accountId);
+    if (!found) throw new Error(`missing card ${accountId}`);
+    return found;
+  }
+
+  function paymentRow(data: BudgetMonthData, accountId: string) {
+    return row(data, cardStatus(data, accountId).categoryId);
+  }
+
+  it.each([
+    ["without payment_account_id", false],
+    ["with payment_account_id", true],
+  ])("keeps purchases, refunds, payments and overspending on the right card %s", (_label, withColumn) => {
+    const checking = namedAccount("checking", "Konto", 980, "checking");
+    const visa = namedAccount("visa", "Visa", -30);
+    const mastercard = namedAccount("mc", "Mastercard", -40);
+    const categories = [
+      groceries,
+      payment("pay-visa", visa, withColumn),
+      payment("pay-mc", mastercard, withColumn),
+    ];
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      categories,
+      [alloc("groceries", 50), alloc("pay-visa", 0), alloc("pay-mc", 0)],
+      [checking, visa, mastercard],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({ amount: -60, date: "2026-09-04", account_id: "visa", category_id: "groceries" }),
+        tx({ amount: -20, date: "2026-09-05", account_id: "mc", category_id: "groceries" }),
+        tx({ amount: 10, date: "2026-09-06", account_id: "visa", category_id: "groceries", payee: "Zwrot" }),
+        tx({
+          amount: -20,
+          date: "2026-09-20",
+          account_id: "checking",
+          transfer_id: "pay-visa",
+          transfer_account_id: "visa",
+          payee: "Transfer → Visa",
+        }),
+        tx({
+          amount: 20,
+          date: "2026-09-20",
+          account_id: "visa",
+          transfer_id: "pay-visa",
+          transfer_account_id: "checking",
+          payee: "Transfer ← Konto",
+        }),
+      ]
+    );
+
+    expect(row(data, "groceries").activity).toBe(-70);
+    expect(row(data, "groceries").available).toBe(-20);
+    expect(paymentRow(data, "visa").activity).toBe(30);
+    expect(paymentRow(data, "visa").available).toBe(30);
+    expect(paymentRow(data, "mc").activity).toBe(0);
+    expect(paymentRow(data, "mc").available).toBe(0);
+    expect(cardStatus(data, "visa")).toMatchObject({
+      debt: 30,
+      reserved: 30,
+      unfunded: 0,
+      overspent: 0,
+      accountName: "Visa",
+    });
+    expect(cardStatus(data, "mc")).toMatchObject({
+      debt: 40,
+      reserved: 0,
+      unfunded: 40,
+      overspent: 20,
+      accountName: "Mastercard",
+    });
+    expect(creditCardRowStatus(cardStatus(data, "visa"))).toContain(formatCurrency(30));
+    expect(creditCardFundingBanner(cardStatus(data, "visa"))).toContain("„Płatność: Visa”");
+    expect(creditCardFundingBanner(cardStatus(data, "mc"))).toContain("„Płatność: Mastercard”");
+    expect(creditCardOverspendNote(cardStatus(data, "visa"))).toContain("„Płatność: Visa”");
+    expect(data.incomeThisMonth).toBe(1000);
+    expect(data.readyToAssign).toBe(950);
+    expect(checkBudgetMonthAccounts(data, [checking, visa, mastercard]).matches).toBe(true);
+  });
+
+  it("does not let a similar name steal the other card", () => {
+    const visa = namedAccount("visa", "Visa", -10);
+    const gold = namedAccount("gold", "Visa Gold", -15);
+    const categories = [
+      groceries,
+      payment("pay-visa", visa, false),
+      payment("pay-gold", gold, false),
+    ];
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      categories,
+      [alloc("groceries", 100)],
+      [namedAccount("checking", "Konto", 1000, "checking"), visa, gold],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({ amount: -10, date: "2026-09-02", account_id: "visa", category_id: "groceries" }),
+        tx({ amount: -15, date: "2026-09-03", account_id: "gold", category_id: "groceries" }),
+      ]
+    );
+    expect(paymentRow(data, "visa").available).toBe(10);
+    expect(paymentRow(data, "gold").available).toBe(15);
+    expect(cardStatus(data, "visa").categoryId).toBe("pay-visa");
+    expect(cardStatus(data, "gold").categoryId).toBe("pay-gold");
+  });
+
+  it.each([
+    ["without payment_account_id", false],
+    ["with payment_account_id", true],
+  ])("keeps identical names apart %s", (_label, withColumn) => {
+    const first = namedAccount("visa-1", "Visa", -10);
+    const second = namedAccount("visa-2", "Visa", -25);
+    const categories = [groceries, payment("pay-1", first, withColumn), payment("pay-2", second, withColumn)];
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      categories,
+      [alloc("groceries", 100), alloc("pay-1", 5)],
+      [namedAccount("checking", "Konto", 1000, "checking"), first, second],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({ amount: -10, date: "2026-09-02", account_id: "visa-1", category_id: "groceries" }),
+        tx({ amount: -25, date: "2026-09-03", account_id: "visa-2", category_id: "groceries" }),
+      ]
+    );
+    expect(cardStatus(data, "visa-1").categoryId).toBe("pay-1");
+    expect(cardStatus(data, "visa-2").categoryId).toBe("pay-2");
+    expect(paymentRow(data, "visa-1").available).toBe(15);
+    expect(paymentRow(data, "visa-2").available).toBe(25);
+    expect(cardStatus(data, "visa-1").accountName).not.toBe(cardStatus(data, "visa-2").accountName);
+    expect(data.readyToAssign).toBe(895);
+    expect(checkBudgetMonthAccounts(data, [namedAccount("checking", "Konto", 1000, "checking"), first, second]).matches).toBe(true);
+  });
+
+  it("does not guess when two cards share a name and the categories have no id", () => {
+    const first = namedAccount("visa-1", "Visa", -10);
+    const second = namedAccount("visa-2", "Visa", -20);
+    const ambiguous = [
+      category("pay-a", "Płatność: Visa", "Karty kredytowe"),
+      category("pay-b", "Płatność: Visa", "Karty kredytowe"),
+    ];
+    const linked = withCreditPaymentCategories(ambiguous, [first, second]);
+    const stored = linked.filter((item) => item.id === "pay-a" || item.id === "pay-b");
+    expect(stored.every((item) => !item.payment_account_id)).toBe(true);
+    const drafts = linked.filter((item) => String(item.id).startsWith("cc-payment:"));
+    expect(drafts.map((item) => item.payment_account_id).sort()).toEqual(["visa-1", "visa-2"]);
+  });
+
+  it("renames only the card whose id is stored in the category name", () => {
+    const visa = namedAccount("visa-1", "Visa", -10);
+    const other = namedAccount("mc", "Mastercard", -5);
+    const categories = [payment("pay-visa", visa, false), payment("pay-mc", other, false)];
+    visa.name = "Visa Firmowa";
+    const found = findCreditPaymentCategoryForAccount(categories, visa, "Visa");
+    expect(found?.id).toBe("pay-visa");
+    expect(findCreditPaymentCategoryForAccount(categories, other, "Mastercard")?.id).toBe("pay-mc");
+    const renamed = paymentCategoryStoredName(visa);
+    expect(paymentCategoryVisibleName(renamed)).toBe("Płatność: Visa Firmowa");
+    expect(renamed.includes("visa-1")).toBe(false);
+    expect(paymentAccountMarker(renamed)).toBe("visa-1");
+    expect(findCreditPaymentCategoryForAccount([{ ...categories[0], name: renamed }, categories[1]], visa)?.id).toBe("pay-visa");
+  });
+
+  it("moves reserved money with a transfer from one card to the other", () => {
+    const checking = namedAccount("checking", "Konto", 1000, "checking");
+    const visa = namedAccount("visa", "Visa", -50);
+    const mastercard = namedAccount("mc", "Mastercard", 0);
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [groceries],
+      [alloc("groceries", 50)],
+      [checking, visa, mastercard],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({ amount: -50, date: "2026-09-04", account_id: "mc", category_id: "groceries" }),
+        tx({
+          amount: -50,
+          date: "2026-09-21",
+          account_id: "visa",
+          transfer_id: "between",
+          transfer_account_id: "mc",
+          payee: "Transfer → Mastercard",
+        }),
+        tx({
+          amount: 50,
+          date: "2026-09-21",
+          account_id: "mc",
+          transfer_id: "between",
+          transfer_account_id: "visa",
+          payee: "Transfer ← Visa",
+        }),
+      ]
+    );
+    expect(row(data, "groceries").available).toBe(0);
+    expect(paymentRow(data, "mc").available).toBe(0);
+    expect(paymentRow(data, "visa").available).toBe(50);
+    expect(cardStatus(data, "mc")).toMatchObject({ debt: 0, reserved: 0, unfunded: 0 });
+    expect(cardStatus(data, "visa")).toMatchObject({ debt: 50, reserved: 50, unfunded: 0 });
+    expect(data.readyToAssign).toBe(950);
+    expect(checkBudgetMonthAccounts(data, [checking, visa, mastercard]).matches).toBe(true);
+  });
+
+  it("pays one card from savings without touching the other card", () => {
+    const checking = namedAccount("checking", "Konto", 1000, "checking");
+    const savings = namedAccount("savings", "Skarbonka", 200, "savings");
+    const visa = namedAccount("visa", "Visa", 0);
+    const mastercard = namedAccount("mc", "Mastercard", -30);
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [groceries],
+      [alloc("groceries", 80)],
+      [checking, savings, visa, mastercard],
+      [
+        tx({ amount: 1200, date: "2026-09-01" }),
+        tx({ amount: -40, date: "2026-09-04", account_id: "visa", category_id: "groceries" }),
+        tx({ amount: -30, date: "2026-09-05", account_id: "mc", category_id: "groceries" }),
+        tx({
+          amount: -40,
+          date: "2026-09-18",
+          account_id: "savings",
+          transfer_id: "from-savings",
+          transfer_account_id: "visa",
+          payee: "Transfer → Visa",
+        }),
+        tx({
+          amount: 40,
+          date: "2026-09-18",
+          account_id: "visa",
+          transfer_id: "from-savings",
+          transfer_account_id: "savings",
+          payee: "Transfer ← Skarbonka",
+        }),
+      ]
+    );
+    expect(paymentRow(data, "visa").available).toBe(0);
+    expect(paymentRow(data, "mc").available).toBe(30);
+    expect(cardStatus(data, "visa").debt).toBe(0);
+    expect(cardStatus(data, "mc").debt).toBe(30);
+    expect(data.readyToAssign).toBe(1160);
+    expect(checkBudgetMonthAccounts(data, [checking, savings, visa, mastercard]).matches).toBe(true);
+  });
+
+  it("uses each card's balance at the end of the viewed month", () => {
+    const checking = namedAccount("checking", "Konto", 1000, "checking");
+    const visa = namedAccount("visa", "Visa", -45);
+    const mastercard = namedAccount("mc", "Mastercard", -10);
+    const txs = [
+      tx({ amount: 1000, date: "2026-09-01" }),
+      tx({ amount: -40, date: "2026-09-04", account_id: "visa", category_id: "groceries" }),
+      tx({ amount: -10, date: "2026-09-05", account_id: "mc", category_id: "groceries" }),
+      tx({ amount: -5, date: "2026-10-04", account_id: "visa", category_id: "groceries" }),
+    ];
+    const september = buildBudgetMonthData(2026, 9, [groceries], [alloc("groceries", 0)], [checking, visa, mastercard], txs);
+    expect(cardStatus(september, "visa").debt).toBe(40);
+    expect(cardStatus(september, "mc").debt).toBe(10);
+    expect(row(september, "groceries").activity).toBe(-50);
+    expect(september.readyToAssign).toBe(1000);
+
+    const october = buildBudgetMonthData(2026, 10, [groceries], [alloc("groceries", 0)], [checking, visa, mastercard], txs);
+    expect(cardStatus(october, "visa").debt).toBe(45);
+    expect(cardStatus(october, "mc").debt).toBe(10);
+    expect(row(october, "groceries").activity).toBe(-5);
+    expect(paymentRow(october, "visa").available).toBe(0);
+    expect(paymentRow(october, "mc").available).toBe(0);
+  });
+
+  it("leaves an off-budget card out of the budget and keeps the other card", () => {
+    const checking = namedAccount("checking", "Konto", 1000, "checking");
+    const visa = namedAccount("visa", "Visa", -20);
+    const closed = namedAccount("old", "Stara", -100);
+    closed.on_budget = false;
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [groceries, payment("pay-visa", visa, false), payment("pay-old", closed, false)],
+      [alloc("groceries", 20)],
+      [checking, visa, closed],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({ amount: -20, date: "2026-09-04", account_id: "visa", category_id: "groceries" }),
+        tx({ amount: -100, date: "2026-09-04", account_id: "old", category_id: "groceries" }),
+      ]
+    );
+    expect(data.creditCards?.map((card) => card.accountId)).toEqual(["visa"]);
+    expect(paymentRow(data, "visa").available).toBe(20);
+    expect(data.readyToAssign).toBe(980);
+    expect(checkBudgetMonthAccounts(data, [checking, visa, closed]).matches).toBe(true);
+  });
+
+  it("adds a later card without reusing the first card's category", () => {
+    const visa = namedAccount("visa", "Visa", 0);
+    const later = namedAccount("mc", "Mastercard", 0);
+    const existing = payment("pay-visa", visa, false);
+    const linked = withCreditPaymentCategories([existing, groceries], [visa, later]);
+    const payments = linked.filter((item) => item.group_name === "Karty kredytowe");
+    expect(payments.find((item) => item.id === "pay-visa")?.payment_account_id).toBe("visa");
+    expect(payments.some((item) => item.id === "cc-payment:mc" && item.payment_account_id === "mc")).toBe(true);
   });
 });
