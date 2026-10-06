@@ -101,6 +101,17 @@ NOTIFY pgrst, 'reload schema';
       echo "NOTIFY pgrst, 'reload schema' sent (DDL as supabase_admin when SET ROLE / owner URL is available)."
     fi
 
+    # 015 is skipped once marked applied, and ALTER fails when app postgres is not
+    # the table owner. Always try the column + NOTIFY so a later owner fix is picked up.
+    echo "Ensuring budget_categories.payment_account_id + PostgREST schema reload..."
+    if [ -f /app/scripts/ensure-payment-account-column.sql ]; then
+      if psql_ddl 0 -f /app/scripts/ensure-payment-account-column.sql; then
+        echo "payment_account_id ensure finished (NOTIFY pgrst sent when the script reaches it)."
+      else
+        echo "WARNING: ensure-payment-account-column.sql failed. In the Supabase SQL editor, as supabase_admin, run scripts/ensure-payment-account-column.sql (or supabase/migrations/015_credit_card_payments.sql)."
+      fi
+    fi
+
     # 002/006/009/014 skipped once marked applied. Always ADD scheduled_id as owner.
     echo "Ensuring transactions.scheduled_id + PostgREST schema reload..."
     if [ -f /app/scripts/ensure-scheduled-id.sql ]; then
@@ -123,6 +134,7 @@ NOTIFY pgrst, 'reload schema';
       "transactions.scheduled_id" \
       "transactions.paid_by" \
       "budget_categories.kind" \
+      "budget_categories.payment_account_id" \
       "accounts.on_budget" \
       "goals.priority"
     do
@@ -130,7 +142,11 @@ NOTIFY pgrst, 'reload schema';
       col=${spec##*.}
       present=$(psql "$dburl" -tAc "SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='$table' AND column_name='$col'" 2>/dev/null | tr -d ' ')
       if [ "$present" != "1" ]; then
-        echo "WARNING: $spec is still missing. App postgres is not owner (supabase_admin is). Run scripts/owner-add-transfer-columns.sql / owner-add-scheduled-id.sql as supabase_admin, or set DATABASE_OWNER_URL."
+        if [ "$spec" = "budget_categories.payment_account_id" ]; then
+          echo "WARNING: budget_categories.payment_account_id is still missing. App postgres cannot ALTER budget_categories (owner is supabase_admin). Run scripts/ensure-payment-account-column.sql in the Supabase SQL editor. Assigning to „Płatność” still works without the column."
+        else
+          echo "WARNING: $spec is still missing. App postgres is not owner (supabase_admin is). Run scripts/owner-add-transfer-columns.sql / owner-add-scheduled-id.sql as supabase_admin, or set DATABASE_OWNER_URL."
+        fi
       fi
     done
 

@@ -2,6 +2,7 @@ import {
   isMissingRelationError,
   isScheduledIdSchemaError,
   isSchemaLagError,
+  isSchemaLagWriteError,
   isTransferColumnSchemaError,
   writeErrorMessage,
 } from "./schema";
@@ -180,7 +181,12 @@ export async function insertRowWithSchemaRepair<T>(
   }
 
   const firstMessage = writeErrorMessage(result.error);
-  const repair = await repairSchemaIfLagging(firstMessage);
+  let repair: SchemaRepairResult = { attempted: false, reloaded: false };
+  try {
+    repair = await repairSchemaIfLagging(firstMessage);
+  } catch {
+    repair = { attempted: false, reloaded: false };
+  }
   if (repair.attempted) {
     result = await retryAfterSchemaReload(() => insertOnce(row), repair, options);
     if (!result.error && result.data) {
@@ -189,18 +195,16 @@ export async function insertRowWithSchemaRepair<T>(
   }
 
   const message = writeErrorMessage(result.error) || firstMessage;
-  if (isSchemaLagError(message)) {
-    const toStrip = columnsToStrip(message, [row], optionalColumns, options?.requiredColumns ?? []);
-    const { next, stripped } = stripColumns(row, toStrip);
-    if (stripped.length) {
-      const retry = await insertOnce(next);
-      if (!retry.error && retry.data) {
-        return {
-          data: retry.data,
-          warning: `Zapisano bez kolumn ${stripped.join(", ")} — zredeployuj Coolify, żeby dociągnąć schemat.`,
-        };
-      }
-      return { error: writeErrorMessage(retry.error) || message };
+  if (isSchemaLagError(message) || isSchemaLagWriteError(result.error)) {
+    const stripped = await insertWithoutMissingColumns(
+      (payload) => insertOnce(payload[0] ?? {}),
+      [row],
+      message,
+      optionalColumns,
+      options?.requiredColumns ?? []
+    );
+    if (stripped.handled) {
+      return stripped.result as SchemaWriteResult<T>;
     }
   }
 
@@ -221,7 +225,12 @@ export async function insertRowsWithSchemaRepair<T>(
   }
 
   const firstMessage = writeErrorMessage(result.error);
-  const repair = await repairSchemaIfLagging(firstMessage);
+  let repair: SchemaRepairResult = { attempted: false, reloaded: false };
+  try {
+    repair = await repairSchemaIfLagging(firstMessage);
+  } catch {
+    repair = { attempted: false, reloaded: false };
+  }
   if (repair.attempted) {
     result = await retryAfterSchemaReload(() => insertOnce(rows), repair, options);
     if (!result.error && result.data) {
@@ -230,22 +239,64 @@ export async function insertRowsWithSchemaRepair<T>(
   }
 
   const message = writeErrorMessage(result.error) || firstMessage;
-  if (isSchemaLagError(message)) {
-    const toStrip = columnsToStrip(message, rows, optionalColumns, options?.requiredColumns ?? []);
-    const { next, stripped } = stripColumnsFromRows(rows, toStrip);
-    if (stripped.length) {
-      const retry = await insertOnce(next);
-      if (!retry.error && retry.data) {
-        return {
-          data: retry.data,
-          warning: `Zapisano bez kolumn ${stripped.join(", ")} — zredeployuj Coolify, żeby dociągnąć schemat.`,
-        };
-      }
-      return { error: writeErrorMessage(retry.error) || message };
+  if (isSchemaLagError(message) || isSchemaLagWriteError(result.error)) {
+    const stripped = await insertWithoutMissingColumns(insertOnce, rows, message, optionalColumns, options?.requiredColumns ?? []);
+    if (stripped.handled) {
+      return stripped.result as SchemaWriteResult<T[]>;
     }
   }
 
   return { error: message || "Nie udało się zapisać" };
+}
+
+function schemaRetryWarning(columns: string[]): string {
+  return `Zapisano bez kolumn ${columns.join(", ")} — zredeployuj Coolify, żeby dociągnąć schemat.`;
+}
+
+/**
+ * Drop the missing column and insert again. If PostgREST still reports a schema-cache
+ * miss (it often names only the first unknown column), drop every optional column.
+ */
+async function insertWithoutMissingColumns<T>(
+  insertOnce: (rows: Record<string, unknown>[]) => Promise<{ data: T | null; error: WriteError }>,
+  rows: Record<string, unknown>[],
+  message: string,
+  optionalColumns: readonly string[],
+  requiredColumns: readonly string[]
+): Promise<{ handled: boolean; result: SchemaWriteResult<T> }> {
+  const optional = optionalColumns.filter((column) => !requiredColumns.includes(column));
+  const present = optional.filter((column) => rows.some((row) => column in row));
+  let toStrip = columnsToStrip(message, rows, optionalColumns, requiredColumns);
+  if (!toStrip.length) toStrip = present;
+  if (!toStrip.length) return { handled: false, result: {} };
+
+  let nextRows = stripColumnsFromRows(rows, toStrip).next;
+  let stripped = [...toStrip];
+  let retry = await insertOnce(nextRows);
+  if (!retry.error) {
+    return {
+      handled: true,
+      result: { data: retry.data ?? undefined, warning: schemaRetryWarning(stripped) },
+    };
+  }
+  if (!isSchemaLagWriteError(retry.error) && !isSchemaLagError(writeErrorMessage(retry.error))) {
+    return { handled: true, result: { error: writeErrorMessage(retry.error) || message } };
+  }
+
+  const rest = present.filter((column) => !stripped.includes(column));
+  if (!rest.length) {
+    return { handled: true, result: { error: writeErrorMessage(retry.error) || message } };
+  }
+  nextRows = stripColumnsFromRows(rows, [...stripped, ...rest]).next;
+  stripped = [...stripped, ...rest];
+  retry = await insertOnce(nextRows);
+  if (!retry.error) {
+    return {
+      handled: true,
+      result: { data: retry.data ?? undefined, warning: schemaRetryWarning(stripped) },
+    };
+  }
+  return { handled: true, result: { error: writeErrorMessage(retry.error) || message } };
 }
 
 export function isGoalTypeCheckError(message?: string | null): boolean {

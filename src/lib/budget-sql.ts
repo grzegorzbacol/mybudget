@@ -1032,8 +1032,15 @@ async function withCheckedOutClient<T>(
 }
 
 export function isUndefinedObject(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  return /column .+ does not exist|42703|42P01|relation .+ does not exist/i.test(message);
+  const message =
+    error instanceof Error
+      ? error.message
+      : error && typeof error === "object" && "message" in error
+        ? String((error as { message?: unknown }).message ?? "")
+        : String(error);
+  return /column .+ does not exist|could not find the .+ column|schema cache|PGRST204|42703|42P01|relation .+ does not exist/i.test(
+    message
+  );
 }
 
 export function isFamilyIdTypeError(error: unknown): boolean {

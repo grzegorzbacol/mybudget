@@ -1,8 +1,15 @@
--- Payment envelope for each on-budget credit card.
--- Covered card spending moves here; paying the card is a transfer out of this envelope.
+-- Idempotent repair for the credit-card payment category link.
+-- Safe to re-run. App role `postgres` on Coolify is not table owner
+-- (rolsuper=f; owner is supabase_admin), so boot ALTER fails and 015 is never
+-- marked applied. Paste this into the Supabase SQL editor as supabase_admin.
+--
+-- The app still saves „Płatność: …” without this column and matches it by name.
+-- The column is what ties that category to the card after a rename.
 
--- Schema-qualified so SET ROLE does not hide public via search_path.
-ALTER TABLE public.budget_categories ADD COLUMN IF NOT EXISTS payment_account_id uuid;
+SET ROLE supabase_admin;
+
+ALTER TABLE public.budget_categories
+  ADD COLUMN IF NOT EXISTS payment_account_id uuid;
 
 DO $$
 BEGIN

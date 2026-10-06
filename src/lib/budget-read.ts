@@ -39,7 +39,7 @@ import {
   type SqlHostFailure,
 } from "@/lib/budget-sql";
 import { DEFAULT_CATEGORIES } from "@/lib/default-categories";
-import { isMissingRelationError, isSchemaLagError, missingScheduledTableMessage } from "@/lib/schema";
+import { isMissingRelationError, isSchemaLagError, isSchemaLagWriteError, missingScheduledTableMessage, writeErrorMessage } from "@/lib/schema";
 import { insertRowsWithSchemaRepair } from "@/lib/schema-write";
 import type { Account, BudgetAllocation, BudgetCategory, BudgetMonthData, LedgerTransaction, ScheduledTransaction } from "@/lib/types";
 import type { createClient } from "@/lib/supabase/server";
@@ -133,8 +133,8 @@ export async function fetchFamilyCategories(
       cachedCategorySelect = columns;
       return { data: asBudgetCategories(res.data) };
     }
-    lastError = res.error.message;
-    if (!isSchemaLagError(lastError)) {
+    lastError = writeErrorMessage(res.error) || res.error.message;
+    if (!isSchemaLagWriteError(res.error) && !isSchemaLagError(lastError)) {
       return { data: [], error: lastError };
     }
   }

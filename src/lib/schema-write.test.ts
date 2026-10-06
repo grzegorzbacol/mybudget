@@ -112,6 +112,34 @@ describe("insertRowsWithSchemaRepair", () => {
     expect(attempts).toBe(2);
     expect(result.data).toEqual([{ id: "t1" }]);
   });
+
+  it("strips payment_account_id when the schema cache still rejects that column", async () => {
+    vi.resetModules();
+    vi.doMock("./ensure-schema", () => ({
+      applyEnsureSchema: vi.fn().mockResolvedValue({ ok: true, applied: 4 }),
+    }));
+    const { insertRowsWithSchemaRepair: insert } = await import("./schema-write");
+    const message =
+      "Could not find the 'payment_account_id' column of 'budget_categories' in the schema cache";
+    const batches: Record<string, unknown>[][] = [];
+    const result = await insert(
+      async (rows) => {
+        batches.push(rows.map((row) => ({ ...row })));
+        if (rows.some((row) => "payment_account_id" in row)) {
+          return { data: null, error: { code: "PGRST204", message, details: null, hint: null } };
+        }
+        return { data: rows.map((row) => ({ id: "pay-1", ...row })), error: null };
+      },
+      [{ family_id: "fam", name: "Płatność: Karta Kredytowa", kind: "expense", payment_account_id: "card-1" }],
+      ["kind", "payment_account_id"],
+      { retryDelaysMs: [], sleep: async () => undefined }
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(result.data?.[0]).toMatchObject({ name: "Płatność: Karta Kredytowa" });
+    expect(result.data?.[0]).not.toHaveProperty("payment_account_id");
+    expect(batches.at(-1)?.every((row) => !("payment_account_id" in row))).toBe(true);
+  });
 });
 
 describe("updateRowWithSchemaRepair", () => {
