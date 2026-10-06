@@ -231,19 +231,24 @@ export async function PATCH(
   }
   const data = updated.data;
 
-  if (current.transfer_id && (patch.amount != null || patch.date != null || patch.cleared != null)) {
+  if (current.transfer_id && (patch.amount != null || patch.date != null || patch.cleared != null || patch.account_id)) {
     const pairPatch: Record<string, unknown> = {};
     if (patch.date) pairPatch.date = patch.date;
     if (patch.cleared != null) pairPatch.cleared = patch.cleared;
     if (patch.amount != null) {
       pairPatch.amount = current.amount < 0 ? Math.abs(patch.amount) : -Math.abs(patch.amount);
     }
-    await ctx.supabase
-      .from("transactions")
-      .update(pairPatch)
-      .eq("transfer_id", current.transfer_id)
-      .neq("id", id)
-      .eq("family_id", ctx.family.id);
+    if (patch.account_id && patch.account_id !== current.account_id) {
+      pairPatch.transfer_account_id = patch.account_id;
+    }
+    if (Object.keys(pairPatch).length) {
+      await ctx.supabase
+        .from("transactions")
+        .update(pairPatch)
+        .eq("transfer_id", current.transfer_id)
+        .neq("id", id)
+        .eq("family_id", ctx.family.id);
+    }
   }
 
   if (categorySplits) {

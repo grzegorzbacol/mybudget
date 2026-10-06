@@ -6,6 +6,7 @@ import {
   contributionToSpending,
   isIncomeToReadyToAssign,
 } from "./budget";
+import { budgetMonthFromCore, type FamilyBudgetCore } from "./budget-read";
 import {
   applyCreditCardBudget,
   CREDIT_OVERPAY_MESSAGE,
@@ -377,7 +378,7 @@ describe("credit card budget", () => {
     ).toBe(0);
   });
 
-  it("does not turn a cash advance into Ready to Assign or reserved card money", () => {
+  it("shows a cash advance on the payment row without adding it to Ready to Assign", () => {
     const checking = account("checking", 1100);
     const card = account("cc", -600, "credit");
     const data = buildBudgetMonthData(
@@ -407,8 +408,10 @@ describe("credit card budget", () => {
       ]
     );
     expect(data.incomeThisMonth).toBe(1000);
-    expect(data.readyToAssign).toBe(1000);
-    expect(paymentCategory(data).available).toBe(0);
+    expect(paymentCategory(data).activity).toBe(100);
+    expect(paymentCategory(data).available).toBe(100);
+    expect(data.readyToAssign).toBe(900);
+    expect(data.creditCards?.[0]).toMatchObject({ debt: 600, reserved: 100 });
     expect(checkBudgetMonthAccounts(data, [checking, card]).matches).toBe(true);
   });
 
@@ -440,6 +443,164 @@ describe("credit card budget", () => {
     expect(paymentId).toBeTruthy();
     expect(applied.activityMap.get(paymentId!)?.get("2026-9")).toBe(30);
     expect(applied.uncoveredByAccount).toEqual({});
+  });
+});
+
+describe("one-sided production card transfer", () => {
+  const payment = category("pay", "Płatność: Karta Kredytowa", "Karty kredytowe");
+
+  function bonea(type: Account["type"], onBudget: boolean | null): Account {
+    return {
+      ...account("bonea", 1000, type),
+      name: "BONEA VAT",
+      on_budget: onBudget as unknown as boolean,
+    };
+  }
+
+  function card(balance: number): Account {
+    return { ...account("cc", balance, "credit"), name: "Karta Kredytowa", on_budget: true };
+  }
+
+  function productionRow(amount: number, payee: string): LedgerTransaction {
+    return tx({
+      amount,
+      date: "2026-10-06",
+      account_id: "bonea",
+      category_id: null,
+      transfer_id: "pay-1",
+      transfer_account_id: "cc",
+      payee,
+    });
+  }
+
+  function monthFromRoute(
+    source: Account,
+    credit: Account,
+    legs: LedgerTransaction[],
+    year: number,
+    month: number,
+    categoryName = payment.name
+  ) {
+    const categories = [category("pay", categoryName, "Karty kredytowe")];
+    const accounts = [source, credit];
+    const applied = applyCreditCardBudget({
+      categories,
+      allocations: [],
+      accounts,
+      transactions: legs,
+      activityMap: new Map(),
+      liabilityDelta: 0,
+      trackingInflows: 0,
+      trackingIncludesCardPayments: true,
+      separateCashOutflows: true,
+    });
+    const core: FamilyBudgetCore = {
+      categories: applied.categories,
+      allocations: [],
+      accounts,
+      scheduled: [],
+      activityMap: applied.activityMap,
+      income: applied.income,
+      spending: applied.spending,
+      uncategorized: [],
+      source: "sql",
+      liabilityDelta: 0,
+      trackingInflows: 0,
+      accountFlows: [],
+      liabilityByMonth: [],
+      trackingByMonth: [],
+      trackingIncludesCardPayments: true,
+      creditLines: legs,
+      creditSeparateCashOutflows: true,
+      uncoveredByAccount: applied.uncoveredByAccount,
+    };
+    return budgetMonthFromCore(core, year, month);
+  }
+
+  it.each([
+    ["checking", "checking" as const, true],
+    ["savings", "savings" as const, true],
+    ["off-budget", "investment" as const, false],
+    ["on_budget null", "checking" as const, null],
+  ])("reads a lone %s → card row in October and leaves September alone", (_label, type, onBudget) => {
+    const source = bonea(type, onBudget);
+    const credit = card(-9813.51);
+    const legs = [productionRow(-6699.47, "Transfer → Karta Kredytowa")];
+
+    const september = monthFromRoute(source, credit, legs, 2026, 9);
+    expect(paymentCategory(september).activity).toBe(0);
+    expect(september.creditCards?.[0]).toMatchObject({ debt: 9813.51, reserved: 0 });
+
+    const october = monthFromRoute(source, credit, legs, 2026, 10);
+    expect(paymentCategory(october).activity).toBe(-6699.47);
+    expect(october.creditCards?.[0]).toMatchObject({ debt: 3114.04, reserved: 0 });
+    expect(creditCardRowStatus(october.creditCards![0])).toContain("3114,04");
+  });
+
+  it("does not double-count when both legs exist and the card balance is already reduced", () => {
+    const source = bonea("checking", true);
+    const credit = card(-3114.04);
+    const legs = [
+      productionRow(-6699.47, "Transfer → Karta Kredytowa"),
+      tx({
+        amount: 6699.47,
+        date: "2026-10-06",
+        account_id: "cc",
+        transfer_id: "pay-1",
+        transfer_account_id: "bonea",
+        payee: "Transfer ← BONEA VAT",
+      }),
+    ];
+    const october = monthFromRoute(source, credit, legs, 2026, 10);
+    expect(paymentCategory(october).activity).toBe(-6699.47);
+    expect(october.creditCards?.[0]?.debt).toBe(3114.04);
+  });
+
+  it("increases debt from a lone card → account row", () => {
+    const source = bonea("checking", true);
+    const credit = card(-9813.51);
+    const legs = [productionRow(6699.47, "Transfer ← BONEA VAT")];
+    const october = monthFromRoute(source, credit, legs, 2026, 10);
+    expect(paymentCategory(october).activity).toBe(6699.47);
+    expect(october.creditCards?.[0]?.debt).toBe(16512.98);
+    const both = monthFromRoute(
+      source,
+      card(-16512.98),
+      [
+        ...legs,
+        tx({
+          amount: -6699.47,
+          date: "2026-10-06",
+          account_id: "cc",
+          transfer_id: "pay-1",
+          transfer_account_id: "bonea",
+          payee: "Transfer → BONEA VAT",
+        }),
+      ],
+      2026,
+      10
+    );
+    expect(paymentCategory(both).activity).toBe(6699.47);
+    expect(both.creditCards?.[0]?.debt).toBe(16512.98);
+  });
+
+  it("links a stale hidden card id by the visible name and does not inflate Ready to Assign from an off-budget payment", () => {
+    const ghost = card(0);
+    ghost.id = "deleted-card";
+    const stale = category("pay", paymentCategoryStoredName(ghost), "Karty kredytowe");
+    expect(paymentAccountMarker(stale.name)).toBe("deleted-card");
+    const source = { ...bonea("investment", false), balance: 0 };
+    const checking = account("checking", 1000);
+    const credit = card(-9813.51);
+    const legs = [productionRow(-6699.47, "Transfer → Karta Kredytowa")];
+    const data = buildBudgetMonthData(2026, 10, [stale, category("groceries", "Zakupy")], [], [checking, source, credit], [
+      tx({ amount: 1000, date: "2026-10-01", account_id: "checking" }),
+      ...legs,
+    ]);
+    expect(paymentCategory(data).activity).toBe(-6699.47);
+    expect(data.creditCards?.[0]?.debt).toBe(3114.04);
+    expect(data.readyToAssign).toBe(1000);
+    expect(checkBudgetMonthAccounts(data, [checking, source, credit]).matches).toBe(true);
   });
 });
 

@@ -19,6 +19,7 @@ import {
 } from "@/lib/budget";
 import {
   applyCreditCardBudget,
+  applyUnpairedCreditLegs,
   describeCreditCards,
   isOnBudgetCreditAccount,
   liabilityAfterCreditCards,
@@ -85,20 +86,36 @@ const coreCache = new Map<
   string,
   {
     at: number;
+    epoch: number;
     value?: FamilyBudgetCore;
     inflight?: Promise<FamilyBudgetCore>;
     inflightAllowRest?: RestFallbackPolicy;
   }
 >();
 let cachedCategorySelect: string | null = null;
+/** Bumped on invalidate so an in-flight load cannot write a pre-write core back. */
+const cacheEpoch = new Map<string, number>();
+let globalCacheEpoch = 0;
+
+function currentCacheEpoch(familyId: string): number {
+  return globalCacheEpoch + (cacheEpoch.get(familyId) ?? 0);
+}
 
 export function invalidateFamilyBudgetCache(familyId?: string) {
-  if (familyId) coreCache.delete(familyId);
-  else coreCache.clear();
+  if (familyId) {
+    coreCache.delete(familyId);
+    cacheEpoch.set(familyId, (cacheEpoch.get(familyId) ?? 0) + 1);
+    return;
+  }
+  globalCacheEpoch += 1;
+  cacheEpoch.clear();
+  coreCache.clear();
 }
 
 export function resetFamilyBudgetCache() {
   coreCache.clear();
+  cacheEpoch.clear();
+  globalCacheEpoch = 0;
   cachedCategorySelect = null;
 }
 
@@ -383,35 +400,39 @@ export async function loadFamilyBudgetCore(
 ): Promise<FamilyBudgetCore> {
   const now = Date.now();
   const allowRest = options?.allowRest ?? true;
+  const epoch = currentCacheEpoch(familyId);
   const entry = coreCache.get(familyId);
-  if (entry?.value && now - entry.at < CORE_TTL_MS) {
+  if (entry?.value && entry.epoch === epoch && now - entry.at < CORE_TTL_MS) {
     return entry.value;
   }
   // Only join an in-flight load with the same REST policy. Cashflow (allowRest:
   // "unreachable") must not wait for /api/budget's 20k-row PostgREST fallback
   // unless SQL itself cannot connect.
-  if (entry?.inflight && entry.inflightAllowRest === allowRest) {
+  if (entry?.inflight && entry.epoch === epoch && entry.inflightAllowRest === allowRest) {
     return entry.inflight;
   }
 
   const inflight = loadCoreUncached(supabase, familyId, options).then((value) => {
+    if (currentCacheEpoch(familyId) !== epoch) return value;
     if (allowRest === true || value.categories.length) {
-      coreCache.set(familyId, { at: Date.now(), value });
+      coreCache.set(familyId, { at: Date.now(), value, epoch });
     }
     return value;
   });
+  const sameEpoch = entry?.epoch === epoch;
   coreCache.set(familyId, {
-    at: entry?.at ?? 0,
-    value: entry?.value,
+    at: sameEpoch ? (entry?.at ?? 0) : 0,
+    value: sameEpoch ? entry?.value : undefined,
     inflight,
     inflightAllowRest: allowRest,
+    epoch,
   });
   try {
     return await inflight;
   } finally {
     const current = coreCache.get(familyId);
-    if (current?.inflight === inflight) {
-      coreCache.set(familyId, { at: current.at, value: current.value });
+    if (current?.inflight === inflight && current.epoch === epoch && currentCacheEpoch(familyId) === epoch) {
+      coreCache.set(familyId, { at: current.at, value: current.value, epoch });
     }
   }
 }
@@ -442,9 +463,16 @@ export function budgetMonthFromCore(
   month: number
 ): BudgetMonthData {
   const { start, end } = monthRange(year, month);
-  const accounts = core.accountFlows
+  const rewound = core.accountFlows
     ? accountsAsOfMonth(core.accounts, core.accountFlows, year, month)
     : core.accounts;
+  const accounts = core.creditLines
+    ? applyUnpairedCreditLegs(
+        rewound,
+        core.creditLines.filter((tx) => isOnOrBeforeMonthDate(tx.date, year, month)),
+        core.accounts
+      )
+    : rewound;
   const upcoming = upcomingByCategory(core.scheduled, start, addDays(end, -1));
   const planned = plannedMonthTotals(core.scheduled, year, month, accounts);
 

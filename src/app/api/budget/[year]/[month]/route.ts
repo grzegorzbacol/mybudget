@@ -26,6 +26,7 @@ export async function GET(
     const data = budgetMonthFromCore(core, year, month);
     const body = core.schemaLag ? { ...data, warning: core.schemaLag } : data;
     const res = NextResponse.json(body);
+    res.headers.set("Cache-Control", "private, no-store");
     res.headers.set(
       "Server-Timing",
       `total;dur=${Date.now() - started};desc="${core.source}${core.dialect ? "," + core.dialect : ""}${core.roundTrips != null ? ",rt=" + core.roundTrips : ""}"`

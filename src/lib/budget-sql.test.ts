@@ -255,6 +255,67 @@ describe("snapshot dialect cache", () => {
     expect(getSnapshotPlan()).toEqual({ pred: "uuid", kind: "full", omitPaymentAccountId: true });
   });
 
+  it("loads the card transfer after the safe snapshot when the full snapshot cannot run", async () => {
+    resetBudgetSqlPlans();
+    const query = async (sql: string) => {
+      if (sql.includes("json_build_object")) {
+        if (sql.includes("on_budget")) {
+          throw new Error("column accounts.on_budget does not exist");
+        }
+        expect(sql).not.toContain("creditLines");
+        return {
+          rows: [
+            {
+              payload: {
+                categories: [
+                  { id: "pay", group_name: "Karty kredytowe", name: "Płatność: Karta Kredytowa" },
+                ],
+                accounts: [{ id: "card", name: "Karta Kredytowa", type: "credit", balance: -9813.51 }],
+                allocations: [],
+                activity: [],
+                income: [],
+                spending: [],
+                uncategorized: [],
+              },
+            },
+          ],
+        };
+      }
+      if (sql.includes("-- credit-card ledger")) {
+        expect(sql).toContain("Europe/Warsaw");
+        expect(sql).not.toContain("payment_account_id");
+        expect(sql).not.toContain("on_budget");
+        return {
+          rows: [
+            {
+              account_id: "bonea",
+              amount: -6699.47,
+              date: "2026-10-06",
+              payee: "Transfer → Karta Kredytowa",
+              transfer_id: "pay",
+              transfer_account_id: "card",
+              category_id: null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
+    };
+
+    const payload = await queryFamilyBudgetWithClient("11111111-1111-1111-1111-111111111111", query);
+    expect(getSnapshotPlan()).toEqual({ pred: "uuid", kind: "safe" });
+    expect(payload?.creditLinesLoaded).toBe(true);
+    expect(payload?.creditLines).toEqual([
+      expect.objectContaining({
+        account_id: "bonea",
+        amount: -6699.47,
+        date: "2026-10-06",
+        transfer_account_id: "card",
+        payee: "Transfer → Karta Kredytowa",
+      }),
+    ]);
+  });
+
   it("loads scheduled from an optional query after the snapshot, not inside it", async () => {
     const query = async (sql: string) => {
       if (sql.includes("json_build_object")) {

@@ -1,4 +1,5 @@
 import {
+  applyUnpairedCreditLegs,
   describeCreditCards,
   isCashToCreditPayment,
   liabilityAfterCreditCards,
@@ -1014,8 +1015,12 @@ export function buildBudgetMonthData(
 ): BudgetMonthData {
   const ledger = transactions ?? [];
   const postedAccounts = accounts ?? [];
-  const accountList = accountsAsOfMonth(postedAccounts, accountFlowsFromTransactions(ledger), year, month);
   const through = ledger.filter((tx) => isOnOrBeforeMonthDate(tx.date, year, month));
+  const accountList = applyUnpairedCreditLegs(
+    accountsAsOfMonth(postedAccounts, accountFlowsFromTransactions(ledger), year, month),
+    through,
+    postedAccounts
+  );
   const target = monthIndex(year, month);
   const planAllocations = (allocations ?? []).filter((row) => {
     const y = Number(row.year);
@@ -1051,7 +1056,7 @@ export function buildBudgetMonthData(
       plan.uncovered
     ),
     trackingInflows: trackingAfterCreditCards(
-      transferInflowsFromTracking(through, accountList),
+      money(transferInflowsFromTracking(through, accountList) - plan.externalCardPaymentOutflows),
       plan.cardPaymentOutflows,
       false
     ),
