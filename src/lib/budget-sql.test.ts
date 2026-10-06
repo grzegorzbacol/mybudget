@@ -204,12 +204,55 @@ describe("snapshot dialect cache", () => {
     expect(first?.categories).toHaveLength(1);
     expect(first?.categories[0].group_name).toBe("Żywność");
     expect(getSnapshotPlan()).toEqual({ pred: "uuid", kind: "safe" });
-    expect(kinds.filter((kind) => kind === "full")).toHaveLength(1);
+    expect(kinds.filter((kind) => kind === "full")).toHaveLength(2);
 
     const second = await queryFamilyBudgetWithClient("11111111-1111-1111-1111-111111111111", query);
     expect(second?.categories).toHaveLength(1);
-    expect(kinds.filter((kind) => kind === "full")).toHaveLength(1);
+    expect(kinds.filter((kind) => kind === "full")).toHaveLength(2);
     expect(kinds.filter((kind) => kind === "safe").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps credit-card transfer lines when payment_account_id is missing", async () => {
+    resetBudgetSqlPlans();
+    const query = async (sql: string) => {
+      if (!sql.includes("json_build_object")) return { rows: [] };
+      if (sql.includes("payment_account_id")) {
+        throw new Error("column budget_categories.payment_account_id does not exist");
+      }
+      expect(sql).toContain("'creditLines'");
+      expect(sql).toContain("transfer_account_id");
+      return {
+        rows: [
+          {
+            payload: {
+              categories: [
+                {
+                  id: "pay",
+                  group_name: "Karty kredytowe",
+                  name: "Płatność: Karta Kredytowa",
+                },
+              ],
+              creditLines: [
+                {
+                  account_id: "checking",
+                  amount: -6699.47,
+                  date: "2026-10-06",
+                  transfer_id: "pay",
+                  transfer_account_id: "card",
+                  payee: "Transfer → Karta Kredytowa",
+                },
+              ],
+              accountFlows: [],
+            },
+          },
+        ],
+      };
+    };
+
+    const payload = await queryFamilyBudgetWithClient("11111111-1111-1111-1111-111111111111", query);
+    expect(payload?.creditLinesLoaded).toBe(true);
+    expect(payload?.creditLines).toHaveLength(1);
+    expect(getSnapshotPlan()).toEqual({ pred: "uuid", kind: "full", omitPaymentAccountId: true });
   });
 
   it("loads scheduled from an optional query after the snapshot, not inside it", async () => {

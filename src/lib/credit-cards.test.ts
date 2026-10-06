@@ -154,6 +154,41 @@ describe("credit card budget", () => {
     expect(contributionToSpending(tx({ amount: -50, transfer_id: "pay", account_id: "checking" }), [checking, card])).toBe(0);
   });
 
+  it("shows an October card payment only in October, and rewinds September debt", () => {
+    const checking = account("checking", 1000);
+    checking.name = "MBANK EKONTO";
+    const card = account("cc", -3114.04, "credit");
+    card.name = "Karta Kredytowa";
+    const payment = category("pay", "Płatność: Karta Kredytowa", "Karty kredytowe");
+    const legs = [
+      tx({
+        amount: -6699.47,
+        date: "2026-10-06",
+        account_id: "checking",
+        transfer_id: "pay",
+        transfer_account_id: "cc",
+        payee: "Transfer → Karta Kredytowa",
+      }),
+      tx({
+        amount: 6699.47,
+        date: "2026-10-06",
+        account_id: "cc",
+        transfer_id: "pay",
+        transfer_account_id: "checking",
+        payee: "Transfer ← MBANK EKONTO",
+      }),
+    ];
+    const september = buildBudgetMonthData(2026, 9, [payment], [], [checking, card], legs);
+    expect(paymentCategory(september).activity).toBe(0);
+    expect(september.creditCards?.[0]).toMatchObject({ debt: 9813.51, reserved: 0 });
+    expect(creditCardRowStatus(september.creditCards![0])).toContain("9813,51");
+
+    const october = buildBudgetMonthData(2026, 10, [payment], [], [checking, card], legs);
+    expect(paymentCategory(october).activity).toBe(-6699.47);
+    expect(october.creditCards?.[0]).toMatchObject({ debt: 3114.04, reserved: 0 });
+    expect(checkBudgetMonthAccounts(october, [checking, card]).matches).toBe(true);
+  });
+
   it("does not treat a transfer between on-budget cash accounts as income or a card payment", () => {
     const checking = account("checking", 900);
     const savings = account("savings", 100, "savings");
