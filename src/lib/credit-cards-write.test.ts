@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { saveCategoryAllocated } from "./allocation-write";
-import { ensureCreditPaymentCategoriesResult, resolveCreditPaymentCategoryId } from "./credit-cards-write";
+import { paymentAccountMarker, paymentCategoryVisibleName } from "./credit-cards";
+import { ensureCreditPaymentCategoriesResult, removeCreditPaymentCategory, resolveCreditPaymentCategoryId, syncCreditPaymentCategoryName } from "./credit-cards-write";
 import { allocateSchema } from "./validators";
 import type { Account, BudgetCategory } from "./types";
 
@@ -375,5 +376,147 @@ describe("assigning to a credit-card payment category", () => {
     expect(resolved.error).toContain("Płatność: Karta Kredytowa");
     expect(resolved.error).toContain("row-level security");
     expect(resolved.error).not.toBe("Nie udało się zaktualizować przydziału");
+  });
+});
+
+describe("several cards without payment_account_id", () => {
+  const columnError = {
+    code: "PGRST204",
+    message: PAYMENT_COLUMN_CACHE_ERROR,
+    details: null,
+    hint: null,
+  };
+
+  function card(id: string, name: string): Account {
+    return {
+      id,
+      family_id: familyId,
+      name,
+      type: "credit",
+      balance: -10,
+      currency: "PLN",
+      owner_user_id: null,
+      created_at: "",
+      on_budget: true,
+    };
+  }
+
+  function createMulti(missingColumn: boolean) {
+    const categories: Record<string, unknown>[] = [];
+    let seq = 1;
+    const client = {
+      categories,
+      from(table: string) {
+        const filters: Array<{ col: string; val: unknown }> = [];
+        let action: "select" | "insert" | "update" | "delete" = "select";
+        let payload: Record<string, unknown> = {};
+        let columns = "*";
+
+        const matches = (row: Record<string, unknown>) =>
+          filters.every((filter) => row[filter.col] === filter.val);
+
+        const run = async () => {
+          if (table !== "budget_categories") return { data: [], error: null };
+          const mentionsColumn =
+            columns.includes("payment_account_id") ||
+            filters.some((filter) => filter.col === "payment_account_id") ||
+            Object.prototype.hasOwnProperty.call(payload, "payment_account_id");
+          if (missingColumn && mentionsColumn && action !== "select") {
+            return { data: null, error: columnError };
+          }
+          if (missingColumn && action === "select" && columns.includes("payment_account_id")) {
+            return { data: null, error: columnError };
+          }
+          if (action === "insert") {
+            const item = {
+              id: `cat-${seq++}`,
+              ...payload,
+            };
+            categories.push(item);
+            return { data: item, error: null };
+          }
+          if (action === "update") {
+            const matched = categories.filter(matches);
+            for (const row of matched) Object.assign(row, payload);
+            return { data: matched, error: null };
+          }
+          if (action === "delete") {
+            const matched = categories.filter(matches);
+            for (const row of matched) {
+              const index = categories.indexOf(row);
+              if (index >= 0) categories.splice(index, 1);
+            }
+            return { data: matched, error: null };
+          }
+          return { data: categories.filter(matches), error: null };
+        };
+
+        const api = {
+          select: (cols?: string) => {
+            columns = cols ?? "*";
+            return api;
+          },
+          insert: (row: Record<string, unknown>) => {
+            action = "insert";
+            payload = row;
+            return api;
+          },
+          update: (row: Record<string, unknown>) => {
+            action = "update";
+            payload = row;
+            return api;
+          },
+          delete: () => {
+            action = "delete";
+            payload = {};
+            return api;
+          },
+          eq: (col: string, val: unknown) => {
+            filters.push({ col, val });
+            return api;
+          },
+          then(resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) {
+            return run().then(resolve, reject);
+          },
+        };
+        return api;
+      },
+    };
+    return client;
+  }
+
+  it.each([
+    ["without the column", true],
+    ["with the column", false],
+  ])("creates, renames and deletes one card %s without touching the other", async (_label, missingColumn) => {
+    const db = createMulti(missingColumn);
+    const visa = card("visa-1", "Visa");
+    const mastercard = card("mc-1", "Mastercard");
+    const ensured = await ensureCreditPaymentCategoriesResult(db, familyId, [], [visa, mastercard]);
+    expect(ensured.error).toBeUndefined();
+    expect(db.categories).toHaveLength(2);
+    expect(db.categories.map((row) => String(row.name))).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("Płatność: Visa"),
+        expect.stringContaining("Płatność: Mastercard"),
+      ])
+    );
+    if (missingColumn) {
+      expect(db.categories.every((row) => !("payment_account_id" in row))).toBe(true);
+      expect(db.categories.every((row) => String(row.name).includes("\u2060"))).toBe(true);
+    }
+
+    visa.name = "Visa Firmowa";
+    await syncCreditPaymentCategoryName(db, familyId, visa, "Visa");
+    const names = db.categories.map((row) => String(row.name));
+    const visaName = names.find((name) => paymentCategoryVisibleName(name) === "Płatność: Visa Firmowa");
+    const mcName = names.find((name) => paymentCategoryVisibleName(name) === "Płatność: Mastercard");
+    expect(paymentAccountMarker(visaName)).toBe("visa-1");
+    expect(paymentAccountMarker(mcName)).toBe("mc-1");
+    expect(names.every((name) => !name.includes("visa-1") && !name.includes("mc-1"))).toBe(true);
+
+    await removeCreditPaymentCategory(db, familyId, mastercard);
+    expect(db.categories).toHaveLength(1);
+    expect(String(db.categories[0].name)).toContain("Visa Firmowa");
   });
 });

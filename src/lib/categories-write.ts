@@ -1,5 +1,6 @@
 /** Server-only envelope writes. Do not import from client components — this pulls in `pg`. */
 import { updateRowWithSchemaRepair } from "@/lib/schema-write";
+import { attachPaymentAccountMarker, paymentAccountMarker, paymentCategoryVisibleName } from "@/lib/credit-cards";
 import {
   buildCategoryPatch,
   isCategoryId,
@@ -43,6 +44,10 @@ export async function updateCategoryRow(
   }
 
   const payload: Record<string, unknown> = { ...patch };
+  if (typeof payload.name === "string") {
+    const marker = paymentAccountMarker(current.name);
+    if (marker) payload.name = attachPaymentAccountMarker(String(payload.name), marker);
+  }
   if (patch.group_name && patch.group_name !== current.group_name && patch.sort_order === undefined) {
     const siblings = await supabase
       .from("budget_categories")
@@ -76,5 +81,6 @@ export async function updateCategoryRow(
     return { ok: false, status: 500, error: updated.error ?? "Nie udało się zapisać koperty" };
   }
 
-  return { ok: true, category: updated.data as BudgetCategory };
+  const saved = updated.data as BudgetCategory;
+  return { ok: true, category: { ...saved, name: paymentCategoryVisibleName(saved.name) } };
 }

@@ -3,8 +3,9 @@
 -- (rolsuper=f; owner is supabase_admin), so boot ALTER fails and 015 is never
 -- marked applied. Paste this into the Supabase SQL editor as supabase_admin.
 --
--- The app still saves „Płatność: …” without this column and matches it by name.
--- The column is what ties that category to the card after a rename.
+-- The app works without this column. Each card's id is stored in the category
+-- name after U+2060 (invisible). Do not match on the raw name: that suffix is
+-- not part of the visible label, and two cards can share one visible name.
 
 SET ROLE supabase_admin;
 
@@ -29,7 +30,17 @@ WHERE c.payment_account_id IS NULL
   AND c.family_id = a.family_id
   AND a.type = 'credit'
   AND c.group_name = 'Karty kredytowe'
-  AND c.name = 'Płatność: ' || a.name;
+  AND split_part(c.name, chr(8288), 1) = 'Płatność: ' || a.name
+  AND (
+    SELECT count(*) FROM public.accounts a2
+    WHERE a2.family_id = a.family_id AND a2.type = 'credit' AND a2.name = a.name
+  ) = 1
+  AND (
+    SELECT count(*) FROM public.budget_categories c2
+    WHERE c2.family_id = c.family_id
+      AND c2.group_name = 'Karty kredytowe'
+      AND split_part(c2.name, chr(8288), 1) = 'Płatność: ' || a.name
+  ) = 1;
 
 INSERT INTO public.budget_categories (family_id, group_name, name, icon, color, sort_order, kind, payment_account_id)
 SELECT a.family_id, 'Karty kredytowe', 'Płatność: ' || a.name, '💳', '#0f766e', 9000, 'expense', a.id
@@ -41,7 +52,10 @@ WHERE a.type = 'credit'
     WHERE c.family_id = a.family_id
       AND (
         c.payment_account_id = a.id
-        OR (c.group_name = 'Karty kredytowe' AND c.name = 'Płatność: ' || a.name)
+        OR (
+          c.group_name = 'Karty kredytowe'
+          AND split_part(c.name, chr(8288), 1) = 'Płatność: ' || a.name
+        )
       )
   );
 

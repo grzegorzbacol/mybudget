@@ -89,18 +89,267 @@ export function isOnBudgetCreditAccount(account: Pick<Account, "type" | "on_budg
   return Boolean(account && account.type === "credit" && isOnBudget(account));
 }
 
-/** Match a stored payment envelope to its card, even before payment_account_id is selected. */
+/**
+ * Invisible separator between the visible label and the card id.
+ * `payment_account_id` may never exist (app role cannot ALTER). The id lives in
+ * `name`, which the app can update in the same request as a card rename.
+ */
+export const PAYMENT_ACCOUNT_MARK = "\u2060";
+
+function encodePaymentToken(value: string): string {
+  let encoded = "";
+  for (const char of value) {
+    const code = char.charCodeAt(0) & 0xff;
+    for (let bit = 7; bit >= 0; bit -= 1) {
+      encoded += (code >> bit) & 1 ? "\u200c" : "\u200b";
+    }
+  }
+  return encoded;
+}
+
+function decodePaymentToken(encoded: string): string | null {
+  const bits: number[] = [];
+  for (const char of encoded) {
+    if (char === "\u200c") bits.push(1);
+    else if (char === "\u200b") bits.push(0);
+    else if (char.trim()) return null;
+  }
+  if (!bits.length || bits.length % 8 !== 0) return null;
+  let decoded = "";
+  for (let index = 0; index < bits.length; index += 8) {
+    let code = 0;
+    for (let bit = 0; bit < 8; bit += 1) code = (code << 1) | bits[index + bit];
+    if (!code) return null;
+    decoded += String.fromCharCode(code);
+  }
+  return decoded;
+}
+
+export function paymentCategoryVisibleName(name?: string | null): string {
+  const raw = String(name ?? "");
+  const cut = raw.split(PAYMENT_ACCOUNT_MARK)[0] ?? "";
+  return cut.replace(/\s+/g, " ").trim();
+}
+
+export function paymentAccountMarker(name?: string | null): string | null {
+  const raw = String(name ?? "");
+  const index = raw.indexOf(PAYMENT_ACCOUNT_MARK);
+  if (index < 0) return null;
+  return decodePaymentToken(raw.slice(index + PAYMENT_ACCOUNT_MARK.length));
+}
+
+/** Keep a card id on a category name the user can edit, without showing the id. */
+export function attachPaymentAccountMarker(name: string, accountId: string): string {
+  const visible = paymentCategoryVisibleName(name);
+  const id = String(accountId ?? "").trim();
+  return id ? `${visible}${PAYMENT_ACCOUNT_MARK}${encodePaymentToken(id)}` : visible;
+}
+
+/** Persisted label. The visible part is `Płatność: {card name}`; the mark hides the card id. */
+export function paymentCategoryStoredName(account: Pick<Account, "id" | "name">): string {
+  const visible = `Płatność: ${String(account.name ?? "").trim()}`.replace(/\s+/g, " ").trim();
+  return attachPaymentAccountMarker(visible, account.id);
+}
+
+export function creditAccountDisplayName(
+  account: Pick<Account, "id" | "name" | "type" | "on_budget">,
+  accounts: Array<Pick<Account, "id" | "name" | "type" | "on_budget">>
+): string {
+  const name = String(account.name ?? "").trim().replace(/\s+/g, " ");
+  const twins = accounts.filter(
+    (row) =>
+      row.type === "credit" &&
+      isOnBudget(row) === isOnBudget(account) &&
+      String(row.name ?? "").trim().replace(/\s+/g, " ") === name
+  );
+  if (twins.length <= 1) return name;
+  const short = normalizeBudgetId(account.id).replace(/-/g, "").slice(-4);
+  return short ? `${name} · ${short}` : name;
+}
+
+function creditAccounts(accounts: Account[]): Account[] {
+  return (accounts ?? []).filter((account) => account?.type === "credit" && account.id);
+}
+
+function paymentNameKey(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLocaleLowerCase("pl-PL");
+}
+
+function categoryPaymentLabel(category: Pick<BudgetCategory, "name" | "group_name"> & { payment_account_id?: string | null }): string | null {
+  if (String(category.group_name ?? "") !== CREDIT_PAYMENT_GROUP && !category.payment_account_id && !paymentAccountMarker(category.name)) {
+    return null;
+  }
+  const visible = paymentCategoryVisibleName(category.name);
+  const match = /^\s*Płatność:\s*(.+)$/i.exec(visible);
+  if (!match) return null;
+  return match[1].trim().replace(/\s+/g, " ");
+}
+
+export type CreditPaymentLinkIndex = {
+  categories: BudgetCategory[];
+  /** Real rows only. Drafts are omitted so a missing category can still be inserted. */
+  storedByAccount: Map<string, BudgetCategory>;
+  byAccount: Map<string, BudgetCategory>;
+};
+
+/**
+ * One payment category per card. Explicit `payment_account_id`, then the id
+ * stored in the name, then a unique `Płatność: {name}` match. Identical names
+ * without an id are left unlinked so two cards cannot share one envelope.
+ */
+export function assignCreditPaymentLinks(categories: BudgetCategory[], accounts: Account[]): CreditPaymentLinkIndex {
+  const credits = creditAccounts(accounts);
+  const byNormId = new Map(credits.map((account) => [normalizeBudgetId(account.id), account]));
+  const claimedAccounts = new Set<string>();
+  const claimedCategories = new Set<string>();
+  const link = new Map<string, string>();
+  const stored = (categories ?? []).filter((category) => category && !isSyntheticPaymentCategoryId(category.id));
+
+  const claim = (category: BudgetCategory, accountId: string) => {
+    const categoryId = normalizeBudgetId(category.id);
+    const normalizedAccountId = normalizeBudgetId(accountId);
+    if (!categoryId || !normalizedAccountId) return;
+    if (claimedCategories.has(categoryId) || claimedAccounts.has(normalizedAccountId)) return;
+    if (!byNormId.has(normalizedAccountId)) return;
+    claimedCategories.add(categoryId);
+    claimedAccounts.add(normalizedAccountId);
+    link.set(categoryId, normalizedAccountId);
+  };
+
+  for (const category of stored) {
+    const explicit = normalizeBudgetId(category.payment_account_id);
+    if (explicit && byNormId.has(explicit)) claim(category, explicit);
+  }
+  for (const category of stored) {
+    const marker = paymentAccountMarker(category.name);
+    if (!marker) continue;
+    const normalized = normalizeBudgetId(marker);
+    if (byNormId.has(normalized)) claim(category, normalized);
+  }
+
+  const accountsByName = new Map<string, Account[]>();
+  for (const account of credits) {
+    const key = paymentNameKey(account.name);
+    const list = accountsByName.get(key) ?? [];
+    list.push(account);
+    accountsByName.set(key, list);
+  }
+  const categoriesByName = new Map<string, BudgetCategory[]>();
+  for (const category of stored) {
+    if (claimedCategories.has(normalizeBudgetId(category.id))) continue;
+    if (paymentAccountMarker(category.name)) continue;
+    const explicit = normalizeBudgetId(category.payment_account_id);
+    if (explicit && !byNormId.has(explicit)) continue;
+    const label = categoryPaymentLabel(category);
+    if (!label) continue;
+    const key = paymentNameKey(label);
+    const list = categoriesByName.get(key) ?? [];
+    list.push(category);
+    categoriesByName.set(key, list);
+  }
+  for (const [key, rows] of Array.from(categoriesByName.entries())) {
+    const freeAccounts = (accountsByName.get(key) ?? []).filter(
+      (account) => !claimedAccounts.has(normalizeBudgetId(account.id))
+    );
+    if (rows.length === 1 && freeAccounts.length === 1) claim(rows[0], freeAccounts[0].id);
+  }
+
+  const stamped = stored.map((category) => {
+    const accountId = link.get(normalizeBudgetId(category.id));
+    const account = accountId ? byNormId.get(accountId) : undefined;
+    const visible = paymentCategoryVisibleName(category.name) || category.name;
+    if (!account) {
+      const next = { ...category, name: visible };
+      if (category.payment_account_id && claimedAccounts.has(normalizeBudgetId(category.payment_account_id))) {
+        delete next.payment_account_id;
+      }
+      return next;
+    }
+    return {
+      ...category,
+      name: `Płatność: ${creditAccountDisplayName(account, credits)}`,
+      payment_account_id: account.id,
+    };
+  });
+
+  const storedByAccount = new Map<string, BudgetCategory>();
+  const byAccount = new Map<string, BudgetCategory>();
+  for (const category of stamped) {
+    const accountId = link.get(normalizeBudgetId(category.id));
+    if (!accountId) continue;
+    storedByAccount.set(accountId, category);
+    byAccount.set(accountId, category);
+  }
+
+  const extras: BudgetCategory[] = [];
+  for (const account of accounts ?? []) {
+    if (!isOnBudgetCreditAccount(account)) continue;
+    const accountId = normalizeBudgetId(account.id);
+    if (!accountId || byAccount.has(accountId)) continue;
+    const draft = creditPaymentCategoryDraft(account);
+    draft.name = `Płatność: ${creditAccountDisplayName(account, credits)}`;
+    extras.push(draft);
+    byAccount.set(accountId, draft);
+  }
+
+  return {
+    categories: extras.length ? [...stamped, ...extras] : stamped,
+    storedByAccount,
+    byAccount,
+  };
+}
+
+/** Match one stored envelope. Ambiguous name matches return null. */
 export function linkedPaymentAccountId(
   category: Pick<BudgetCategory, "name" | "group_name"> & { payment_account_id?: string | null },
   accounts: Account[]
 ): string | null {
-  if (category.payment_account_id) return category.payment_account_id;
-  if (String(category.group_name ?? "") !== CREDIT_PAYMENT_GROUP) return null;
-  const match = /^\s*Płatność:\s*(.+)$/i.exec(String(category.name ?? ""));
-  if (!match) return null;
-  const name = match[1].trim();
-  const account = accounts.find((row) => row.type === "credit" && row.name === name);
-  return account?.id ?? null;
+  const credits = creditAccounts(accounts);
+  const byNormId = new Map(credits.map((account) => [normalizeBudgetId(account.id), account]));
+  const explicit = normalizeBudgetId(category.payment_account_id);
+  if (explicit && byNormId.has(explicit)) return byNormId.get(explicit)!.id;
+  const marker = paymentAccountMarker(category.name);
+  if (marker) {
+    const normalized = normalizeBudgetId(marker);
+    return byNormId.get(normalized)?.id ?? null;
+  }
+  const label = categoryPaymentLabel(category);
+  if (!label) return null;
+  const matches = credits.filter((account) => paymentNameKey(account.name) === paymentNameKey(label));
+  return matches.length === 1 ? matches[0].id : null;
+}
+
+/**
+ * Category to rename when the card's name changes and `payment_account_id` cannot be filtered.
+ * Prefers the id hidden in the name, then a unique previous label. Never guesses between twins.
+ */
+export function findCreditPaymentCategoryForAccount(
+  categories: BudgetCategory[],
+  account: Pick<Account, "id" | "name">,
+  previousName?: string | null
+): BudgetCategory | undefined {
+  const accountId = normalizeBudgetId(account.id);
+  if (!accountId) return undefined;
+  const stored = (categories ?? []).filter((category) => category && !isSyntheticPaymentCategoryId(category.id));
+  const byId = stored.find((category) => normalizeBudgetId(category.payment_account_id) === accountId);
+  if (byId) return byId;
+  const byMarker = stored.find((category) => normalizeBudgetId(paymentAccountMarker(category.name) ?? "") === accountId);
+  if (byMarker) return byMarker;
+
+  const uniqueByLabel = (label: string | null | undefined) => {
+    const key = paymentNameKey(String(label ?? ""));
+    if (!key) return undefined;
+    const rows = stored.filter((category) => {
+      if (paymentAccountMarker(category.name)) return false;
+      const explicit = normalizeBudgetId(category.payment_account_id);
+      if (explicit && explicit !== accountId) return false;
+      const categoryLabel = categoryPaymentLabel(category);
+      return categoryLabel != null && paymentNameKey(categoryLabel) === key;
+    });
+    return rows.length === 1 ? rows[0] : undefined;
+  };
+
+  return uniqueByLabel(previousName) ?? uniqueByLabel(account.name);
 }
 
 /** Stored payment category for a card. Draft ids are not rows in `budget_categories`. */
@@ -111,10 +360,7 @@ export function storedCreditPaymentCategory(
 ): BudgetCategory | undefined {
   const accountId = normalizeBudgetId(account.id);
   if (!accountId) return undefined;
-  return categories.find((category) => {
-    if (isSyntheticPaymentCategoryId(category.id)) return false;
-    return normalizeBudgetId(linkedPaymentAccountId(category, accounts) ?? "") === accountId;
-  });
+  return assignCreditPaymentLinks(categories, accounts).storedByAccount.get(accountId);
 }
 
 export function creditPaymentCategoryDraft(account: Account): BudgetCategory {
@@ -132,24 +378,7 @@ export function creditPaymentCategoryDraft(account: Account): BudgetCategory {
 }
 
 export function withCreditPaymentCategories(categories: BudgetCategory[], accounts: Account[]): BudgetCategory[] {
-  const stamped = categories.map((category) => {
-    const linked = linkedPaymentAccountId(category, accounts);
-    if (!linked || category.payment_account_id) return category;
-    return { ...category, payment_account_id: linked };
-  });
-  const linked = new Set(
-    stamped
-      .map((category) => linkedPaymentAccountId(category, accounts))
-      .filter((id): id is string => Boolean(id))
-      .map((id) => normalizeBudgetId(id))
-  );
-  const extra: BudgetCategory[] = [];
-  for (const account of accounts) {
-    if (!isOnBudgetCreditAccount(account) || linked.has(normalizeBudgetId(account.id))) continue;
-    extra.push(creditPaymentCategoryDraft(account));
-    linked.add(normalizeBudgetId(account.id));
-  }
-  return extra.length ? [...stamped, ...extra] : stamped;
+  return assignCreditPaymentLinks(categories, accounts).categories;
 }
 
 export function transferPairs(transactions: LedgerTransaction[]) {
@@ -235,6 +464,49 @@ export function creditCardPaymentEvents(transactions: LedgerTransaction[], accou
   return events;
 }
 
+export interface CardToCardTransfer {
+  fromId: string;
+  toId: string;
+  amount: number;
+  year: number;
+  month: number;
+}
+
+/** Balance transfer: debt leaves `toId` and lands on `fromId`. Counted once per pair. */
+export function creditToCreditTransferEvents(
+  transactions: LedgerTransaction[],
+  accounts: Account[]
+): CardToCardTransfer[] {
+  const pairs = transferPairs(transactions);
+  const byId = accountMap(accounts);
+  const seen = new Set<string>();
+  const events: CardToCardTransfer[] = [];
+  for (const tx of transactions) {
+    if (!isTransferTx(tx) || Number(tx.amount) >= 0) continue;
+    const source = byId.get(normalizeBudgetId(tx.account_id));
+    if (!isOnBudgetCreditAccount(source)) continue;
+    const destId = transferCounterpartyId(tx, pairs);
+    if (!destId) continue;
+    const dest = byId.get(normalizeBudgetId(destId));
+    if (!isOnBudgetCreditAccount(dest)) continue;
+    const amount = Math.abs(Number(tx.amount));
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    const ym = parseYearMonthFromDate(tx.date);
+    if (!ym || !isPlausibleBudgetYearMonth(ym.year, ym.month)) continue;
+    const key = tx.transfer_id ? `cc:${tx.transfer_id}` : `cc:${tx.id ?? `${tx.account_id}:${tx.date}:${tx.amount}`}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    events.push({
+      fromId: source!.id,
+      toId: dest!.id,
+      amount: money(amount),
+      year: ym.year,
+      month: ym.month,
+    });
+  }
+  return events;
+}
+
 /**
  * Sum of non-transfer, non-opening activity on on-budget credit cards.
  * This is the slice of liabilityDelta that card envelopes replace.
@@ -304,12 +576,7 @@ export function planCreditCardLedger(input: {
   if (!cards.length) return empty;
 
   const byId = accountMap(accounts);
-  const paymentCategoryByAccount = new Map<string, BudgetCategory>();
-  for (const category of categories) {
-    const linked = linkedPaymentAccountId(category, accounts);
-    if (!linked) continue;
-    paymentCategoryByAccount.set(normalizeBudgetId(linked), category);
-  }
+  const paymentCategoryByAccount = assignCreditPaymentLinks(categories, accounts).byAccount;
 
   const spendingIds = new Set(
     categories.filter((category) => isEnvelopeCategory(category) && !isCreditPaymentCategory(category)).map((category) => normalizeBudgetId(category.id))
@@ -468,6 +735,10 @@ export function planCreditCardLedger(input: {
   for (const event of creditCardPaymentEvents(transactions, accounts)) {
     addPayment(event.cardId, event.year, event.month, -event.amount);
   }
+  for (const move of creditToCreditTransferEvents(transactions, accounts)) {
+    addPayment(move.fromId, move.year, move.month, move.amount);
+    addPayment(move.toId, move.year, move.month, -move.amount);
+  }
 
   const pairs = transferPairs(transactions);
   const cardPaymentOutflows = money(
@@ -537,18 +808,17 @@ export function describeCreditCards(
   const rows = (data.groups ?? []).flatMap((group) => group.categories ?? []);
   const byCategory = new Map(rows.map((row) => [normalizeBudgetId(row.category.id), row]));
   const statuses: CreditCardBudgetStatus[] = [];
+  const links = assignCreditPaymentLinks(categories, accounts);
   for (const account of accounts) {
     if (!isOnBudgetCreditAccount(account)) continue;
-    const category =
-      categories.find((row) => normalizeBudgetId(linkedPaymentAccountId(row, accounts) ?? "") === normalizeBudgetId(account.id)) ??
-      null;
+    const category = links.byAccount.get(normalizeBudgetId(account.id)) ?? null;
     const row: BudgetCategoryRow | undefined = category ? byCategory.get(normalizeBudgetId(category.id)) : undefined;
     const debt = money(Math.max(0, -signedAccountBalance(account)));
     const reserved = money(Math.max(0, Number(row?.available) || 0));
     const overspent = money(Math.max(0, uncoveredByAccount[normalizeBudgetId(account.id)] ?? 0));
     statuses.push({
       accountId: account.id,
-      accountName: account.name,
+      accountName: creditAccountDisplayName(account, accounts),
       categoryId: category?.id ?? "",
       debt,
       reserved,
