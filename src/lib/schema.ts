@@ -19,7 +19,16 @@ export function writeErrorMessage(error?: WriteErrorLike): string {
 
 export function isSchemaLagError(message?: string | null): boolean {
   if (!message) return false;
-  return /column .+ does not exist|could not find the '.+' column|schema cache|PGRST204/i.test(message);
+  return /column .+ does not exist|could not find the .+ column|schema cache|PGRST204|42703/i.test(message);
+}
+
+/** PostgREST PGRST204 / Postgres 42703, including when the text is only in details or code. */
+export function isSchemaLagWriteError(error: unknown): boolean {
+  if (typeof error === "string") return isSchemaLagError(error);
+  if (!error || typeof error !== "object") return false;
+  const code = (error as { code?: unknown }).code;
+  if (typeof code === "string" && /^(PGRST204|42703)$/i.test(code)) return true;
+  return isSchemaLagError(writeErrorMessage(error as WriteErrorLike));
 }
 
 /** Live transfer toast: Could not find the 'transfer_id'/'transfer_account_id' column of 'transactions'. */
@@ -153,28 +162,41 @@ function quoteIdent(ident: string): string | null {
  * (INSERT/UPDATE do not require ownership). Never throws.
  */
 export async function assumeTransactionsTableOwner(query: SqlQueryable): Promise<void> {
-  try {
-    const ownerResult = await query.query(
-      `SELECT tableowner FROM pg_tables
-       WHERE schemaname = 'public' AND tablename = 'transactions'
-       LIMIT 1`
-    );
-    const tableOwner =
-      typeof ownerResult.rows[0]?.tableowner === "string"
-        ? ownerResult.rows[0].tableowner
-        : undefined;
-    for (const role of ddlOwnerRoleCandidates(tableOwner)) {
-      const ident = quoteIdent(role);
-      if (!ident) continue;
-      try {
-        await query.query(`SET ROLE ${ident}`);
-        return;
-      } catch {
-        /* permission denied to set role — stay as current user */
+  // budget_categories is altered by the same ensure-schema pass as transactions.
+  // Look up both owners: a successful SET ROLE to only the transactions owner
+  // still cannot ADD payment_account_id when that table has a different owner.
+  const tables = ["budget_categories", "transactions"] as const;
+  const roles: string[] = [];
+  for (const table of tables) {
+    try {
+      const ownerResult = await query.query(
+        `SELECT tableowner FROM pg_tables
+         WHERE schemaname = 'public' AND tablename = '${table}'
+         LIMIT 1`
+      );
+      const tableOwner =
+        typeof ownerResult.rows[0]?.tableowner === "string"
+          ? ownerResult.rows[0].tableowner
+          : undefined;
+      for (const role of ddlOwnerRoleCandidates(tableOwner)) {
+        if (!roles.includes(role)) roles.push(role);
       }
+    } catch {
+      /* this catalog lookup failed — try the other table */
     }
-  } catch {
-    /* catalog lookup failed — stay as current user */
+  }
+  if (!roles.length) {
+    for (const role of ddlOwnerRoleCandidates(undefined)) roles.push(role);
+  }
+  for (const role of roles) {
+    const ident = quoteIdent(role);
+    if (!ident) continue;
+    try {
+      await query.query(`SET ROLE ${ident}`);
+      return;
+    } catch {
+      /* permission denied to set role — stay as current user */
+    }
   }
 }
 
@@ -478,38 +500,40 @@ EXCEPTION
   WHEN insufficient_privilege THEN NULL;
   WHEN others THEN NULL;
 END $$`,
-  `ALTER TABLE budget_categories ADD COLUMN IF NOT EXISTS payment_account_id uuid`,
+  `ALTER TABLE public.budget_categories ADD COLUMN IF NOT EXISTS payment_account_id uuid`,
   `DO $$
 BEGIN
-  ALTER TABLE budget_categories
+  ALTER TABLE public.budget_categories
     ADD CONSTRAINT budget_categories_payment_account_id_fkey
-    FOREIGN KEY (payment_account_id) REFERENCES accounts(id) ON DELETE CASCADE;
+    FOREIGN KEY (payment_account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 EXCEPTION
   WHEN duplicate_object THEN NULL;
+  WHEN undefined_column THEN NULL;
+  WHEN insufficient_privilege THEN NULL;
 END $$`,
-  `UPDATE budget_categories c
+  `UPDATE public.budget_categories c
 SET payment_account_id = a.id
-FROM accounts a
+FROM public.accounts a
 WHERE c.payment_account_id IS NULL
   AND c.family_id = a.family_id
   AND a.type = 'credit'
   AND c.group_name = 'Karty kredytowe'
   AND c.name = 'Płatność: ' || a.name`,
-  `INSERT INTO budget_categories (family_id, group_name, name, icon, color, sort_order, kind, payment_account_id)
+  `INSERT INTO public.budget_categories (family_id, group_name, name, icon, color, sort_order, kind, payment_account_id)
 SELECT a.family_id, 'Karty kredytowe', 'Płatność: ' || a.name, '💳', '#0f766e', 9000, 'expense', a.id
-FROM accounts a
+FROM public.accounts a
 WHERE a.type = 'credit'
   AND a.on_budget IS DISTINCT FROM FALSE
   AND NOT EXISTS (
-    SELECT 1 FROM budget_categories c
-    WHERE c.family_id = a.family_id
-      AND (
-        c.payment_account_id = a.id
-        OR (c.group_name = 'Karty kredytowe' AND c.name = 'Płatność: ' || a.name)
-      )
-  )`,
+  SELECT 1 FROM public.budget_categories c
+  WHERE c.family_id = a.family_id
+    AND (
+      c.payment_account_id = a.id
+      OR (c.group_name = 'Karty kredytowe' AND c.name = 'Płatność: ' || a.name)
+    )
+)`,
   `CREATE UNIQUE INDEX IF NOT EXISTS budget_categories_payment_account_uidx
-ON budget_categories (payment_account_id)
+ON public.budget_categories (payment_account_id)
 WHERE payment_account_id IS NOT NULL`,
   `NOTIFY pgrst, 'reload schema'`,
 ] as const;

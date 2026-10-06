@@ -151,6 +151,79 @@ function createMemory(options?: {
   return client;
 }
 
+const PAYMENT_COLUMN_CACHE_ERROR =
+  "Could not find the 'payment_account_id' column of 'budget_categories' in the schema cache";
+
+function createSchemaCacheClient(error: Record<string, unknown> = {
+  code: "PGRST204",
+  message: PAYMENT_COLUMN_CACHE_ERROR,
+  details: null,
+  hint: null,
+}) {
+  const categories: Record<string, unknown>[] = [];
+  const inserts: Record<string, unknown>[][] = [];
+  let seq = 1;
+  const client = {
+    categories,
+    inserts,
+    from(table: string) {
+      const filters: Array<{ col: string; val: unknown }> = [];
+      let action: "select" | "insert" | "update" = "select";
+      let payload: Record<string, unknown> | Record<string, unknown>[] = {};
+      let columns = "*";
+
+      const run = async () => {
+        if (table === "accounts") {
+          return { data: [cardAccount()], error: null };
+        }
+        if (action === "insert") {
+          const list = Array.isArray(payload) ? payload : [payload];
+          inserts.push(list.map((row) => ({ ...row })));
+          if (list.some((row) => row && Object.prototype.hasOwnProperty.call(row, "payment_account_id"))) {
+            return { data: null, error };
+          }
+          const created = list.map((row) => ({
+            id: `bbbbbbbb-bbbb-4bbb-8bbb-${String(seq++).padStart(12, "0")}`,
+            ...row,
+          }));
+          categories.push(...created);
+          return { data: Array.isArray(payload) ? created : created[0], error: null };
+        }
+        if (columns.includes("payment_account_id")) {
+          return { data: null, error };
+        }
+        const matched = categories.filter((row) => filters.every((filter) => row[filter.col] === filter.val));
+        return { data: matched, error: null };
+      };
+
+      const api = {
+        select: (cols?: string) => {
+          columns = cols ?? "*";
+          return api;
+        },
+        insert: (row: Record<string, unknown> | Record<string, unknown>[]) => {
+          action = "insert";
+          payload = row;
+          return api;
+        },
+        update: () => api,
+        eq: (col: string, val: unknown) => {
+          filters.push({ col, val });
+          return api;
+        },
+        order: () => api,
+        limit: () => api,
+        maybeSingle: async () => run(),
+        then(resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) {
+          return run().then(resolve, reject);
+        },
+      };
+      return api;
+    },
+  };
+  return client;
+}
+
 describe("assigning to a credit-card payment category", () => {
   it("rejects the unsaved cc-payment id before it can reach budget_allocations", () => {
     const parsed = allocateSchema.safeParse({
@@ -224,6 +297,66 @@ describe("assigning to a credit-card payment category", () => {
     if (!resolved.ok) return;
     expect(resolved.categoryId.startsWith("cc-payment:")).toBe(false);
 
+    const saved = await saveCategoryAllocated(db, {
+      familyId,
+      categoryId: resolved.categoryId,
+      year: 2026,
+      month: 9,
+      allocated: 333,
+    });
+    expect(saved.ok).toBe(true);
+  });
+
+  it("saves the payment category when PostgREST schema cache lacks payment_account_id", async () => {
+    const db = createSchemaCacheClient();
+    const resolved = await resolveCreditPaymentCategoryId(db, familyId, `cc-payment:${cardId}`);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(resolved.categoryId.startsWith("cc-payment:")).toBe(false);
+    expect(db.inserts.some((batch) => batch.some((row) => !("payment_account_id" in row)))).toBe(true);
+
+    const saved = await saveCategoryAllocated(db, {
+      familyId,
+      categoryId: resolved.categoryId,
+      year: 2026,
+      month: 9,
+      allocated: 333,
+    });
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) return;
+    expect(saved.data.allocated).toBe(333);
+  });
+
+  it("saves when Postgres says the column does not exist (42703)", async () => {
+    const db = createSchemaCacheClient({
+      code: "42703",
+      message: 'column budget_categories.payment_account_id does not exist',
+    });
+    const resolved = await resolveCreditPaymentCategoryId(db, familyId, `cc-payment:${cardId}`);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(String(resolved.categoryId).startsWith("cc-payment:")).toBe(false);
+    const saved = await saveCategoryAllocated(db, {
+      familyId,
+      categoryId: resolved.categoryId,
+      year: 2026,
+      month: 9,
+      allocated: 333,
+    });
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) return;
+    expect(saved.data.allocated).toBe(333);
+  });
+
+  it("saves when PGRST204 only puts the schema-cache text in details", async () => {
+    const db = createSchemaCacheClient({
+      code: "PGRST204",
+      details: PAYMENT_COLUMN_CACHE_ERROR,
+    });
+    const resolved = await resolveCreditPaymentCategoryId(db, familyId, `cc-payment:${cardId}`);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) return;
+    expect(String(resolved.categoryId).startsWith("cc-payment:")).toBe(false);
     const saved = await saveCategoryAllocated(db, {
       familyId,
       categoryId: resolved.categoryId,

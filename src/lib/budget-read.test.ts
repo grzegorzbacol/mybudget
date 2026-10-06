@@ -523,6 +523,56 @@ describe("fetchFamilyCategories", () => {
     expect(again.data).toHaveLength(1);
     expect(calls).toBe(4);
   });
+
+  it("retries without payment_account_id on the live PostgREST schema-cache error", async () => {
+    const supabase = {
+      from: () => {
+        const query: {
+          select: (columns: string) => typeof query;
+          eq: () => typeof query;
+          order: () => typeof query;
+          then: (resolve: (value: unknown) => void, reject?: (reason: unknown) => void) => Promise<unknown>;
+          _columns?: string;
+        } = {
+          select: (columns: string) => {
+            query._columns = columns;
+            return query;
+          },
+          eq: () => query,
+          order: () => query,
+          then: (resolve, reject) => {
+            const result = query._columns?.includes("payment_account_id")
+              ? {
+                  data: null,
+                  error: {
+                    code: "PGRST204",
+                    details:
+                      "Could not find the 'payment_account_id' column of 'budget_categories' in the schema cache",
+                  },
+                }
+              : {
+                  data: [
+                    {
+                      id: "pay-1",
+                      family_id: "f1",
+                      group_name: "Karty kredytowe",
+                      name: "Płatność: Karta Kredytowa",
+                    },
+                  ],
+                  error: null,
+                };
+            return Promise.resolve(result).then(resolve, reject);
+          },
+        };
+        return query;
+      },
+    };
+
+    const result = await fetchFamilyCategories(supabase as never, "f1");
+    expect(result.error).toBeUndefined();
+    expect(result.data).toHaveLength(1);
+    expect(result.data[0].name).toBe("Płatność: Karta Kredytowa");
+  });
 });
 
 describe("ensureFamilyCategories", () => {

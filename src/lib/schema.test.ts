@@ -13,6 +13,7 @@ import {
   isMissingRelationError,
   isScheduledIdSchemaError,
   isSchemaLagError,
+  isSchemaLagWriteError,
   isTransferColumnSchemaError,
   missingScheduledTableMessage,
   resolveDatabaseUrl,
@@ -62,6 +63,12 @@ describe("schema lag helpers", () => {
       )
     ).toBe(false);
     expect(isSchemaLagError("Unauthorized")).toBe(false);
+    const paymentCache =
+      "Could not find the 'payment_account_id' column of 'budget_categories' in the schema cache";
+    expect(isSchemaLagError(paymentCache)).toBe(true);
+    expect(isSchemaLagWriteError({ code: "PGRST204", details: paymentCache })).toBe(true);
+    expect(isSchemaLagWriteError({ code: "42703", message: "column does not exist" })).toBe(true);
+    expect(isSchemaLagWriteError({ code: "PGRST204" })).toBe(true);
     expect(isMissingRelationError('relation "scheduled_transactions" does not exist')).toBe(true);
     expect(isMissingRelationError("Could not find the table 'public.scheduled_transactions' in the schema cache")).toBe(
       true
@@ -257,6 +264,14 @@ describe("schema lag helpers", () => {
     expect(boot).toContain("transactions.scheduled_id");
     expect(boot).toContain("ensure-transfer-columns.sql");
     expect(boot).toContain("ensure-scheduled-id.sql");
+    expect(boot).toContain("ensure-payment-account-column.sql");
+    expect(boot).toContain("budget_categories.payment_account_id");
+    const paymentColumnSql = readFileSync(
+      join(process.cwd(), "scripts/ensure-payment-account-column.sql"),
+      "utf8"
+    );
+    expect(paymentColumnSql).toContain("ADD COLUMN IF NOT EXISTS payment_account_id");
+    expect(paymentColumnSql).toContain("NOTIFY pgrst, 'reload schema'");
     expect(boot).toContain("NOTIFY pgrst");
     expect(boot).toContain("DATABASE_OWNER_URL");
     expect(boot).toContain("owner-add-transfer-columns.sql");

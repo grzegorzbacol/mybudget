@@ -7,8 +7,7 @@ import {
   syntheticPaymentAccountId,
   withCreditPaymentCategories,
 } from "./credit-cards";
-import { isSchemaLagError, writeErrorMessage } from "./schema";
-import { insertRowsWithSchemaRepair } from "./schema-write";
+import { isSchemaLagError, isSchemaLagWriteError, writeErrorMessage } from "./schema";
 import type { Account, BudgetCategory } from "./types";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,6 +48,54 @@ function dedupeCategories(categories: BudgetCategory[]): BudgetCategory[] {
   return Array.from(byId.values());
 }
 
+const CATEGORY_SELECT_FULL =
+  "id, family_id, group_name, name, icon, color, sort_order, kind, payment_account_id";
+const CATEGORY_SELECT_SAFE = "id, family_id, group_name, name, icon, color, sort_order, kind";
+const CATEGORY_SELECT_MIN = "id, family_id, group_name, name, icon, color, sort_order";
+
+function withoutColumn(row: Record<string, unknown>, column: string): Record<string, unknown> {
+  if (!(column in row)) return row;
+  const next = { ...row };
+  delete next[column];
+  return next;
+}
+
+/**
+ * One row at a time, so PostgREST does not add a bulk `columns` query param.
+ * A schema-cache miss names payment_account_id and rejects the whole request —
+ * retry without that column and without selecting it. Same for `kind`.
+ */
+async function insertPaymentCategories(
+  supabase: CategoryClient,
+  rows: Record<string, unknown>[]
+): Promise<{ data: BudgetCategory[]; error?: string }> {
+  const created: BudgetCategory[] = [];
+  let error: string | undefined;
+  for (const row of rows) {
+    let payload = row;
+    let selectList = CATEGORY_SELECT_FULL;
+    let result = await supabase.from("budget_categories").insert(payload).select(selectList);
+    if (isSchemaLagWriteError(result.error)) {
+      payload = withoutColumn(payload, "payment_account_id");
+      selectList = CATEGORY_SELECT_SAFE;
+      result = await supabase.from("budget_categories").insert(payload).select(selectList);
+    }
+    if (isSchemaLagWriteError(result.error)) {
+      payload = withoutColumn(payload, "kind");
+      selectList = CATEGORY_SELECT_MIN;
+      result = await supabase.from("budget_categories").insert(payload).select(selectList);
+    }
+    const stored = asCategoryList(result.data);
+    if (stored.length) {
+      created.push(...stored);
+      continue;
+    }
+    if (!result.error) continue;
+    error = writeErrorMessage(result.error) || error;
+  }
+  return { data: created, error };
+}
+
 function paymentCategoryWriteError(accountName: string, raw?: string): string {
   const label = `Nie udało się zapisać kategorii „Płatność: ${accountName}”`;
   const detail = raw?.trim();
@@ -83,10 +130,9 @@ export async function ensureCreditPaymentCategoriesResult(
   });
   if (!missingAccounts.length) return { categories: prepared };
 
-  const inserted = await insertRowsWithSchemaRepair(
-    async (rows) => supabase.from("budget_categories").insert(rows).select(),
-    missingAccounts.map((account) => paymentRow(familyId, account)),
-    ["kind", "payment_account_id"]
+  const inserted = await insertPaymentCategories(
+    supabase,
+    missingAccounts.map((account) => paymentRow(familyId, account))
   );
   let recovered = asCategoryList(inserted.data);
   if (recovered.length < missingAccounts.length) {
@@ -142,7 +188,9 @@ async function fetchFamilyAccounts(
     .eq("family_id", familyId);
   if (!full.error) return { accounts: asCategoryList(full.data) as unknown as Account[] };
   const message = writeErrorMessage(full.error);
-  if (!isSchemaLagError(message)) return { accounts: [], error: message || "Nie udało się odczytać kart." };
+  if (!isSchemaLagWriteError(full.error) && !isSchemaLagError(message)) {
+    return { accounts: [], error: message || "Nie udało się odczytać kart." };
+  }
   const fallback = await supabase
     .from("accounts")
     .select("id, family_id, name, type, balance, currency")
@@ -154,16 +202,17 @@ async function fetchFamilyAccounts(
 }
 
 async function fetchCategoriesLoose(supabase: CategoryClient, familyId: string): Promise<BudgetCategory[]> {
-  const full = await supabase
-    .from("budget_categories")
-    .select("id, family_id, group_name, name, icon, color, sort_order, kind, payment_account_id")
-    .eq("family_id", familyId);
-  if (!full.error) return (full.data ?? []) as BudgetCategory[];
-  const fallback = await supabase
-    .from("budget_categories")
-    .select("id, family_id, group_name, name, icon, color, sort_order")
-    .eq("family_id", familyId);
-  return (fallback.error ? [] : (fallback.data ?? [])) as BudgetCategory[];
+  const selects = [CATEGORY_SELECT_FULL, CATEGORY_SELECT_SAFE, CATEGORY_SELECT_MIN];
+  let lastError: unknown;
+  for (const columns of selects) {
+    const result = await supabase.from("budget_categories").select(columns).eq("family_id", familyId);
+    if (!result.error) return (result.data ?? []) as BudgetCategory[];
+    lastError = result.error;
+    if (!isSchemaLagWriteError(result.error)) break;
+  }
+  if (lastError && !isSchemaLagWriteError(lastError)) return [];
+  const fallback = await supabase.from("budget_categories").select(CATEGORY_SELECT_MIN).eq("family_id", familyId);
+  return fallback.error ? [] : ((fallback.data ?? []) as BudgetCategory[]);
 }
 
 export async function syncCreditPaymentCategoryName(
@@ -172,11 +221,18 @@ export async function syncCreditPaymentCategoryName(
   account: Pick<Account, "id" | "name" | "type">
 ): Promise<void> {
   if (account.type !== "credit" || !account.name) return;
-  await supabase
+  const byColumn = await supabase
     .from("budget_categories")
     .update({ name: `Płatność: ${account.name}` })
     .eq("family_id", familyId)
     .eq("payment_account_id", account.id);
+  if (!isSchemaLagWriteError(byColumn.error)) return;
+  await supabase
+    .from("budget_categories")
+    .update({ name: `Płatność: ${account.name}` })
+    .eq("family_id", familyId)
+    .eq("group_name", CREDIT_PAYMENT_GROUP)
+    .eq("name", `Płatność: ${account.name}`);
 }
 
 /** Create or rename the payment envelope after an account is saved. */
