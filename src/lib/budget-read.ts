@@ -6,11 +6,14 @@ import {
   applyCategorySplitAggregates,
   assembleBudgetMonthData,
   expandCategorySplits,
+  isLiabilityAccountType,
   isTransferTx,
   normalizeBudgetId,
   onBudgetLiabilityLedgerDelta,
   transferInflowsFromTracking,
 } from "@/lib/budget";
+import { applyCreditCardBudget, describeCreditCards, isOnBudgetCreditAccount } from "@/lib/credit-cards";
+import { ensureCreditPaymentCategories } from "@/lib/credit-cards-write";
 import { addDays, monthRange } from "@/lib/money";
 import { isOpeningBalanceTx } from "@/lib/opening-balance";
 import {
@@ -46,6 +49,8 @@ export type FamilyBudgetCore = {
   transferMarkersMissing?: boolean;
   liabilityDelta?: number;
   trackingInflows?: number;
+  /** Card spending the category could not cover, keyed by account id. */
+  uncoveredByAccount?: Record<string, number>;
 };
 
 /** Budget always falls back to PostgREST. Cashflow only does so when SQL DNS/connect fails. */
@@ -79,6 +84,7 @@ export function asBudgetCategories(data: unknown): BudgetCategory[] {
 }
 
 const CATEGORY_SELECTS: string[] = [
+  "id, family_id, group_name, name, icon, color, sort_order, kind, payment_account_id",
   "id, family_id, group_name, name, icon, color, sort_order, kind",
   "id, family_id, group_name, name, icon, color, sort_order",
   "*",
@@ -155,7 +161,10 @@ function fetchRestRows(supabase: Supabase, familyId: string) {
   ]);
 }
 
-async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<FamilyBudgetCore> {
+async function loadCoreFromRest(
+  supabase: Supabase,
+  familyId: string
+): Promise<{ core: FamilyBudgetCore; transactions: LedgerTransaction[] }> {
   const [categoriesRes, allocationsRes, accountsRes, transactionsRes, scheduledRes, splitRes] =
     await fetchRestRows(supabase, familyId);
 
@@ -210,7 +219,7 @@ async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<F
     allocations,
     accounts,
     scheduled: scheduledMissing ? [] : ((scheduledRes.data ?? []) as ScheduledTransaction[]),
-    activityMap: activityByCategoryMonth(transactions, accounts),
+    activityMap: activityByCategoryMonth(transactions, accounts, categories),
     income: [],
     spending: [],
     uncategorized: [],
@@ -220,7 +229,7 @@ async function loadCoreFromRest(supabase: Supabase, familyId: string): Promise<F
     liabilityDelta: onBudgetLiabilityLedgerDelta(transactions, accounts),
     trackingInflows: transferInflowsFromTracking(transactions, accounts),
   };
-  return attachRestMonthTotals(core, transactions);
+  return { core: attachRestMonthTotals(core, transactions), transactions };
 }
 
 export function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
@@ -281,11 +290,28 @@ async function loadCoreUncached(
 ): Promise<FamilyBudgetCore> {
   const sql = await tryQueryFamilyBudgetSql(familyId, process.env, { deadlineAt: options?.deadlineAt });
   if (sql.payload) {
-    const core = coreFromSql(sql.payload);
-    if (core.categories.length) return core;
-    const recovered = await fetchFamilyCategories(supabase, familyId);
-    const categories = await ensureFamilyCategories(supabase, familyId, recovered.data);
-    return { ...core, categories };
+    let core = coreFromSql(sql.payload);
+    if (!core.categories.length) {
+      const recovered = await fetchFamilyCategories(supabase, familyId);
+      core = {
+        ...core,
+        categories: await ensureFamilyCategories(supabase, familyId, recovered.data),
+      };
+    }
+    return finishCreditCardBudget(supabase, familyId, core, {
+      transactions: expandCategorySplits(
+        sql.payload.creditLines ?? [],
+        (sql.payload.splitLines ?? []).map((line) => ({
+          transaction_id: line.transaction_id,
+          category_id: line.split_category_id,
+          amount: Math.abs(Number(line.split_activity) || 0),
+        }))
+      ),
+      loaded: Boolean(sql.payload.creditLinesLoaded),
+      trackingIncludesCardPayments: true,
+      separateCashOutflows: true,
+      monthTotalsAlreadyNetOfCards: false,
+    });
   }
   if (!restFallbackFromSqlMiss(options?.allowRest, sql.unreachable)) {
     const schemaLag = sql.unreachable
@@ -293,15 +319,24 @@ async function loadCoreUncached(
       : "Postgres snapshot niedostępny — spróbuj ponownie za chwilę.";
     return emptySqlCore(schemaLag);
   }
-  const core = await loadCoreFromRest(supabase, familyId);
+  const loaded = await loadCoreFromRest(supabase, familyId);
   const restLag = sql.unreachable
     ? `SQL niedostępny (${sql.unreachable.kind}) — dane z PostgREST.`
     : undefined;
-  const withLag = restLag ? { ...core, schemaLag: core.schemaLag ? `${core.schemaLag} ${restLag}` : restLag } : core;
-  if (withLag.categories.length) return withLag;
-  const recovered = await fetchFamilyCategories(supabase, familyId);
-  const categories = await ensureFamilyCategories(supabase, familyId, recovered.data);
-  return { ...withLag, categories };
+  let core = restLag
+    ? { ...loaded.core, schemaLag: loaded.core.schemaLag ? `${loaded.core.schemaLag} ${restLag}` : restLag }
+    : loaded.core;
+  if (!core.categories.length) {
+    const recovered = await fetchFamilyCategories(supabase, familyId);
+    core = { ...core, categories: await ensureFamilyCategories(supabase, familyId, recovered.data) };
+  }
+  return finishCreditCardBudget(supabase, familyId, core, {
+    transactions: loaded.transactions,
+    loaded: true,
+    trackingIncludesCardPayments: false,
+    separateCashOutflows: false,
+    monthTotalsAlreadyNetOfCards: true,
+  });
 }
 
 export async function loadFamilyBudgetCore(
@@ -353,7 +388,7 @@ export function budgetMonthFromCore(
   const upcoming = upcomingByCategory(core.scheduled, start, addDays(end, -1));
   const planned = plannedMonthTotals(core.scheduled, year, month, core.accounts);
 
-  return assembleBudgetMonthData({
+  const data = assembleBudgetMonthData({
     year,
     month,
     categories: core.categories,
@@ -368,6 +403,43 @@ export function budgetMonthFromCore(
     liabilityDelta: core.liabilityDelta,
     trackingInflows: core.trackingInflows,
   });
+  return {
+    ...data,
+    creditCards: describeCreditCards(data, core.accounts, core.categories, core.uncoveredByAccount ?? {}),
+  };
+}
+
+async function finishCreditCardBudget(
+  supabase: Supabase,
+  familyId: string,
+  core: FamilyBudgetCore,
+  credit: {
+    transactions: LedgerTransaction[];
+    loaded: boolean;
+    trackingIncludesCardPayments: boolean;
+    separateCashOutflows: boolean;
+    monthTotalsAlreadyNetOfCards: boolean;
+  }
+): Promise<FamilyBudgetCore> {
+  const categories = core.accounts.some(isOnBudgetCreditAccount)
+    ? await ensureCreditPaymentCategories(supabase, familyId, core.categories, core.accounts)
+    : core.categories;
+  if (!credit.loaded) return { ...core, categories };
+  const applied = applyCreditCardBudget({
+    categories,
+    allocations: core.allocations,
+    accounts: core.accounts,
+    transactions: credit.transactions,
+    activityMap: core.activityMap,
+    liabilityDelta: core.liabilityDelta,
+    trackingInflows: core.trackingInflows,
+    income: core.income,
+    spending: core.spending,
+    trackingIncludesCardPayments: credit.trackingIncludesCardPayments,
+    separateCashOutflows: credit.separateCashOutflows,
+    monthTotalsAlreadyNetOfCards: credit.monthTotalsAlreadyNetOfCards,
+  });
+  return { ...core, ...applied };
 }
 
 /** PostgREST fallback still has raw txs available only inside loadCoreFromRest.
@@ -393,8 +465,11 @@ export function attachRestMonthTotals(
     if (account && account.on_budget === false) continue;
     if (isTransferTx(tx)) continue;
     const amount = Number(tx.amount);
-    if (amount > 0) {
+    const creditRefund = account?.type === "credit" && amount > 0 && !isOpeningBalanceTx(tx);
+    if (amount > 0 && !creditRefund && !(account && isLiabilityAccountType(account.type))) {
       incomeByMonth.set(key, (incomeByMonth.get(key) ?? 0) + amount);
+    } else if (creditRefund) {
+      spendByMonth.set(key, (spendByMonth.get(key) ?? 0) - amount);
     } else if (amount < 0 && !isOpeningBalanceTx(tx)) {
       spendByMonth.set(key, (spendByMonth.get(key) ?? 0) + Math.abs(amount));
       if (!core.transferMarkersMissing && !tx.category_id) {
@@ -410,7 +485,7 @@ export function attachRestMonthTotals(
   const spending: FamilyBudgetCore["spending"] = Array.from(spendByMonth, ([key, amount]) => {
     const [year, month] = key.split("-").map(Number);
     return { year, month, amount };
-  });
+  }).filter((row) => row.amount > 0.0001);
   const uncategorized: FamilyBudgetCore["uncategorized"] = Array.from(uncategorizedByMonth, ([key, n]) => {
     const [year, month] = key.split("-").map(Number);
     return { year, month, n };

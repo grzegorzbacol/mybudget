@@ -1,3 +1,12 @@
+import {
+  describeCreditCards,
+  isCashToCreditPayment,
+  liabilityAfterCreditCards,
+  mergeActivityMaps,
+  planCreditCardLedger,
+  trackingAfterCreditCards,
+  transferPairs,
+} from "./credit-cards";
 import { isOpeningBalanceTx } from "./opening-balance";
 import { isPlausibleBudgetYearMonth, isValidYearMonth, money, monthIndex, parseMonthKey, parseYearMonthFromDate } from "./money";
 import type {
@@ -101,7 +110,27 @@ export function isOnBudgetAccount(
  */
 export function isIncomeToReadyToAssign(tx: LedgerTransaction, accounts: Account[] = []): boolean {
   if (Number(tx.amount) <= 0 || isTransferTx(tx)) return false;
+  if (accounts.length) {
+    const account = accounts.find((row) => normalizeBudgetId(row.id) === normalizeBudgetId(tx.account_id));
+    // A credit-card refund reduces debt. It is not a paycheck.
+    if (account && isLiabilityAccountType(account.type)) return false;
+  }
   return isOnBudgetAccount(tx, accounts);
+}
+
+/**
+ * How much a ledger row contributes to "spent" in reports and cashflow.
+ * Card purchases count. Card payments (transfers) and opening balances do not.
+ * A refund on the card reduces spending.
+ */
+export function contributionToSpending(tx: LedgerTransaction, accounts: Account[] = []): number {
+  if (isTransferTx(tx) || isOpeningBalanceTx(tx)) return 0;
+  if (!isOnBudgetAccount(tx, accounts)) return 0;
+  const amount = Number(tx.amount);
+  if (!Number.isFinite(amount) || amount === 0) return 0;
+  const account = accounts.find((row) => normalizeBudgetId(row.id) === normalizeBudgetId(tx.account_id));
+  if (account?.type === "credit") return money(-amount);
+  return amount < 0 ? money(-amount) : 0;
 }
 
 const INCOME_GROUP_RE = /^(przychody|income|revenue)$/i;
@@ -128,8 +157,24 @@ export function isEnvelopeCategory(category: Pick<BudgetCategory, "kind" | "grou
   return true;
 }
 
-export function isExpenseCategory(category: BudgetCategory): boolean {
-  return isEnvelopeCategory(category);
+/** Auto envelope that holds cash reserved to pay one on-budget credit card. */
+export const CREDIT_PAYMENT_GROUP = "Karty kredytowe";
+
+export function isCreditPaymentCategory(
+  category: Pick<BudgetCategory, "group_name" | "name"> & { payment_account_id?: string | null }
+): boolean {
+  if (category.payment_account_id) return true;
+  return (
+    String(category.group_name ?? "") === CREDIT_PAYMENT_GROUP &&
+    /^\s*Płatność\s*:/i.test(String(category.name ?? ""))
+  );
+}
+
+/** Spending envelopes you can assign a purchase to. Card payment envelopes are budget rows, not payees. */
+export function isExpenseCategory(
+  category: Pick<BudgetCategory, "kind" | "group_name" | "name"> & { payment_account_id?: string | null }
+): boolean {
+  return isEnvelopeCategory(category) && !isCreditPaymentCategory(category);
 }
 
 export type CategorySplitLine = {
@@ -195,12 +240,16 @@ function monthKey(year: number, month: number): MonthKey {
 
 export function activityByCategoryMonth(
   transactions: LedgerTransaction[],
-  accounts: Account[] = []
+  accounts: Account[] = [],
+  categories: Array<Pick<BudgetCategory, "id" | "group_name" | "name"> & { payment_account_id?: string | null }> = []
 ): Map<string, Map<MonthKey, number>> {
+  const paymentIds = new Set(
+    categories.filter(isCreditPaymentCategory).map((category) => normalizeBudgetId(category.id))
+  );
   const map = new Map<string, Map<MonthKey, number>>();
   for (const tx of transactions) {
     const categoryId = normalizeBudgetId(tx.category_id);
-    if (!categoryId || isTransferTx(tx)) continue;
+    if (!categoryId || isTransferTx(tx) || paymentIds.has(categoryId)) continue;
     if (Number(tx.amount) >= 0) continue;
     if (!isOnBudgetAccount(tx, accounts)) continue;
     const ym = parseYearMonthFromDate(tx.date);
@@ -281,10 +330,13 @@ export function transferInflowsFromTracking(
   accounts: Account[] = []
 ): number {
   if (!accounts.length) return 0;
+  const pairs = transferPairs(transactions);
   const byId = new Map(accounts.map((account) => [normalizeBudgetId(account.id), account]));
   return money(
     transactions.reduce((sum, tx) => {
       if (!isTransferTx(tx)) return sum;
+      // Paying the card is reserved in the card's payment envelope, not added back here.
+      if (isCashToCreditPayment(tx, accounts, pairs)) return sum;
       const account = byId.get(normalizeBudgetId(tx.account_id));
       if (!account || !inRtaCashPool(account)) return sum;
       return sum + Number(tx.amount);
@@ -786,19 +838,44 @@ export function buildBudgetMonthData(
 ): BudgetMonthData {
   const ledger = transactions ?? [];
   const accountList = accounts ?? [];
-  return assembleBudgetMonthData({
+  const plan = planCreditCardLedger({
+    categories: categories ?? [],
+    allocations: allocations ?? [],
+    accounts: accountList,
+    transactions: ledger,
+  });
+  const activityMap = activityByCategoryMonth(ledger, accountList, plan.categories);
+  for (const category of plan.categories) {
+    if (!isCreditPaymentCategory(category)) continue;
+    activityMap.delete(normalizeBudgetId(category.id));
+  }
+  mergeActivityMaps(activityMap, plan.refundActivity);
+  mergeActivityMaps(activityMap, plan.paymentActivity);
+  const data = assembleBudgetMonthData({
     year,
     month,
-    categories,
+    categories: plan.categories,
     allocations,
     accounts: accountList,
-    activityMap: activityByCategoryMonth(ledger, accountList),
+    activityMap,
     incomeThisMonth: incomeInMonth(ledger, year, month, accountList),
     uncategorizedCount: uncategorizedExpenses(ledger, year, month, accountList).length,
     upcomingByCategory,
-    liabilityDelta: onBudgetLiabilityLedgerDelta(ledger, accountList),
-    trackingInflows: transferInflowsFromTracking(ledger, accountList),
+    liabilityDelta: liabilityAfterCreditCards(
+      onBudgetLiabilityLedgerDelta(ledger, accountList),
+      plan.creditActivity,
+      plan.uncovered
+    ),
+    trackingInflows: trackingAfterCreditCards(
+      transferInflowsFromTracking(ledger, accountList),
+      plan.cardPaymentOutflows,
+      false
+    ),
   });
+  return {
+    ...data,
+    creditCards: describeCreditCards(data, accountList, plan.categories, plan.uncoveredByAccount),
+  };
 }
 
 export function envelopeGap(available: number, upcoming = 0): number {

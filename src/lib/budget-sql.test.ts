@@ -62,6 +62,8 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL).toContain("::jsonb AS payload");
     expect(FAMILY_BUDGET_SQL).not.toContain("JOIN accounts a ON a.id = t.account_id");
     expect(FAMILY_BUDGET_SQL).not.toContain("src.on_budget = FALSE");
+    expect(FAMILY_BUDGET_SQL).toContain("'creditLines'");
+    expect(FAMILY_BUDGET_SQL).toContain("payment_account_id");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("WITH ledger AS MATERIALIZED");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("amount > 0");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("family_id = $1::uuid");
@@ -71,6 +73,8 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("liabilityDelta");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("trackingInflows");
     expect(FAMILY_BUDGET_SQL_SAFE).not.toContain("transfer_account_id IS NOT NULL");
+    expect(FAMILY_BUDGET_SQL_SAFE).not.toContain("payment_account_id");
+    expect(FAMILY_BUDGET_SQL_SAFE).not.toContain("creditLines");
   });
 
   it("parses a compact payload into month totals", () => {
@@ -91,6 +95,8 @@ describe("budget SQL aggregates", () => {
     expect(monthAmount(parsed.income, 2026, 8)).toBe(0);
     expect(parsed.liabilityDelta).toBe(0);
     expect(parsed.trackingInflows).toBe(0);
+    expect(parsed.creditLinesLoaded).toBe(false);
+    expect(parseFamilyBudgetPayload({ creditLines: [] }).creditLinesLoaded).toBe(true);
     expect(parseFamilyBudgetPayload({ trackingInflows: -200 }).trackingInflows).toBe(-200);
   });
 

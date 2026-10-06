@@ -32,6 +32,9 @@ export type FamilyBudgetSqlPayload = {
   roundTrips?: number;
   liabilityDelta?: number;
   trackingInflows?: number;
+  /** Present only on the full snapshot. Empty array means "loaded, no card rows". */
+  creditLines?: LedgerTransaction[];
+  creditLinesLoaded?: boolean;
 };
 
 export type SqlQueryFn = (
@@ -144,6 +147,41 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind): string {
   'scheduledMissing', true`
       : "";
 
+  const categoryColumns =
+    kind === "full"
+      ? "id::text AS id, family_id::text AS family_id, group_name, name, icon, color, sort_order, kind, payment_account_id::text AS payment_account_id"
+      : "id::text AS id, family_id::text AS family_id, group_name, name, icon, color, sort_order";
+
+  const creditLines =
+    kind === "full"
+      ? `,
+  'creditLines', COALESCE((
+    SELECT json_agg(x) FROM (
+      SELECT t.id::text AS id,
+             t.account_id::text AS account_id,
+             t.category_id::text AS category_id,
+             t.amount::float8 AS amount,
+             to_char(t.date, 'YYYY-MM-DD') AS date,
+             t.payee,
+             t.memo,
+             t.transfer_account_id::text AS transfer_account_id,
+             t.transfer_id::text AS transfer_id
+      FROM transactions t
+      WHERE ${tFamily}
+        AND (
+          EXISTS (
+            SELECT 1 FROM accounts c
+            WHERE c.id::text = t.account_id::text AND c.type = 'credit'
+          )
+          OR EXISTS (
+            SELECT 1 FROM accounts c
+            WHERE c.id::text = t.transfer_account_id::text AND c.type = 'credit'
+          )
+        )
+    ) x
+  ), '[]'::json)`
+      : "";
+
   return `
 WITH ledger AS MATERIALIZED (
   ${ledger}
@@ -151,7 +189,7 @@ WITH ledger AS MATERIALIZED (
 SELECT json_build_object(
   'categories', COALESCE((
     SELECT json_agg(x) FROM (
-      SELECT id::text AS id, family_id::text AS family_id, group_name, name, icon, color, sort_order
+      SELECT ${categoryColumns}
       FROM budget_categories WHERE ${family} ORDER BY sort_order
     ) x
   ), '[]'::json),
@@ -197,7 +235,7 @@ SELECT json_build_object(
       WHERE category_id IS NULL AND amount < 0 AND NOT is_opening
       GROUP BY 1, 2
     ) x
-  ), '[]'::json)${rtaAdjust}${flags}
+  ), '[]'::json)${rtaAdjust}${creditLines}${flags}
 )::jsonb AS payload
 `;
 }
@@ -244,10 +282,22 @@ function dailyActualsSql(pred: FamilyPred, kind: SnapshotKind): string {
   const onBudgetJoin =
     kind === "full" ? "LEFT JOIN accounts a ON a.id::text = t.account_id::text" : "";
   const onBudgetFilter = kind === "full" ? "AND a.on_budget IS DISTINCT FROM FALSE" : "";
+  const actualIn =
+    kind === "full"
+      ? `SUM(CASE WHEN t.amount > 0 AND COALESCE(a.type, '') <> 'credit' THEN t.amount ELSE 0 END)::float8`
+      : `SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END)::float8`;
+  const actualOut =
+    kind === "full"
+      ? `SUM(CASE
+         WHEN t.amount < 0 AND NOT ${sqlOpeningBalanceExpr("t")} THEN -t.amount
+         WHEN t.amount > 0 AND a.type = 'credit' AND NOT ${sqlOpeningBalanceExpr("t")} THEN -t.amount
+         ELSE 0
+       END)::float8`
+      : `SUM(CASE WHEN t.amount < 0 AND NOT ${sqlOpeningBalanceExpr("t")} THEN -t.amount ELSE 0 END)::float8`;
   return `
 SELECT t.date::text AS date,
-       SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END)::float8 AS actual_in,
-       SUM(CASE WHEN t.amount < 0 AND NOT ${sqlOpeningBalanceExpr("t")} THEN -t.amount ELSE 0 END)::float8 AS actual_out
+       ${actualIn} AS actual_in,
+       ${actualOut} AS actual_out
 FROM transactions t
 ${onBudgetJoin}
 WHERE ${familyIdMatch(pred, "t")}
@@ -347,6 +397,10 @@ export function parseFamilyBudgetPayload(raw: unknown): FamilyBudgetSqlPayload {
     scheduledMissing: Boolean(data.scheduledMissing),
     liabilityDelta: Number(data.liabilityDelta) || 0,
     trackingInflows: Number(data.trackingInflows) || 0,
+    creditLinesLoaded: Object.prototype.hasOwnProperty.call(data, "creditLines"),
+    creditLines: Object.prototype.hasOwnProperty.call(data, "creditLines")
+      ? asArray<LedgerTransaction>(data.creditLines)
+      : undefined,
   };
 }
 

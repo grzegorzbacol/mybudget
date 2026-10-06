@@ -1,4 +1,5 @@
-import { isOnBudget, isTransferTx, signedAccountBalance } from "./budget";
+import { contributionToSpending, isOnBudget, isTransferTx, signedAccountBalance } from "./budget";
+import { isOpeningBalanceTx } from "./opening-balance";
 import { generateScheduleOccurrences } from "./cashflow";
 import { todayIso } from "./format";
 import { addDays, daysInMonth, money } from "./money";
@@ -169,11 +170,16 @@ export function monthCashActual(
   let spending = 0;
   for (const tx of transactions) {
     if (tx.date < start || tx.date >= end) continue;
-    if (isTransferTx(tx)) continue;
+    if (isTransferTx(tx) || isOpeningBalanceTx(tx)) continue;
     const account = accounts.find((a) => a.id === tx.account_id);
     if (account && !isOnBudget(account)) continue;
     const amount = Number(tx.amount);
-    // Same rule as budget Przychody / SQL snapshot income: any on-budget inflow.
+    if (account?.type === "credit") {
+      const spent = contributionToSpending(tx, accounts);
+      if (spent) spending = money(spending + spent);
+      continue;
+    }
+    // Same rule as budget Przychody: categorized cash inflows still count as income.
     if (amount > 0) income = money(income + amount);
     if (amount < 0) spending = money(spending + Math.abs(amount));
   }

@@ -409,7 +409,7 @@ describe("fetchFamilyCategories", () => {
 
     const again = await fetchFamilyCategories(supabase as never, "f1");
     expect(again.data).toHaveLength(1);
-    expect(calls).toBe(3);
+    expect(calls).toBe(4);
   });
 });
 

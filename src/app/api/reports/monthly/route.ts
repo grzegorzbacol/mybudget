@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAuthContext, ensureMonthAllocations } from "@/lib/api-helpers";
-import { expandCategorySplits, isOnBudgetCashTx } from "@/lib/budget";
+import { contributionToSpending, expandCategorySplits, isOnBudgetCashTx } from "@/lib/budget";
 import { isMissingRelationError, isSchemaLagError } from "@/lib/schema";
 import type { Account, LedgerTransaction, MonthlyReport } from "@/lib/types";
 
@@ -33,11 +33,10 @@ export async function GET(request: Request) {
       .eq("month", month),
     ctx.supabase
       .from("transactions")
-      .select("id, account_id, category_id, amount, date, transfer_account_id, transfer_id, added_by")
+      .select("id, account_id, category_id, amount, date, payee, memo, transfer_account_id, transfer_id, added_by")
       .eq("family_id", ctx.family.id)
       .gte("date", start)
-      .lt("date", end)
-      .lt("amount", 0),
+      .lt("date", end),
     ctx.supabase.from("accounts").select("id, on_budget, type, balance").eq("family_id", ctx.family.id),
     ctx.supabase
       .from("transaction_category_splits")
@@ -49,11 +48,10 @@ export async function GET(request: Request) {
   if (transactionsRes.error && isSchemaLagError(transactionsRes.error.message)) {
     const fallback = await ctx.supabase
       .from("transactions")
-      .select("id, account_id, category_id, amount, date, transfer_account_id, transfer_id, added_by")
+      .select("id, account_id, category_id, amount, date, payee, memo, transfer_account_id, transfer_id, added_by")
       .eq("family_id", ctx.family.id)
       .gte("date", start)
-      .lt("date", end)
-      .lt("amount", 0);
+      .lt("date", end);
     txRows = fallback.error ? [] : fallback.data;
   }
 
@@ -87,7 +85,7 @@ export async function GET(request: Request) {
     const alloc = allocations.find((a) => a.category_id === cat.id);
     const spent = ledger
       .filter((t) => t.category_id === cat.id)
-      .reduce((sum, t) => sum + Math.abs(Number(t.amount)), 0);
+      .reduce((sum, t) => sum + contributionToSpending(t, accounts), 0);
     return {
       categoryId: cat.id,
       categoryName: cat.name,
@@ -103,7 +101,7 @@ export async function GET(request: Request) {
     const uid = t.added_by ?? "unknown";
     const name = profileById.get(uid)?.display_name ?? "Nieznany";
     const current = memberMap.get(uid) ?? { userId: uid, displayName: name, spent: 0 };
-    current.spent += Math.abs(Number(t.amount));
+    current.spent += contributionToSpending(t, accounts);
     memberMap.set(uid, current);
   }
 
@@ -129,22 +127,20 @@ export async function GET(request: Request) {
         .eq("month", m),
       ctx.supabase
         .from("transactions")
-        .select("account_id, amount, transfer_account_id, transfer_id")
+        .select("account_id, amount, date, payee, memo, transfer_account_id, transfer_id")
         .eq("family_id", ctx.family.id)
         .gte("date", mStart)
-        .lt("date", mEnd)
-        .lt("amount", 0),
+        .lt("date", mEnd),
     ]);
 
     let monthRows = monthTx as LedgerTransaction[] | null;
     if (!monthRows) {
       const fallback = await ctx.supabase
         .from("transactions")
-        .select("account_id, amount")
+        .select("account_id, amount, date, payee, memo")
         .eq("family_id", ctx.family.id)
         .gte("date", mStart)
-        .lt("date", mEnd)
-        .lt("amount", 0);
+        .lt("date", mEnd);
       monthRows = (fallback.data ?? []) as LedgerTransaction[];
     }
 
@@ -154,14 +150,14 @@ export async function GET(request: Request) {
       allocated: (monthAlloc ?? []).reduce((s, a) => s + Number(a.allocated), 0),
       spent: monthRows
         .filter((t) => isOnBudgetCashTx(t, accounts))
-        .reduce((s, t) => s + Math.abs(Number(t.amount)), 0),
+        .reduce((s, t) => s + contributionToSpending(t, accounts), 0),
     });
   }
 
   const report: MonthlyReport = {
     year,
     month,
-    byCategory: byCategory.filter((c) => c.spent > 0 || c.allocated > 0),
+    byCategory: byCategory.filter((c) => Math.abs(c.spent) > 0.004 || c.allocated > 0),
     byMember: Array.from(memberMap.values()),
     monthlyTrend,
   };

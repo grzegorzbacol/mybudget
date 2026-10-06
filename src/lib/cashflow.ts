@@ -1,4 +1,4 @@
-import { isOnBudget, isTransferTx } from "./budget";
+import { contributionToSpending, isOnBudget, isTransferTx } from "./budget";
 import { isOpeningBalanceTx } from "./opening-balance";
 import { addDays, addMonthsToDate, money, yearMonthFromDate } from "./money";
 import type {
@@ -217,6 +217,7 @@ export function buildCashflowTimeline(input: {
 }): CashflowBucket[] {
   const bucket = input.bucket ?? "week";
   const onBudgetIds = new Set(input.accounts.filter(isOnBudget).map((account) => account.id));
+  const accountById = new Map(input.accounts.map((account) => [account.id, account]));
   const buckets = new Map<string, CashflowBucket>();
 
   const keyFor = (date: string) => {
@@ -267,6 +268,11 @@ export function buildCashflowTimeline(input: {
       if (!onBudgetIds.has(tx.account_id)) continue;
       const row = ensure(tx.date);
       const amount = Number(tx.amount);
+      if (accountById.get(tx.account_id)?.type === "credit") {
+        const spent = contributionToSpending(tx, input.accounts);
+        if (spent) row.actualOut = money(row.actualOut + spent);
+        continue;
+      }
       // Match budget Przychody / SQL snapshot: categorized inflows still count as cash in.
       if (amount > 0) row.actualIn = money(row.actualIn + amount);
       if (amount < 0 && !isOpeningBalanceTx(tx)) row.actualOut = money(row.actualOut + Math.abs(amount));

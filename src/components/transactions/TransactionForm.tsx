@@ -515,6 +515,16 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction, 
               Przelew między kontami nie zwiększa <strong>Do rozdzielenia</strong> — suma pieniędzy zostaje ta sama.
             </p>
           )}
+          {type === "transfer" && (fromAccount?.type === "credit" || toAccount?.type === "credit") && (
+            <p className="text-sm text-muted-foreground">
+              Spłata karty to przelew, nie wydatek. Kwota schodzi z koperty „Płatność”, a nie drugi raz z kategorii zakupów i nie liczy się jako wydatek w raportach.
+            </p>
+          )}
+          {type === "expense" && fromAccount?.type === "credit" && (
+            <p className="text-sm text-muted-foreground">
+              Zakup kartą zmniejsza wybraną kopertę. Pokryta kwota zostaje odłożona w „Płatność: {fromAccount.name}” na spłatę. To, czego koperta nie pokryje, zostaje nowym długiem.
+            </p>
+          )}
           {type === "income" && (
             <p className="text-sm text-muted-foreground">
               {selectedOnBudget ? (
