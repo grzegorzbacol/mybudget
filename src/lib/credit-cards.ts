@@ -237,7 +237,9 @@ export function assignCreditPaymentLinks(categories: BudgetCategory[], accounts:
   const categoriesByName = new Map<string, BudgetCategory[]>();
   for (const category of stored) {
     if (claimedCategories.has(normalizeBudgetId(category.id))) continue;
-    if (paymentAccountMarker(category.name)) continue;
+    const marker = paymentAccountMarker(category.name);
+    // A hidden id for a deleted card must not block the unique visible name.
+    if (marker && byNormId.has(normalizeBudgetId(marker))) continue;
     const explicit = normalizeBudgetId(category.payment_account_id);
     if (explicit && !byNormId.has(explicit)) continue;
     const label = categoryPaymentLabel(category);
@@ -311,7 +313,8 @@ export function linkedPaymentAccountId(
   const marker = paymentAccountMarker(category.name);
   if (marker) {
     const normalized = normalizeBudgetId(marker);
-    return byNormId.get(normalized)?.id ?? null;
+    const matched = byNormId.get(normalized)?.id;
+    if (matched) return matched;
   }
   const label = categoryPaymentLabel(category);
   if (!label) return null;
@@ -403,7 +406,11 @@ export function transferCounterpartyId(
   return other?.account_id ?? null;
 }
 
-/** Cash leaving a budget account to pay an on-budget credit card. Counted once per pair. */
+/**
+ * Money moving onto an on-budget credit card from any account that is not itself
+ * an on-budget credit card. Counted once per pair. The source may be checking,
+ * savings, off-budget, or missing from the account list — the card is the destination.
+ */
 export function isCashToCreditPayment(
   tx: LedgerTransaction,
   accounts: Account[],
@@ -412,7 +419,7 @@ export function isCashToCreditPayment(
   if (!isTransferTx(tx) || Number(tx.amount) >= 0) return false;
   const byId = accountMap(accounts);
   const source = byId.get(normalizeBudgetId(tx.account_id));
-  if (!source || !inRtaCashPool(source)) return false;
+  if (isOnBudgetCreditAccount(source)) return false;
   const destId = transferCounterpartyId(tx, pairs);
   if (!destId) return false;
   const dest = byId.get(normalizeBudgetId(destId));
@@ -457,7 +464,7 @@ export function creditCardPaymentEvents(transactions: LedgerTransaction[], accou
     if (!key || seen.has(key)) continue;
     const otherId = transferCounterpartyId(tx, pairs);
     const other = otherId ? byId.get(normalizeBudgetId(otherId)) : undefined;
-    if (!other || !inRtaCashPool(other)) continue;
+    if (isOnBudgetCreditAccount(other)) continue;
     push(account!.id, Number(tx.amount), tx.date, key);
   }
 
@@ -508,6 +515,109 @@ export function creditToCreditTransferEvents(
 }
 
 /**
+ * Money leaving an on-budget credit card for a non-card account.
+ * Counted once per pair. A lone positive row on the destination still counts.
+ */
+export function creditCardOutboundEvents(transactions: LedgerTransaction[], accounts: Account[]): CardPaymentEvent[] {
+  const pairs = transferPairs(transactions);
+  const byId = accountMap(accounts);
+  const seen = new Set<string>();
+  const events: CardPaymentEvent[] = [];
+
+  const push = (cardId: string, amount: number, date: string, key: string) => {
+    if (seen.has(key) || amount <= 0) return;
+    const ym = parseYearMonthFromDate(date);
+    if (!ym || !isPlausibleBudgetYearMonth(ym.year, ym.month)) return;
+    seen.add(key);
+    events.push({ cardId, amount: money(amount), year: ym.year, month: ym.month });
+  };
+
+  for (const tx of transactions) {
+    if (!isTransferTx(tx) || Number(tx.amount) >= 0) continue;
+    const source = byId.get(normalizeBudgetId(tx.account_id));
+    if (!isOnBudgetCreditAccount(source)) continue;
+    const destId = transferCounterpartyId(tx, pairs);
+    const dest = destId ? byId.get(normalizeBudgetId(destId)) : undefined;
+    if (isOnBudgetCreditAccount(dest)) continue;
+    const key = tx.transfer_id ? `out:${tx.transfer_id}` : `out:${tx.id ?? `${tx.account_id}:${tx.date}:${tx.amount}`}`;
+    push(source!.id, Math.abs(Number(tx.amount)), tx.date, key);
+  }
+
+  for (const tx of transactions) {
+    if (!isTransferTx(tx) || Number(tx.amount) <= 0) continue;
+    const account = byId.get(normalizeBudgetId(tx.account_id));
+    if (isOnBudgetCreditAccount(account)) continue;
+    const key = tx.transfer_id ? `out:${tx.transfer_id}` : "";
+    if (!key || seen.has(key)) continue;
+    const otherId = transferCounterpartyId(tx, pairs);
+    const other = otherId ? byId.get(normalizeBudgetId(otherId)) : undefined;
+    if (!isOnBudgetCreditAccount(other)) continue;
+    push(other!.id, Number(tx.amount), tx.date, key);
+  }
+
+  return events;
+}
+
+function transferGroupKey(tx: LedgerTransaction): string {
+  if (tx.transfer_id) return `pair:${tx.transfer_id}`;
+  return `tx:${tx.id ?? `${tx.account_id}:${tx.date}:${tx.amount}:${tx.transfer_account_id ?? ""}`}`;
+}
+
+/**
+ * Signed balance delta for an on-budget card whose transfer never posted a row
+ * on that card. The other leg's amount A means the card moved by −A.
+ * A pair that already has a card row contributes nothing (the stored balance
+ * and account flows already include it).
+ */
+export function unpairedCreditDeltas(transactions: LedgerTransaction[], accounts: Account[]): Map<string, number> {
+  const pairs = transferPairs(transactions);
+  const byId = accountMap(accounts);
+  const groups = new Map<string, LedgerTransaction[]>();
+  for (const tx of transactions) {
+    if (!isTransferTx(tx)) continue;
+    const key = transferGroupKey(tx);
+    const list = groups.get(key) ?? [];
+    list.push(tx);
+    groups.set(key, list);
+  }
+
+  const deltas = new Map<string, number>();
+  for (const rows of Array.from(groups.values())) {
+    const postedOnCard = rows.some((tx) => isOnBudgetCreditAccount(byId.get(normalizeBudgetId(tx.account_id))));
+    if (postedOnCard) continue;
+    for (const tx of rows) {
+      const otherId = transferCounterpartyId(tx, pairs);
+      const other = otherId ? byId.get(normalizeBudgetId(otherId)) : undefined;
+      if (!isOnBudgetCreditAccount(other)) continue;
+      const amount = Number(tx.amount);
+      if (!Number.isFinite(amount) || amount === 0) continue;
+      const id = normalizeBudgetId(other!.id);
+      deltas.set(id, money((deltas.get(id) ?? 0) + -amount));
+      break;
+    }
+  }
+  return deltas;
+}
+
+/** Add unpaired card-transfer deltas onto month-end balances. Does not mutate the input. */
+export function applyUnpairedCreditLegs<T extends { id: string; balance: number }>(
+  accounts: T[],
+  transactions: LedgerTransaction[],
+  lookupAccounts: Account[]
+): T[] {
+  const deltas = unpairedCreditDeltas(transactions, lookupAccounts);
+  if (!deltas.size) return accounts;
+  let changed = false;
+  const next = accounts.map((account) => {
+    const delta = deltas.get(normalizeBudgetId(account.id)) ?? 0;
+    if (!delta) return account;
+    changed = true;
+    return { ...account, balance: money(Number(account.balance) + delta) };
+  });
+  return changed ? next : accounts;
+}
+
+/**
  * Sum of non-transfer, non-opening activity on on-budget credit cards.
  * This is the slice of liabilityDelta that card envelopes replace.
  */
@@ -545,8 +655,13 @@ export interface CreditCardPlan {
   uncoveredByAccount: Record<string, number>;
   /** Signed credit activity currently inside liabilityDelta. */
   creditActivity: number;
-  /** Signed cash→card payment amounts still inside trackingInflows (negative). */
+  /** Signed transfers onto a card (negative), including off-budget sources. */
   cardPaymentOutflows: number;
+  /**
+   * Slice of cardPaymentOutflows whose source is outside the cash pool (negative).
+   * Those rows are not in the cash balance, so Ready to Assign must not rise by them.
+   */
+  externalCardPaymentOutflows: number;
 }
 
 export function planCreditCardLedger(input: {
@@ -571,6 +686,7 @@ export function planCreditCardLedger(input: {
     uncoveredByAccount: {},
     creditActivity: creditLiabilityActivity(transactions, accounts),
     cardPaymentOutflows: 0,
+    externalCardPaymentOutflows: 0,
   };
   const cards = accounts.filter(isOnBudgetCreditAccount);
   if (!cards.length) return empty;
@@ -739,14 +855,23 @@ export function planCreditCardLedger(input: {
     addPayment(move.fromId, move.year, move.month, move.amount);
     addPayment(move.toId, move.year, move.month, -move.amount);
   }
+  for (const event of creditCardOutboundEvents(transactions, accounts)) {
+    addPayment(event.cardId, event.year, event.month, event.amount);
+  }
 
   const pairs = transferPairs(transactions);
-  const cardPaymentOutflows = money(
-    transactions.reduce((sum, tx) => {
-      if (!isCashToCreditPayment(tx, accounts, pairs)) return sum;
-      return sum + Number(tx.amount);
-    }, 0)
-  );
+  let cardPaymentOutflows = 0;
+  let externalCardPaymentOutflows = 0;
+  for (const tx of transactions) {
+    if (!isCashToCreditPayment(tx, accounts, pairs)) continue;
+    const amount = Number(tx.amount);
+    if (!Number.isFinite(amount)) continue;
+    cardPaymentOutflows = money(cardPaymentOutflows + amount);
+    const source = byId.get(normalizeBudgetId(tx.account_id));
+    if (!source || !inRtaCashPool(source)) {
+      externalCardPaymentOutflows = money(externalCardPaymentOutflows + amount);
+    }
+  }
 
   const uncoveredByAccountRecord: Record<string, number> = {};
   let uncovered = 0;
@@ -765,6 +890,7 @@ export function planCreditCardLedger(input: {
     uncoveredByAccount: uncoveredByAccountRecord,
     creditActivity: empty.creditActivity,
     cardPaymentOutflows,
+    externalCardPaymentOutflows,
   };
 }
 

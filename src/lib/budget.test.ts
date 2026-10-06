@@ -387,7 +387,7 @@ describe("YNAB envelope math", () => {
       ]
     );
     expect(cashAdvance.incomeThisMonth).toBe(1000);
-    expect(cashAdvance.readyToAssign).toBe(1000);
+    expect(cashAdvance.readyToAssign).toBe(900);
     expect(
       checkBudgetMonthAccounts(cashAdvance, [
         { ...account("checking", 1100), type: "checking" as const },

@@ -758,6 +758,71 @@ describe("loadFamilyBudgetCore cashflow path", () => {
     expect(fast.categories).toEqual([]);
     rest.then(() => undefined, () => undefined);
   });
+
+  it("does not store a budget core that resolves after the cache was cleared", async () => {
+    vi.resetModules();
+    let releaseFirst: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let calls = 0;
+    const snapshot = (id: string, name: string) => ({
+      categories: [
+        {
+          id,
+          family_id: "fam-1",
+          group_name: "Życie",
+          name,
+          icon: "🛒",
+          color: "#f59e0b",
+          sort_order: 0,
+          kind: "expense",
+        },
+      ],
+      allocations: [],
+      accounts: [],
+      scheduled: [],
+      activity: [],
+      income: [],
+      spending: [],
+      uncategorized: [],
+      splitLines: [],
+      categoryInflows: [],
+    });
+    vi.doMock("./budget-sql", async () => {
+      const actual = await vi.importActual<typeof import("./budget-sql")>("./budget-sql");
+      return {
+        ...actual,
+        tryQueryFamilyBudgetSql: vi.fn(async () => {
+          calls += 1;
+          if (calls === 1) {
+            await gate;
+            return { payload: snapshot("stale", "Stare") };
+          }
+          return { payload: snapshot("fresh", "Nowe") };
+        }),
+        queryFamilyBudgetSql: vi.fn(),
+        queryLedgerRangeSql: vi.fn(),
+      };
+    });
+    const {
+      loadFamilyBudgetCore,
+      invalidateFamilyBudgetCache,
+      resetFamilyBudgetCache: reset,
+    } = await import("./budget-read");
+    reset();
+    const first = loadFamilyBudgetCore({} as never, "fam-cache", { allowRest: false });
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    invalidateFamilyBudgetCache("fam-cache");
+    releaseFirst();
+    const stale = await first;
+    expect(stale.categories[0]?.id).toBe("stale");
+    const fresh = await loadFamilyBudgetCore({} as never, "fam-cache", { allowRest: false });
+    expect(fresh.categories[0]?.id).toBe("fresh");
+    const cached = await loadFamilyBudgetCore({} as never, "fam-cache", { allowRest: false });
+    expect(cached.categories[0]?.id).toBe("fresh");
+    expect(calls).toBe(2);
+  });
 });
 
 describe("unwrapFamily", () => {

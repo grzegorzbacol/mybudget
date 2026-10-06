@@ -70,6 +70,10 @@ function sqlWarsawMonth(alias = "t"): string {
   return `EXTRACT(MONTH FROM ${sqlWarsawTimestamp(alias)})::int`;
 }
 
+function sqlWarsawDate(alias = "t"): string {
+  return `to_char(${sqlWarsawTimestamp(alias)}, 'YYYY-MM-DD')`;
+}
+
 /** `transactions.date` is a timezone-free `date`. Keep range predicates sargable for (family_id, date). */
 export const SQL_DATE_RANGE_PREDICATE = "t.date >= $2::date AND t.date < $3::date";
 
@@ -225,12 +229,13 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind, omitPaymentAccountId 
     kind === "full"
       ? `,
   'creditLines', COALESCE((
+    -- credit-card ledger
     SELECT json_agg(x) FROM (
       SELECT t.id::text AS id,
              t.account_id::text AS account_id,
              t.category_id::text AS category_id,
              t.amount::float8 AS amount,
-             to_char(t.date, 'YYYY-MM-DD') AS date,
+             ${sqlWarsawDate("t")} AS date,
              t.payee,
              t.memo,
              t.transfer_account_id::text AS transfer_account_id,
@@ -307,6 +312,50 @@ SELECT json_build_object(
   ), '[]'::json)${history}${rtaAdjust}${creditLines}${flags}
 )::jsonb AS payload
 `;
+}
+
+/** Card rows plus transfers that name a credit card, without payment_account_id or on_budget. */
+function creditLinesSql(pred: FamilyPred): string {
+  return `
+-- credit-card ledger
+SELECT t.id::text AS id,
+       t.account_id::text AS account_id,
+       t.category_id::text AS category_id,
+       t.amount::float8 AS amount,
+       ${sqlWarsawDate("t")} AS date,
+       t.payee,
+       t.memo,
+       t.transfer_account_id::text AS transfer_account_id,
+       t.transfer_id::text AS transfer_id
+FROM transactions t
+WHERE ${familyIdMatch(pred, "t")}
+  AND (
+    EXISTS (
+      SELECT 1 FROM accounts c
+      WHERE c.id::text = t.account_id::text AND c.type = 'credit'
+    )
+    OR EXISTS (
+      SELECT 1 FROM accounts c
+      WHERE c.id::text = t.transfer_account_id::text AND c.type = 'credit'
+    )
+  )
+`;
+}
+
+function parseCreditLineRows(rows: Array<Record<string, unknown>>): LedgerTransaction[] {
+  return rows
+    .map((row) => ({
+      id: row.id == null ? undefined : String(row.id),
+      account_id: String(row.account_id ?? ""),
+      category_id: row.category_id == null || row.category_id === "" ? null : String(row.category_id),
+      amount: Number(row.amount) || 0,
+      date: String(row.date ?? ""),
+      payee: row.payee == null ? null : String(row.payee),
+      memo: row.memo == null ? null : String(row.memo),
+      transfer_account_id: row.transfer_account_id == null ? null : String(row.transfer_account_id),
+      transfer_id: row.transfer_id == null ? null : String(row.transfer_id),
+    }))
+    .filter((row) => row.account_id && row.date.length >= 8);
 }
 
 function scheduledSql(pred: FamilyPred): string {
@@ -1155,13 +1204,30 @@ export async function queryFamilyBudgetWithClient(
     return { scheduledRes, splitRes };
   };
 
+  const loadCreditLines = async (plan: SnapshotPlan, payload: FamilyBudgetSqlPayload) => {
+    // A full snapshot already embeds these rows. The safe snapshot omits them, so a
+    // missing on_budget/kind/moved column used to hide every card payment.
+    if (plan.kind !== "safe" || payload.creditLinesLoaded) return payload;
+    if (options?.deadlineAt && Date.now() >= options.deadlineAt) return payload;
+    try {
+      const result = await run(creditLinesSql(plan.pred), [familyId]);
+      return {
+        ...payload,
+        creditLinesLoaded: true,
+        creditLines: parseCreditLineRows(unwrapPgResult(result).rows),
+      };
+    } catch {
+      return payload;
+    }
+  };
+
   const plans = snapshotAttempts();
   for (const plan of plans) {
     if (options?.deadlineAt && Date.now() >= options.deadlineAt) {
       return null;
     }
     try {
-      const payload = await snapshot(plan);
+      const payload = await loadCreditLines(plan, await snapshot(plan));
       const { scheduledRes, splitRes } = await loadExtras(plan);
       return finish(payload, plan, scheduledRes, splitRes.rows);
     } catch (error) {
