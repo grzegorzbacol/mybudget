@@ -12,7 +12,12 @@ import { sqlOpeningBalanceExpr } from "./opening-balance";
 export type MonthTotal = { year: number; month: number; amount: number };
 export type FamilyPred = "uuid" | "text";
 export type SnapshotKind = "full" | "safe";
-export type SnapshotPlan = { pred: FamilyPred; kind: SnapshotKind };
+export type SnapshotPlan = {
+  pred: FamilyPred;
+  kind: SnapshotKind;
+  /** Full snapshot when `budget_categories.payment_account_id` does not exist. */
+  omitPaymentAccountId?: boolean;
+};
 
 export type DailyCashflowActual = { date: string; actualIn: number; actualOut: number };
 
@@ -73,7 +78,7 @@ export function familyIdMatch(mode: FamilyPred, qualifier?: string): string {
   return mode === "uuid" ? `${col} = $1::uuid` : `${col}::text = $1::text`;
 }
 
-function snapshotSql(pred: FamilyPred, kind: SnapshotKind): string {
+function snapshotSql(pred: FamilyPred, kind: SnapshotKind, omitPaymentAccountId = false): string {
   const tFamily = familyIdMatch(pred, "t");
   const family = familyIdMatch(pred);
   // LEFT JOIN + text id match: INNER JOIN dropped every expense when account_id/id
@@ -211,7 +216,9 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind): string {
 
   const categoryColumns =
     kind === "full"
-      ? "id::text AS id, family_id::text AS family_id, group_name, name, icon, color, sort_order, kind, payment_account_id::text AS payment_account_id"
+      ? omitPaymentAccountId
+        ? "id::text AS id, family_id::text AS family_id, group_name, name, icon, color, sort_order, kind"
+        : "id::text AS id, family_id::text AS family_id, group_name, name, icon, color, sort_order, kind, payment_account_id::text AS payment_account_id"
       : "id::text AS id, family_id::text AS family_id, group_name, name, icon, color, sort_order";
 
   const creditLines =
@@ -417,8 +424,10 @@ export const LEDGER_RANGE_SQL_SAFE = ledgerRangeSql("uuid", "safe");
 
 export const SNAPSHOT_PLANS: SnapshotPlan[] = [
   { pred: "uuid", kind: "full" },
+  { pred: "uuid", kind: "full", omitPaymentAccountId: true },
   { pred: "uuid", kind: "safe" },
   { pred: "text", kind: "full" },
+  { pred: "text", kind: "full", omitPaymentAccountId: true },
   { pred: "text", kind: "safe" },
 ];
 
@@ -437,9 +446,17 @@ export function getSnapshotPlan(): SnapshotPlan | null {
   return snapshotPlan;
 }
 
+function sameSnapshotPlan(a: SnapshotPlan, b: SnapshotPlan): boolean {
+  return (
+    a.pred === b.pred &&
+    a.kind === b.kind &&
+    Boolean(a.omitPaymentAccountId) === Boolean(b.omitPaymentAccountId)
+  );
+}
+
 export function snapshotAttempts(cached: SnapshotPlan | null = snapshotPlan): SnapshotPlan[] {
   if (!cached) return SNAPSHOT_PLANS.slice();
-  return [cached, ...SNAPSHOT_PLANS.filter((plan) => plan.pred !== cached.pred || plan.kind !== cached.kind)];
+  return [cached, ...SNAPSHOT_PLANS.filter((plan) => !sameSnapshotPlan(plan, cached))];
 }
 
 function parseJsonValue(value: unknown): unknown {
@@ -1101,7 +1118,7 @@ export async function queryFamilyBudgetWithClient(
   };
 
   const snapshot = async (plan: SnapshotPlan) => {
-    const result = await run(snapshotSql(plan.pred, plan.kind), [familyId]);
+    const result = await run(snapshotSql(plan.pred, plan.kind, plan.omitPaymentAccountId), [familyId]);
     return parseFamilyBudgetPayload(unwrapPgResult(result).rows[0]?.payload);
   };
 
