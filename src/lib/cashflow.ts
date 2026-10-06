@@ -212,6 +212,7 @@ export function buildCashflowTimeline(input: {
   transactions?: LedgerTransaction[];
   dailyActuals?: Array<{ date: string; actualIn: number; actualOut: number }>;
   accounts: Account[];
+  categories?: BudgetCategory[];
   scheduled: ScheduledTransaction[];
   bucket?: "week" | "month";
 }): CashflowBucket[] {
@@ -268,13 +269,17 @@ export function buildCashflowTimeline(input: {
       if (!onBudgetIds.has(tx.account_id)) continue;
       const row = ensure(tx.date);
       const amount = Number(tx.amount);
+      const categories = input.categories ?? [];
       if (accountById.get(tx.account_id)?.type === "credit") {
-        const spent = contributionToSpending(tx, input.accounts);
+        const spent = contributionToSpending(tx, input.accounts, categories);
         if (spent) row.actualOut = money(row.actualOut + spent);
         continue;
       }
-      // Match budget Przychody / SQL snapshot: categorized inflows still count as cash in.
-      if (amount > 0) row.actualIn = money(row.actualIn + amount);
+      if (amount > 0) {
+        const spent = contributionToSpending(tx, input.accounts, categories);
+        if (spent) row.actualOut = money(row.actualOut + spent);
+        else row.actualIn = money(row.actualIn + amount);
+      }
       if (amount < 0 && !isOpeningBalanceTx(tx)) row.actualOut = money(row.actualOut + Math.abs(amount));
     }
   }

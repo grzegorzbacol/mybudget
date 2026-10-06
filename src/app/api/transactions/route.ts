@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
-import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { invalidateFamilyBudgetCache, postedInflowCategoryId } from "@/lib/budget-read";
+import { CREDIT_OVERPAY_MESSAGE, creditLedgerWouldGoPositive } from "@/lib/credit-cards";
 import { loadAccountForLedger } from "@/lib/accounts";
 import { insertRowWithSchemaRepair, insertRowsWithSchemaRepair } from "@/lib/schema-write";
 import { transactionSchema } from "@/lib/validators";
@@ -19,14 +20,18 @@ export async function POST(request: Request) {
   }
 
   const { splits, category_splits: categorySplits, ...payload } = parsed.data;
-  if (payload.amount > 0) {
-    payload.category_id = null;
-  }
   if (categorySplits?.length) {
     if (!categorySplitsValid(payload.amount, categorySplits)) {
       return NextResponse.json({ error: "Suma podziału na koperty musi równać się kwocie" }, { status: 400 });
     }
     payload.category_id = categorySplits[0].category_id;
+  } else if (payload.amount > 0) {
+    payload.category_id = await postedInflowCategoryId(
+      ctx.supabase,
+      ctx.family.id,
+      payload.amount,
+      payload.category_id
+    );
   }
 
   const loaded = await loadAccountForLedger(ctx.supabase, ctx.family.id, payload.account_id);
@@ -38,6 +43,13 @@ export async function POST(request: Request) {
 
   if (account.on_budget === false && payload.amount < 0) {
     payload.category_id = null;
+  }
+  if (
+    account.type === "credit" &&
+    account.balance != null &&
+    creditLedgerWouldGoPositive(account.balance, payload.amount)
+  ) {
+    return NextResponse.json({ error: CREDIT_OVERPAY_MESSAGE }, { status: 400 });
   }
 
   const created = await insertRowWithSchemaRepair(

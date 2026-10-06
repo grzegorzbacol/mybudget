@@ -110,10 +110,28 @@ export function useCreateTransaction() {
       if (!previous) return { previous, key };
       const next = structuredClone(previous);
       if (Number(input.amount) > 0) {
-        next.incomeThisMonth += Number(input.amount);
-        next.readyToAssign += Number(input.amount);
+        let refunded = false;
+        if (input.category_id) {
+          const add = Number(input.amount);
+          for (const group of next.groups) {
+            for (const row of group.categories) {
+              if (row.category.id !== input.category_id) continue;
+              row.activity += add;
+              row.available += add;
+              group.activity += add;
+              group.available += add;
+              next.totalActivity += add;
+              next.totalAvailable += add;
+              refunded = true;
+            }
+          }
+        }
         next.onBudgetBalance += Number(input.amount);
         if (next.onBudgetCash != null) next.onBudgetCash += Number(input.amount);
+        if (!refunded) {
+          next.incomeThisMonth += Number(input.amount);
+          next.readyToAssign += Number(input.amount);
+        }
       } else {
         const lines = input.category_splits?.length
           ? input.category_splits

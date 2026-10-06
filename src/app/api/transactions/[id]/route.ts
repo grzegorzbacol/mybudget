@@ -1,12 +1,89 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
-import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { invalidateFamilyBudgetCache, postedInflowCategoryId } from "@/lib/budget-read";
+import { CREDIT_OVERPAY_MESSAGE, creditLedgerWouldGoPositive } from "@/lib/credit-cards";
 import { loadFamilyTransactionDetail, type TransactionDetailClient } from "@/lib/transaction-detail";
 import { deleteFamilyTransaction } from "@/lib/transaction-delete";
 import { transactionPatchSchema } from "@/lib/validators";
 import { replaceCategorySplits } from "@/lib/category-splits";
 import { updateRowWithSchemaRepair } from "@/lib/schema-write";
 import { updateTransferRow } from "@/lib/transfer-write";
+
+type CreditPatchRow = {
+  id: string;
+  amount: number;
+  account_id?: string;
+  transfer_id?: string | null;
+};
+
+type QueryRow = Record<string, unknown> | null;
+
+interface RowFilter {
+  eq: (column: string, value: string) => RowFilter;
+  neq: (column: string, value: string) => RowFilter;
+  maybeSingle: () => Promise<{ data: QueryRow }>;
+}
+
+interface RowQuery {
+  from: (table: string) => {
+    select: (columns: string) => RowFilter;
+  };
+}
+
+async function accountBalance(
+  supabase: RowQuery,
+  familyId: string,
+  accountId: string
+): Promise<{ type?: string; balance?: number } | null> {
+  const { data } = await supabase
+    .from("accounts")
+    .select("type, balance")
+    .eq("id", accountId)
+    .eq("family_id", familyId)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    type: typeof data.type === "string" ? data.type : undefined,
+    balance: data.balance == null ? undefined : Number(data.balance),
+  };
+}
+
+function postedBalanceWouldGoPositive(
+  account: { type?: string; balance?: number | string | null } | null,
+  balanceAlreadyIncludes: number,
+  nextAmount: number
+): boolean {
+  if (!account || account.type !== "credit" || account.balance == null) return false;
+  const base = Number(account.balance) - Number(balanceAlreadyIncludes);
+  return creditLedgerWouldGoPositive(base, nextAmount);
+}
+
+async function creditPatchWouldGoPositive(
+  supabase: RowQuery,
+  familyId: string,
+  current: CreditPatchRow,
+  nextAmount: number | undefined
+): Promise<boolean> {
+  if (!current.account_id) return false;
+  const amount = nextAmount != null ? Number(nextAmount) : Number(current.amount);
+  const account = await accountBalance(supabase, familyId, current.account_id);
+  if (postedBalanceWouldGoPositive(account, Number(current.amount), amount)) return true;
+  if (nextAmount == null || !current.transfer_id) return false;
+  const pair = await supabase
+    .from("transactions")
+    .select("id, account_id, amount")
+    .eq("transfer_id", current.transfer_id)
+    .neq("id", current.id)
+    .eq("family_id", familyId)
+    .maybeSingle();
+  const other = pair.data;
+  const otherAccountId = typeof other?.account_id === "string" ? other.account_id : "";
+  if (!otherAccountId) return false;
+  const previous = typeof other?.amount === "number" || typeof other?.amount === "string" ? Number(other.amount) : 0;
+  const pairAmount = Number(current.amount) < 0 ? Math.abs(amount) : -Math.abs(amount);
+  const pairAccount = await accountBalance(supabase, familyId, otherAccountId);
+  return postedBalanceWouldGoPositive(pairAccount, previous, pairAmount);
+}
 
 async function routeId(
   params: Promise<{ id: string }> | { id: string }
@@ -66,12 +143,6 @@ export async function PATCH(
   const categorySplits = patch.category_splits;
   delete patch.category_splits;
   delete patch.splits;
-  if (patch.amount != null && patch.amount > 0) {
-    patch.category_id = null;
-  }
-  if (categorySplits?.length) {
-    patch.category_id = categorySplits[0].category_id;
-  }
 
   let current: {
     id: string;
@@ -79,11 +150,13 @@ export async function PATCH(
     date: string;
     cleared: boolean;
     family_id: string;
+    account_id?: string;
+    category_id?: string | null;
     transfer_id?: string | null;
   } | null = (
     await ctx.supabase
       .from("transactions")
-      .select("id, amount, date, cleared, transfer_id, family_id")
+      .select("id, amount, date, cleared, transfer_id, family_id, account_id, category_id")
       .eq("id", id)
       .eq("family_id", ctx.family.id)
       .maybeSingle()
@@ -92,7 +165,7 @@ export async function PATCH(
   if (!current) {
     const fallback = await ctx.supabase
       .from("transactions")
-      .select("id, amount, date, cleared, family_id")
+      .select("id, amount, date, cleared, family_id, account_id, category_id")
       .eq("id", id)
       .eq("family_id", ctx.family.id)
       .maybeSingle();
@@ -101,6 +174,29 @@ export async function PATCH(
 
   if (!current) {
     return NextResponse.json({ error: "Nie znaleziono transakcji" }, { status: 404 });
+  }
+
+  if (categorySplits?.length) {
+    patch.category_id = categorySplits[0].category_id;
+  } else {
+    const nextAmount = patch.amount != null ? Number(patch.amount) : Number(current.amount);
+    const categoryTouched = patch.category_id !== undefined || patch.amount != null;
+    if (nextAmount > 0 && categoryTouched) {
+      const requested = patch.category_id !== undefined ? patch.category_id : current.category_id;
+      patch.category_id = await postedInflowCategoryId(ctx.supabase, ctx.family.id, nextAmount, requested);
+    }
+  }
+
+  if (current.account_id && patch.amount != null) {
+    const overpay = await creditPatchWouldGoPositive(
+      ctx.supabase as unknown as RowQuery,
+      ctx.family.id,
+      current,
+      patch.amount
+    );
+    if (overpay) {
+      return NextResponse.json({ error: CREDIT_OVERPAY_MESSAGE }, { status: 400 });
+    }
   }
 
   const writesTransferColumns =

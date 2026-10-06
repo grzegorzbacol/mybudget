@@ -1,20 +1,33 @@
+import { accountsAsOfMonth, isOnOrBeforeMonthDate, sumAmountsThrough } from "@/lib/account-balances";
 import { upcomingByCategory } from "@/lib/cashflow";
 import { plannedMonthTotals } from "@/lib/plan";
 import {
   activityByCategoryMonth,
   activityMapFromAggregates,
   applyCategorySplitAggregates,
+  applyExpenseCategoryInflows,
   assembleBudgetMonthData,
+  categoryIdKeptOnInflow,
   expandCategorySplits,
+  isExpenseCategory,
   isLiabilityAccountType,
   isTransferTx,
+  ledgerHistoryBuckets,
   normalizeBudgetId,
   onBudgetLiabilityLedgerDelta,
   transferInflowsFromTracking,
 } from "@/lib/budget";
-import { applyCreditCardBudget, describeCreditCards, isOnBudgetCreditAccount } from "@/lib/credit-cards";
+import {
+  applyCreditCardBudget,
+  describeCreditCards,
+  isOnBudgetCreditAccount,
+  liabilityAfterCreditCards,
+  nonCreditOutflows,
+  planCreditCardLedger,
+  trackingAfterCreditCards,
+} from "@/lib/credit-cards";
 import { ensureCreditPaymentCategories } from "@/lib/credit-cards-write";
-import { addDays, monthRange } from "@/lib/money";
+import { addDays, isPlausibleBudgetYearMonth, monthIndex, monthRange, parseMonthKey } from "@/lib/money";
 import { isOpeningBalanceTx } from "@/lib/opening-balance";
 import {
   excludeSplitParentsFromUncategorized,
@@ -51,6 +64,17 @@ export type FamilyBudgetCore = {
   trackingInflows?: number;
   /** Card spending the category could not cover, keyed by account id. */
   uncoveredByAccount?: Record<string, number>;
+  /** Posted flows used to rewind account.balance to a month end. */
+  accountFlows?: FamilyBudgetSqlPayload["accountFlows"];
+  /** Raw, pre-credit liability by month. Missing key keeps the all-time scalar. */
+  liabilityByMonth?: FamilyBudgetSqlPayload["liabilityByMonth"];
+  trackingByMonth?: FamilyBudgetSqlPayload["trackingByMonth"];
+  /** SQL tracking sums include card payments. REST sums already exclude them. */
+  trackingIncludesCardPayments?: boolean;
+  /** Card lines, or the full ledger when cash and card rows were planned together. */
+  creditLines?: LedgerTransaction[];
+  /** True when creditLines is only the card subset and cash activity lives in the map. */
+  creditSeparateCashOutflows?: boolean;
 };
 
 /** Budget always falls back to PostgREST. Cashflow only does so when SQL DNS/connect fails. */
@@ -214,6 +238,7 @@ async function loadCoreFromRest(
       .eq("family_id", familyId);
     accounts = fallback.error ? [] : ((fallback.data ?? []) as Account[]);
   }
+  const history = ledgerHistoryBuckets(transactions, accounts);
   const core: FamilyBudgetCore = {
     categories,
     allocations,
@@ -228,15 +253,24 @@ async function loadCoreFromRest(
     transferMarkersMissing,
     liabilityDelta: onBudgetLiabilityLedgerDelta(transactions, accounts),
     trackingInflows: transferInflowsFromTracking(transactions, accounts),
+    ...history,
   };
   return { core: attachRestMonthTotals(core, transactions), transactions };
 }
 
 export function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
+  const refunded = applyExpenseCategoryInflows({
+    activityMap: activityMapFromAggregates(payload.activity),
+    categories: payload.categories,
+    inflows: payload.categoryInflows,
+    income: payload.income,
+    spending: payload.spending,
+  });
   const activityMap = applyCategorySplitAggregates(
-    activityMapFromAggregates(payload.activity),
+    refunded.activityMap,
     payload.splitLines,
-    payload.accounts
+    payload.accounts,
+    payload.categories
   );
   return {
     categories: payload.categories,
@@ -244,8 +278,8 @@ export function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
     accounts: payload.accounts,
     scheduled: payload.scheduled,
     activityMap,
-    income: payload.income,
-    spending: payload.spending,
+    income: refunded.income,
+    spending: refunded.spending,
     uncategorized: payload.transferMarkersMissing
       ? []
       : excludeSplitParentsFromUncategorized(payload.uncategorized, payload.splitLines),
@@ -256,6 +290,9 @@ export function coreFromSql(payload: FamilyBudgetSqlPayload): FamilyBudgetCore {
     transferMarkersMissing: payload.transferMarkersMissing,
     liabilityDelta: payload.liabilityDelta,
     trackingInflows: payload.trackingInflows,
+    accountFlows: payload.accountFlows,
+    liabilityByMonth: payload.liabilityByMonth,
+    trackingByMonth: payload.trackingByMonth,
   };
 }
 
@@ -379,33 +416,96 @@ export async function loadFamilyBudgetCore(
   }
 }
 
+function activityMapThroughMonth(
+  activityMap: Map<string, Map<string, number>>,
+  year: number,
+  month: number
+): Map<string, Map<string, number>> {
+  const target = monthIndex(year, month);
+  const next = new Map<string, Map<string, number>>();
+  for (const [id, byMonth] of Array.from(activityMap.entries())) {
+    const kept = new Map<string, number>();
+    for (const [key, amount] of Array.from(byMonth.entries())) {
+      const parsed = parseMonthKey(key);
+      if (!parsed || !isPlausibleBudgetYearMonth(parsed.year, parsed.month)) continue;
+      if (monthIndex(parsed.year, parsed.month) > target) continue;
+      kept.set(key, amount);
+    }
+    if (kept.size) next.set(id, kept);
+  }
+  return next;
+}
+
 export function budgetMonthFromCore(
   core: FamilyBudgetCore,
   year: number,
   month: number
 ): BudgetMonthData {
   const { start, end } = monthRange(year, month);
+  const accounts = core.accountFlows
+    ? accountsAsOfMonth(core.accounts, core.accountFlows, year, month)
+    : core.accounts;
   const upcoming = upcomingByCategory(core.scheduled, start, addDays(end, -1));
-  const planned = plannedMonthTotals(core.scheduled, year, month, core.accounts);
+  const planned = plannedMonthTotals(core.scheduled, year, month, accounts);
+
+  let liabilityDelta = core.liabilityDelta;
+  let trackingInflows = core.trackingInflows;
+  let uncovered = core.uncoveredByAccount ?? {};
+  if (core.liabilityByMonth) {
+    const rawLiability = sumAmountsThrough(core.liabilityByMonth, year, month);
+    const rawTracking = core.trackingByMonth
+      ? sumAmountsThrough(core.trackingByMonth, year, month)
+      : Number(core.trackingInflows) || 0;
+    const replay = Boolean(core.creditLines && core.accounts.some(isOnBudgetCreditAccount));
+    if (replay && core.creditLines) {
+      const target = monthIndex(year, month);
+      const through = core.creditLines.filter((tx) => isOnOrBeforeMonthDate(tx.date, year, month));
+      const plan = planCreditCardLedger({
+        categories: core.categories,
+        allocations: (core.allocations ?? []).filter((row) => {
+          const y = Number(row.year);
+          const m = Number(row.month);
+          return isPlausibleBudgetYearMonth(y, m) && monthIndex(y, m) <= target;
+        }),
+        accounts,
+        transactions: through,
+        priorOutflows: core.creditSeparateCashOutflows
+          ? nonCreditOutflows(activityMapThroughMonth(core.activityMap, year, month), through, {
+              includeInflows: true,
+            })
+          : undefined,
+      });
+      liabilityDelta = liabilityAfterCreditCards(rawLiability, plan.creditActivity, plan.uncovered);
+      trackingInflows = trackingAfterCreditCards(
+        rawTracking,
+        plan.cardPaymentOutflows,
+        core.trackingIncludesCardPayments === true
+      );
+      uncovered = plan.uncoveredByAccount;
+    } else {
+      liabilityDelta = rawLiability;
+      trackingInflows = rawTracking;
+    }
+  }
 
   const data = assembleBudgetMonthData({
     year,
     month,
     categories: core.categories,
     allocations: core.allocations,
-    accounts: core.accounts,
+    accounts,
     activityMap: core.activityMap,
     incomeThisMonth: monthAmount(core.income, year, month),
     uncategorizedCount: core.transferMarkersMissing ? 0 : monthCount(core.uncategorized, year, month),
     upcomingByCategory: upcoming,
     plannedIncome: planned.income,
     plannedExpense: planned.expense,
-    liabilityDelta: core.liabilityDelta,
-    trackingInflows: core.trackingInflows,
+    liabilityDelta,
+    trackingInflows,
   });
   return {
     ...data,
-    creditCards: describeCreditCards(data, core.accounts, core.categories, core.uncoveredByAccount ?? {}),
+    creditCards: describeCreditCards(data, accounts, core.categories, uncovered),
   };
 }
 
@@ -424,7 +524,10 @@ async function finishCreditCardBudget(
   const categories = core.accounts.some(isOnBudgetCreditAccount)
     ? await ensureCreditPaymentCategories(supabase, familyId, core.categories, core.accounts)
     : core.categories;
-  if (!credit.loaded) return { ...core, categories };
+  const hasCard = core.accounts.some(isOnBudgetCreditAccount);
+  if (!credit.loaded) {
+    return { ...core, categories, trackingIncludesCardPayments: credit.trackingIncludesCardPayments };
+  }
   const applied = applyCreditCardBudget({
     categories,
     allocations: core.allocations,
@@ -439,7 +542,13 @@ async function finishCreditCardBudget(
     separateCashOutflows: credit.separateCashOutflows,
     monthTotalsAlreadyNetOfCards: credit.monthTotalsAlreadyNetOfCards,
   });
-  return { ...core, ...applied };
+  return {
+    ...core,
+    ...applied,
+    trackingIncludesCardPayments: credit.trackingIncludesCardPayments,
+    creditLines: hasCard ? credit.transactions : undefined,
+    creditSeparateCashOutflows: hasCard ? credit.separateCashOutflows : undefined,
+  };
 }
 
 /** PostgREST fallback still has raw txs available only inside loadCoreFromRest.
@@ -453,6 +562,7 @@ export function attachRestMonthTotals(
   const spendByMonth = new Map<string, number>();
   const uncategorizedByMonth = new Map<string, number>();
   const accountsById = new Map(core.accounts.map((account) => [normalizeBudgetId(account.id), account]));
+  const expenseIds = new Set(core.categories.filter(isExpenseCategory).map((category) => normalizeBudgetId(category.id)));
 
   for (const tx of transactions) {
     if (typeof tx.date !== "string" || tx.date.length < 7) continue;
@@ -466,7 +576,15 @@ export function attachRestMonthTotals(
     if (isTransferTx(tx)) continue;
     const amount = Number(tx.amount);
     const creditRefund = account?.type === "credit" && amount > 0 && !isOpeningBalanceTx(tx);
-    if (amount > 0 && !creditRefund && !(account && isLiabilityAccountType(account.type))) {
+    const expenseRefund =
+      amount > 0 &&
+      !isOpeningBalanceTx(tx) &&
+      !creditRefund &&
+      !(account && isLiabilityAccountType(account.type)) &&
+      expenseIds.has(normalizeBudgetId(tx.category_id));
+    if (expenseRefund) {
+      spendByMonth.set(key, (spendByMonth.get(key) ?? 0) - amount);
+    } else if (amount > 0 && !creditRefund && !(account && isLiabilityAccountType(account.type))) {
       incomeByMonth.set(key, (incomeByMonth.get(key) ?? 0) + amount);
     } else if (creditRefund) {
       spendByMonth.set(key, (spendByMonth.get(key) ?? 0) - amount);
@@ -491,6 +609,19 @@ export function attachRestMonthTotals(
     return { year, month, n };
   });
   return { ...core, income, spending, uncategorized };
+}
+
+export async function postedInflowCategoryId(
+  supabase: Supabase,
+  familyId: string,
+  amount: number,
+  categoryId: string | null | undefined
+): Promise<string | null> {
+  if (!(Number(amount) > 0)) return categoryId ?? null;
+  if (!categoryId) return null;
+  const loaded = await fetchFamilyCategories(supabase, familyId);
+  if (loaded.error && !loaded.data.length) return null;
+  return categoryIdKeptOnInflow(amount, categoryId, loaded.data);
 }
 
 export async function loadLedgerRange(

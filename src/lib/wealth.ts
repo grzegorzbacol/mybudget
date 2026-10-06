@@ -3,7 +3,7 @@ import { isOpeningBalanceTx } from "./opening-balance";
 import { generateScheduleOccurrences } from "./cashflow";
 import { todayIso } from "./format";
 import { addDays, daysInMonth, money } from "./money";
-import type { Account, LedgerTransaction, ScheduledTransaction, WealthTotals } from "./types";
+import type { Account, BudgetCategory, LedgerTransaction, ScheduledTransaction, WealthTotals } from "./types";
 
 export const ACCOUNT_TYPE_META = {
   checking: { label: "Rozliczeniowe", kind: "asset", onBudget: true, group: "budget" },
@@ -160,7 +160,8 @@ export function monthCashActual(
   transactions: LedgerTransaction[],
   accounts: Account[],
   year: number,
-  month: number
+  month: number,
+  categories: BudgetCategory[] = []
 ) {
   const start = `${year}-${String(month).padStart(2, "0")}-01`;
   const endMonth = month === 12 ? 1 : month + 1;
@@ -175,12 +176,15 @@ export function monthCashActual(
     if (account && !isOnBudget(account)) continue;
     const amount = Number(tx.amount);
     if (account?.type === "credit") {
-      const spent = contributionToSpending(tx, accounts);
+      const spent = contributionToSpending(tx, accounts, categories);
       if (spent) spending = money(spending + spent);
       continue;
     }
-    // Same rule as budget Przychody: categorized cash inflows still count as income.
-    if (amount > 0) income = money(income + amount);
+    if (amount > 0) {
+      const spent = contributionToSpending(tx, accounts, categories);
+      if (spent) spending = money(spending + spent);
+      else income = money(income + amount);
+    }
     if (amount < 0) spending = money(spending + Math.abs(amount));
   }
   return { income, spending, net: money(income - spending) };

@@ -7,6 +7,7 @@ import {
   trackingAfterCreditCards,
   transferPairs,
 } from "./credit-cards";
+import { accountFlowsFromTransactions, accountsAsOfMonth, isOnOrBeforeMonthDate } from "./account-balances";
 import { isOpeningBalanceTx } from "./opening-balance";
 import { isPlausibleBudgetYearMonth, isValidYearMonth, money, monthIndex, parseMonthKey, parseYearMonthFromDate } from "./money";
 import type {
@@ -104,12 +105,46 @@ export function isOnBudgetAccount(
   return !account || isOnBudget(account);
 }
 
+type CategoryRef = Pick<BudgetCategory, "id" | "kind" | "group_name" | "name"> & {
+  payment_account_id?: string | null;
+};
+
+function categoryById(categories: CategoryRef[], categoryId: unknown): CategoryRef | undefined {
+  const id = normalizeBudgetId(categoryId);
+  if (!id) return undefined;
+  return categories.find((category) => normalizeBudgetId(category.id) === id);
+}
+
 /**
- * On-budget inflows always feed Ready to Assign / Przychody w miesiącu.
- * A category (income envelope or mistaken expense envelope) is not a transfer.
+ * Positive amount on an expense envelope is a refund: it restores that envelope.
+ * Income categories (Wynagrodzenie) and uncategorized inflows stay Ready to Assign.
+ * Callers that omit categories keep the previous "any cash inflow is income" rule.
  */
-export function isIncomeToReadyToAssign(tx: LedgerTransaction, accounts: Account[] = []): boolean {
+export function isExpenseCategoryRefund(
+  tx: LedgerTransaction,
+  accounts: Account[] = [],
+  categories: CategoryRef[] = []
+): boolean {
+  if (Number(tx.amount) <= 0 || isTransferTx(tx) || isOpeningBalanceTx(tx)) return false;
+  if (!tx.category_id || !categories.length) return false;
+  if (!isOnBudgetAccount(tx, accounts)) return false;
+  const account = accounts.find((row) => normalizeBudgetId(row.id) === normalizeBudgetId(tx.account_id));
+  if (account && isLiabilityAccountType(account.type)) return false;
+  const category = categoryById(categories, tx.category_id);
+  return Boolean(category && isExpenseCategory(category));
+}
+
+/**
+ * On-budget inflows feed Ready to Assign / Przychody w miesiącu, except a refund
+ * assigned to an expense category and money landing on a liability account.
+ */
+export function isIncomeToReadyToAssign(
+  tx: LedgerTransaction,
+  accounts: Account[] = [],
+  categories: CategoryRef[] = []
+): boolean {
   if (Number(tx.amount) <= 0 || isTransferTx(tx)) return false;
+  if (isExpenseCategoryRefund(tx, accounts, categories)) return false;
   if (accounts.length) {
     const account = accounts.find((row) => normalizeBudgetId(row.id) === normalizeBudgetId(tx.account_id));
     // A credit-card refund reduces debt. It is not a paycheck.
@@ -118,18 +153,36 @@ export function isIncomeToReadyToAssign(tx: LedgerTransaction, accounts: Account
   return isOnBudgetAccount(tx, accounts);
 }
 
+/** Keep an expense category on a positive amount. Income categories and unknown ids go to Ready to Assign. */
+export function categoryIdKeptOnInflow(
+  amount: number,
+  categoryId: string | null | undefined,
+  categories: CategoryRef[]
+): string | null {
+  if (!(Number(amount) > 0)) return categoryId ?? null;
+  if (!categoryId) return null;
+  const category = categoryById(categories, categoryId);
+  if (category && isExpenseCategory(category)) return categoryId;
+  return null;
+}
+
 /**
  * How much a ledger row contributes to "spent" in reports and cashflow.
  * Card purchases count. Card payments (transfers) and opening balances do not.
  * A refund on the card reduces spending.
  */
-export function contributionToSpending(tx: LedgerTransaction, accounts: Account[] = []): number {
+export function contributionToSpending(
+  tx: LedgerTransaction,
+  accounts: Account[] = [],
+  categories: CategoryRef[] = []
+): number {
   if (isTransferTx(tx) || isOpeningBalanceTx(tx)) return 0;
   if (!isOnBudgetAccount(tx, accounts)) return 0;
   const amount = Number(tx.amount);
   if (!Number.isFinite(amount) || amount === 0) return 0;
   const account = accounts.find((row) => normalizeBudgetId(row.id) === normalizeBudgetId(tx.account_id));
   if (account?.type === "credit") return money(-amount);
+  if (isExpenseCategoryRefund(tx, accounts, categories)) return money(-amount);
   return amount < 0 ? money(-amount) : 0;
 }
 
@@ -204,11 +257,12 @@ export function expandCategorySplits(
       out.push(tx);
       continue;
     }
+    const sign = Number(tx.amount) < 0 ? -1 : 1;
     for (const line of lines) {
       out.push({
         ...tx,
         category_id: line.category_id,
-        amount: -Math.abs(Number(line.amount) || 0),
+        amount: sign * Math.abs(Number(line.amount) || 0),
       });
     }
   }
@@ -241,7 +295,7 @@ function monthKey(year: number, month: number): MonthKey {
 export function activityByCategoryMonth(
   transactions: LedgerTransaction[],
   accounts: Account[] = [],
-  categories: Array<Pick<BudgetCategory, "id" | "group_name" | "name"> & { payment_account_id?: string | null }> = []
+  categories: CategoryRef[] = []
 ): Map<string, Map<MonthKey, number>> {
   const paymentIds = new Set(
     categories.filter(isCreditPaymentCategory).map((category) => normalizeBudgetId(category.id))
@@ -250,7 +304,9 @@ export function activityByCategoryMonth(
   for (const tx of transactions) {
     const categoryId = normalizeBudgetId(tx.category_id);
     if (!categoryId || isTransferTx(tx) || paymentIds.has(categoryId)) continue;
-    if (Number(tx.amount) >= 0) continue;
+    const amount = Number(tx.amount);
+    if (!Number.isFinite(amount) || amount === 0) continue;
+    if (amount > 0 && !isExpenseCategoryRefund(tx, accounts, categories)) continue;
     if (!isOnBudgetAccount(tx, accounts)) continue;
     const ym = parseYearMonthFromDate(tx.date);
     if (!ym || !isPlausibleBudgetYearMonth(ym.year, ym.month)) continue;
@@ -261,7 +317,7 @@ export function activityByCategoryMonth(
       byMonth = new Map();
       map.set(categoryId, byMonth);
     }
-    byMonth.set(key, money((byMonth.get(key) ?? 0) + Number(tx.amount)));
+    byMonth.set(key, money((byMonth.get(key) ?? 0) + amount));
   }
   return map;
 }
@@ -270,12 +326,13 @@ export function incomeInMonth(
   transactions: LedgerTransaction[],
   year: number,
   month: number,
-  accounts: Account[] = []
+  accounts: Account[] = [],
+  categories: CategoryRef[] = []
 ): number {
   const key = monthKey(year, month);
   return money(
     transactions.reduce((sum, tx) => {
-      if (!isIncomeToReadyToAssign(tx, accounts)) return sum;
+      if (!isIncomeToReadyToAssign(tx, accounts, categories)) return sum;
       const ym = parseYearMonthFromDate(tx.date);
       if (!ym || monthKey(ym.year, ym.month) !== key) return sum;
       return sum + Number(tx.amount);
@@ -622,7 +679,8 @@ function addActivityDelta(
 export function applyCategorySplitAggregates(
   activityMap: Map<string, Map<MonthKey, number>>,
   lines: SplitActivityLine[] | null | undefined,
-  accounts: Account[] = []
+  accounts: Account[] = [],
+  categories: CategoryRef[] = []
 ): Map<string, Map<MonthKey, number>> {
   if (!lines?.length) return activityMap;
   const skipTx = new Set<string>();
@@ -637,7 +695,9 @@ export function applyCategorySplitAggregates(
     if (!undone.has(line.transaction_id)) {
       undone.add(line.transaction_id);
       const parentAmount = Number(line.parent_amount) || 0;
-      if (parentAmount < 0 && line.parent_category_id) {
+      const parent = line.parent_category_id ? categoryById(categories, line.parent_category_id) : undefined;
+      const undoParent = parentAmount < 0 || (parentAmount > 0 && Boolean(parent && isExpenseCategory(parent)));
+      if (line.parent_category_id && undoParent) {
         addActivityDelta(activityMap, line.parent_category_id, Number(line.year), Number(line.month), -parentAmount);
       }
     }
@@ -827,6 +887,122 @@ export function assembleBudgetMonthData(input: {
   };
 }
 
+export type CategoryInflowTotal = {
+  category_id: string;
+  year: number;
+  month: number;
+  amount: number;
+};
+
+function shiftMonthAmounts(
+  rows: Array<{ year: number; month: number; amount: number }> | null | undefined,
+  deltas: Map<string, number>,
+  sign: number,
+  clampAtZero = false
+): Array<{ year: number; month: number; amount: number }> {
+  const map = new Map<string, { year: number; month: number; amount: number }>();
+  for (const row of rows ?? []) {
+    const year = Number(row.year);
+    const month = Number(row.month);
+    const key = `${year}-${month}`;
+    const current = map.get(key);
+    map.set(key, {
+      year,
+      month,
+      amount: money((current?.amount ?? 0) + (Number(row.amount) || 0)),
+    });
+  }
+  for (const [key, delta] of Array.from(deltas.entries())) {
+    if (!delta) continue;
+    const [year, month] = key.split("-").map(Number);
+    const current = map.get(key);
+    map.set(key, {
+      year,
+      month,
+      amount: money((current?.amount ?? 0) + sign * delta),
+    });
+  }
+  return Array.from(map.values())
+    .map((row) => ({ ...row, amount: clampAtZero ? money(Math.max(0, row.amount)) : row.amount }))
+    .filter((row) => Math.abs(row.amount) > 0.0001);
+}
+
+/** Positive expense-category inflows restore the envelope and are not income or spending. */
+export function applyExpenseCategoryInflows(input: {
+  activityMap: Map<string, Map<MonthKey, number>>;
+  categories: CategoryRef[];
+  inflows?: CategoryInflowTotal[] | null;
+  income?: Array<{ year: number; month: number; amount: number }> | null;
+  spending?: Array<{ year: number; month: number; amount: number }> | null;
+}): {
+  activityMap: Map<string, Map<MonthKey, number>>;
+  income: Array<{ year: number; month: number; amount: number }>;
+  spending: Array<{ year: number; month: number; amount: number }>;
+} {
+  const incomeDeltas = new Map<string, number>();
+  for (const row of input.inflows ?? []) {
+    const category = categoryById(input.categories, row.category_id);
+    if (!category || !isExpenseCategory(category)) continue;
+    const amount = Number(row.amount);
+    const year = Number(row.year);
+    const month = Number(row.month);
+    if (!amount || !isPlausibleBudgetYearMonth(year, month)) continue;
+    addActivityDelta(input.activityMap, category.id, year, month, amount);
+    const key = `${year}-${month}`;
+    incomeDeltas.set(key, money((incomeDeltas.get(key) ?? 0) + amount));
+  }
+  if (!incomeDeltas.size) {
+    return {
+      activityMap: input.activityMap,
+      income: input.income ?? [],
+      spending: input.spending ?? [],
+    };
+  }
+  return {
+    activityMap: input.activityMap,
+    income: shiftMonthAmounts(input.income, incomeDeltas, -1),
+    spending: shiftMonthAmounts(input.spending, incomeDeltas, -1, true),
+  };
+}
+
+/** Raw month buckets from a full ledger, before the credit-card adjustment. */
+export function ledgerHistoryBuckets(transactions: LedgerTransaction[], accounts: Account[]) {
+  const liability = new Map<string, { year: number; month: number; amount: number }>();
+  const tracking = new Map<string, { year: number; month: number; amount: number }>();
+  const pairs = transferPairs(transactions);
+  const liabilityIds = new Set(
+    (accounts ?? [])
+      .filter((account) => isOnBudget(account) && isLiabilityAccountType(account.type))
+      .map((account) => normalizeBudgetId(account.id))
+  );
+  const byId = new Map((accounts ?? []).map((account) => [normalizeBudgetId(account.id), account]));
+  for (const tx of transactions ?? []) {
+    const ym = parseYearMonthFromDate(tx.date);
+    if (!ym || !isPlausibleBudgetYearMonth(ym.year, ym.month)) continue;
+    const amount = Number(tx.amount);
+    if (!Number.isFinite(amount) || amount === 0) continue;
+    const accountId = normalizeBudgetId(tx.account_id);
+    if (!isOpeningBalanceTx(tx) && !isTransferTx(tx) && liabilityIds.has(accountId)) {
+      const key = `${ym.year}-${ym.month}`;
+      const row = liability.get(key);
+      liability.set(key, { year: ym.year, month: ym.month, amount: money((row?.amount ?? 0) + amount) });
+    }
+    if (isTransferTx(tx) && !isCashToCreditPayment(tx, accounts, pairs)) {
+      const account = byId.get(accountId);
+      if (account && inRtaCashPool(account)) {
+        const key = `${ym.year}-${ym.month}`;
+        const row = tracking.get(key);
+        tracking.set(key, { year: ym.year, month: ym.month, amount: money((row?.amount ?? 0) + amount) });
+      }
+    }
+  }
+  return {
+    accountFlows: accountFlowsFromTransactions(transactions),
+    liabilityByMonth: Array.from(liability.values()),
+    trackingByMonth: Array.from(tracking.values()),
+  };
+}
+
 export function buildBudgetMonthData(
   year: number,
   month: number,
@@ -837,14 +1013,22 @@ export function buildBudgetMonthData(
   upcomingByCategory: Map<string, number> = new Map()
 ): BudgetMonthData {
   const ledger = transactions ?? [];
-  const accountList = accounts ?? [];
+  const postedAccounts = accounts ?? [];
+  const accountList = accountsAsOfMonth(postedAccounts, accountFlowsFromTransactions(ledger), year, month);
+  const through = ledger.filter((tx) => isOnOrBeforeMonthDate(tx.date, year, month));
+  const target = monthIndex(year, month);
+  const planAllocations = (allocations ?? []).filter((row) => {
+    const y = Number(row.year);
+    const m = Number(row.month);
+    return isPlausibleBudgetYearMonth(y, m) && monthIndex(y, m) <= target;
+  });
   const plan = planCreditCardLedger({
     categories: categories ?? [],
-    allocations: allocations ?? [],
+    allocations: planAllocations,
     accounts: accountList,
-    transactions: ledger,
+    transactions: through,
   });
-  const activityMap = activityByCategoryMonth(ledger, accountList, plan.categories);
+  const activityMap = activityByCategoryMonth(through, accountList, plan.categories);
   for (const category of plan.categories) {
     if (!isCreditPaymentCategory(category)) continue;
     activityMap.delete(normalizeBudgetId(category.id));
@@ -858,16 +1042,16 @@ export function buildBudgetMonthData(
     allocations,
     accounts: accountList,
     activityMap,
-    incomeThisMonth: incomeInMonth(ledger, year, month, accountList),
-    uncategorizedCount: uncategorizedExpenses(ledger, year, month, accountList).length,
+    incomeThisMonth: incomeInMonth(through, year, month, accountList, plan.categories),
+    uncategorizedCount: uncategorizedExpenses(through, year, month, accountList).length,
     upcomingByCategory,
     liabilityDelta: liabilityAfterCreditCards(
-      onBudgetLiabilityLedgerDelta(ledger, accountList),
+      onBudgetLiabilityLedgerDelta(through, accountList),
       plan.creditActivity,
       plan.uncovered
     ),
     trackingInflows: trackingAfterCreditCards(
-      transferInflowsFromTracking(ledger, accountList),
+      transferInflowsFromTracking(through, accountList),
       plan.cardPaymentOutflows,
       false
     ),

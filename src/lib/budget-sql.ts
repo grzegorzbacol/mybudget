@@ -35,6 +35,14 @@ export type FamilyBudgetSqlPayload = {
   /** Present only on the full snapshot. Empty array means "loaded, no card rows". */
   creditLines?: LedgerTransaction[];
   creditLinesLoaded?: boolean;
+  /** Every posted flow, including transfers and opening balances. Missing key = old payload. */
+  accountFlows?: Array<{ account_id: string; year: number; month: number; amount: number }>;
+  /** Raw liability before the credit-card envelope adjustment. */
+  liabilityByMonth?: MonthTotal[];
+  /** Raw cash-pool transfers before card-payment removal. */
+  trackingByMonth?: MonthTotal[];
+  /** Positive categorized non-card inflows. Expense categories are refunds, not income. */
+  categoryInflows?: Array<{ category_id: string; year: number; month: number; amount: number }>;
 };
 
 export type SqlQueryFn = (
@@ -77,7 +85,8 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind): string {
                ${sqlWarsawYear("t")} AS year,
                ${sqlWarsawMonth("t")} AS month,
                t.amount::float8 AS amount,
-               ${opening} AS is_opening
+               ${opening} AS is_opening,
+               COALESCE(a.type, '') AS account_type
         FROM transactions t
         LEFT JOIN accounts a ON a.id::text = t.account_id::text
         WHERE ${tFamily}
@@ -146,6 +155,59 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind): string {
   'transferMarkersMissing', true,
   'scheduledMissing', true`
       : "";
+
+  const categoryInflowWhere =
+    kind === "full"
+      ? `category_id IS NOT NULL AND amount > 0 AND NOT is_opening AND account_type IS DISTINCT FROM 'credit'`
+      : `category_id IS NOT NULL AND amount > 0 AND NOT is_opening`;
+
+  const history = `,
+  'accountFlows', COALESCE((
+    SELECT json_agg(x) FROM (
+      SELECT t.account_id::text AS account_id,
+             ${sqlWarsawYear("t")} AS year,
+             ${sqlWarsawMonth("t")} AS month,
+             SUM(t.amount)::float8 AS amount
+      FROM transactions t
+      WHERE ${tFamily}
+      GROUP BY 1, 2, 3
+    ) x
+  ), '[]'::json),
+  'liabilityByMonth', COALESCE((
+    SELECT json_agg(x) FROM (
+      SELECT ${sqlWarsawYear("t")} AS year,
+             ${sqlWarsawMonth("t")} AS month,
+             SUM(t.amount)::float8 AS amount
+      FROM transactions t
+      JOIN accounts a ON a.id::text = t.account_id::text
+      WHERE ${tFamily}
+        AND ${liabilityAccounts}
+        AND NOT ${opening}
+        AND NOT ${isTransfer}
+      GROUP BY 1, 2
+    ) x
+  ), '[]'::json),
+  'trackingByMonth', COALESCE((
+    SELECT json_agg(x) FROM (
+      SELECT ${sqlWarsawYear("t")} AS year,
+             ${sqlWarsawMonth("t")} AS month,
+             SUM(t.amount)::float8 AS amount
+      FROM transactions t
+      JOIN accounts dest ON dest.id::text = t.account_id::text
+      WHERE ${tFamily}
+        AND ${cashPool}
+        AND ${isTransfer}
+      GROUP BY 1, 2
+    ) x
+  ), '[]'::json),
+  'categoryInflows', COALESCE((
+    SELECT json_agg(x) FROM (
+      SELECT category_id, year, month, SUM(amount)::float8 AS amount
+      FROM ledger
+      WHERE ${categoryInflowWhere}
+      GROUP BY 1, 2, 3
+    ) x
+  ), '[]'::json)`;
 
   const categoryColumns =
     kind === "full"
@@ -235,7 +297,7 @@ SELECT json_build_object(
       WHERE category_id IS NULL AND amount < 0 AND NOT is_opening
       GROUP BY 1, 2
     ) x
-  ), '[]'::json)${rtaAdjust}${creditLines}${flags}
+  ), '[]'::json)${history}${rtaAdjust}${creditLines}${flags}
 )::jsonb AS payload
 `;
 }
@@ -263,7 +325,7 @@ SELECT t.id::text AS transaction_id,
        ${sqlWarsawMonth("t")} AS month,
        t.amount::float8 AS parent_amount,
        s.category_id::text AS split_category_id,
-       (-ABS(s.amount))::float8 AS split_activity
+       (CASE WHEN t.amount < 0 THEN -ABS(s.amount) ELSE ABS(s.amount) END)::float8 AS split_activity
 FROM transaction_category_splits s
 JOIN transactions t ON t.id = s.transaction_id
 WHERE ${familyIdMatch(pred, "t")}
@@ -282,24 +344,42 @@ function dailyActualsSql(pred: FamilyPred, kind: SnapshotKind): string {
   const onBudgetJoin =
     kind === "full" ? "LEFT JOIN accounts a ON a.id::text = t.account_id::text" : "";
   const onBudgetFilter = kind === "full" ? "AND a.on_budget IS DISTINCT FROM FALSE" : "";
+  const incomeCategorySql = `(
+    lower(btrim(COALESCE(bc.group_name, ''))) ~ '^(przychody|income|revenue)$'
+    OR lower(btrim(COALESCE(bc.name, ''))) ~ '^(wynagrodzenie|inne przychody|salary|paycheck|income)$'
+  )`;
+  const paymentCategorySql =
+    kind === "full"
+      ? `(bc.payment_account_id IS NOT NULL OR (bc.group_name = 'Karty kredytowe' AND btrim(COALESCE(bc.name, '')) ~* '^płatność[[:space:]]*:'))`
+      : `(bc.group_name = 'Karty kredytowe' AND btrim(COALESCE(bc.name, '')) ~* '^płatność[[:space:]]*:')`;
+  const expenseRefundSql =
+    kind === "full"
+      ? `t.amount > 0 AND bc.id IS NOT NULL AND NOT ${incomeCategorySql} AND NOT ${paymentCategorySql} AND COALESCE(a.type, '') <> 'credit' AND NOT ${sqlOpeningBalanceExpr("t")}`
+      : `t.amount > 0 AND bc.id IS NOT NULL AND NOT ${incomeCategorySql} AND NOT ${paymentCategorySql} AND NOT ${sqlOpeningBalanceExpr("t")}`;
   const actualIn =
     kind === "full"
-      ? `SUM(CASE WHEN t.amount > 0 AND COALESCE(a.type, '') <> 'credit' THEN t.amount ELSE 0 END)::float8`
-      : `SUM(CASE WHEN t.amount > 0 THEN t.amount ELSE 0 END)::float8`;
+      ? `SUM(CASE WHEN t.amount > 0 AND COALESCE(a.type, '') <> 'credit' AND NOT (${expenseRefundSql}) THEN t.amount ELSE 0 END)::float8`
+      : `SUM(CASE WHEN t.amount > 0 AND NOT (${expenseRefundSql}) THEN t.amount ELSE 0 END)::float8`;
   const actualOut =
     kind === "full"
       ? `SUM(CASE
          WHEN t.amount < 0 AND NOT ${sqlOpeningBalanceExpr("t")} THEN -t.amount
          WHEN t.amount > 0 AND a.type = 'credit' AND NOT ${sqlOpeningBalanceExpr("t")} THEN -t.amount
+         WHEN ${expenseRefundSql} THEN -t.amount
          ELSE 0
        END)::float8`
-      : `SUM(CASE WHEN t.amount < 0 AND NOT ${sqlOpeningBalanceExpr("t")} THEN -t.amount ELSE 0 END)::float8`;
+      : `SUM(CASE
+         WHEN t.amount < 0 AND NOT ${sqlOpeningBalanceExpr("t")} THEN -t.amount
+         WHEN ${expenseRefundSql} THEN -t.amount
+         ELSE 0
+       END)::float8`;
   return `
 SELECT t.date::text AS date,
        ${actualIn} AS actual_in,
        ${actualOut} AS actual_out
 FROM transactions t
 ${onBudgetJoin}
+LEFT JOIN budget_categories bc ON bc.id::text = t.category_id::text
 WHERE ${familyIdMatch(pred, "t")}
   AND ${SQL_DATE_RANGE_PREDICATE}
   ${transferFilter}
@@ -400,6 +480,18 @@ export function parseFamilyBudgetPayload(raw: unknown): FamilyBudgetSqlPayload {
     creditLinesLoaded: Object.prototype.hasOwnProperty.call(data, "creditLines"),
     creditLines: Object.prototype.hasOwnProperty.call(data, "creditLines")
       ? asArray<LedgerTransaction>(data.creditLines)
+      : undefined,
+    accountFlows: Object.prototype.hasOwnProperty.call(data, "accountFlows")
+      ? asArray(data.accountFlows)
+      : undefined,
+    liabilityByMonth: Object.prototype.hasOwnProperty.call(data, "liabilityByMonth")
+      ? asArray<MonthTotal>(data.liabilityByMonth)
+      : undefined,
+    trackingByMonth: Object.prototype.hasOwnProperty.call(data, "trackingByMonth")
+      ? asArray<MonthTotal>(data.trackingByMonth)
+      : undefined,
+    categoryInflows: Object.prototype.hasOwnProperty.call(data, "categoryInflows")
+      ? asArray(data.categoryInflows)
       : undefined,
   };
 }

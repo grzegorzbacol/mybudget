@@ -83,6 +83,84 @@ describe("budgetMonthFromCore", () => {
     expect(data.plannedExpense).toBe(0);
   });
 
+  it("rewinds account balances and card debt to the end of the viewed month", () => {
+    const card: Account = {
+      ...account,
+      id: "cc",
+      name: "Karta",
+      type: "credit",
+      balance: -80,
+    };
+    const txs = [
+      { account_id: "checking", category_id: null, amount: 1000, date: "2026-09-01" },
+      { account_id: "cc", category_id: "groceries", amount: -50, date: "2026-09-04" },
+      { account_id: "cc", category_id: "groceries", amount: -30, date: "2026-10-04" },
+    ];
+    const september = budgetMonthFromCore(
+      core({
+        accounts: [{ ...account, balance: 1000 }, card],
+        allocations: [],
+        activityMap: activityMapFromAggregates([
+          { category_id: "groceries", year: 2026, month: 9, activity: -50 },
+          { category_id: "groceries", year: 2026, month: 10, activity: -30 },
+        ]),
+        income: [{ year: 2026, month: 9, amount: 1000 }],
+        spending: [],
+        uncategorized: [],
+        accountFlows: [
+          { account_id: "checking", year: 2026, month: 9, amount: 1000 },
+          { account_id: "cc", year: 2026, month: 9, amount: -50 },
+          { account_id: "cc", year: 2026, month: 10, amount: -30 },
+        ],
+        liabilityByMonth: [
+          { year: 2026, month: 9, amount: -50 },
+          { year: 2026, month: 10, amount: -30 },
+        ],
+        trackingByMonth: [],
+        trackingIncludesCardPayments: false,
+        creditLines: txs,
+        creditSeparateCashOutflows: false,
+      }),
+      2026,
+      9
+    );
+    expect(september.onBudgetBalance).toBe(950);
+    expect(september.groups[0].categories[0].activity).toBe(-50);
+    expect(september.creditCards?.[0]?.debt).toBe(50);
+    expect(september.readyToAssign).toBe(1000);
+
+    const october = budgetMonthFromCore(
+      core({
+        accounts: [{ ...account, balance: 1000 }, card],
+        allocations: [],
+        activityMap: activityMapFromAggregates([
+          { category_id: "groceries", year: 2026, month: 9, activity: -50 },
+          { category_id: "groceries", year: 2026, month: 10, activity: -30 },
+        ]),
+        income: [{ year: 2026, month: 9, amount: 1000 }],
+        spending: [],
+        uncategorized: [],
+        accountFlows: [
+          { account_id: "checking", year: 2026, month: 9, amount: 1000 },
+          { account_id: "cc", year: 2026, month: 9, amount: -50 },
+          { account_id: "cc", year: 2026, month: 10, amount: -30 },
+        ],
+        liabilityByMonth: [
+          { year: 2026, month: 9, amount: -50 },
+          { year: 2026, month: 10, amount: -30 },
+        ],
+        trackingByMonth: [],
+        creditLines: txs,
+      }),
+      2026,
+      10
+    );
+    expect(october.onBudgetBalance).toBe(920);
+    expect(october.groups[0].categories[0].activity).toBe(-30);
+    expect(october.creditCards?.[0]?.debt).toBe(80);
+    expect(october.readyToAssign).toBe(1000);
+  });
+
   it("exposes planned income and expenses from scheduled rules for the month", () => {
     const data = budgetMonthFromCore(
       core({
@@ -223,6 +301,40 @@ describe("budgetMonthFromCore", () => {
     expect(data.groups[0].categories[0].activity).toBe(-327.4);
     expect(data.groups[0].categories[0].assigned).toBe(900);
     expect(data.groups[0].categories[0].available).toBe(572.6);
+  });
+
+  it("puts a SQL expense-category inflow back into the envelope, not into income", () => {
+    const refunded = coreFromSql({
+      categories: [category],
+      allocations: [{ ...allocation, allocated: 50 }],
+      accounts: [{ ...account, balance: 970 }],
+      scheduled: [],
+      activity: [{ category_id: "groceries", year: 2026, month: 9, activity: -50 }],
+      income: [{ year: 2026, month: 9, amount: 1020 }],
+      spending: [{ year: 2026, month: 9, amount: 50 }],
+      uncategorized: [],
+      splitLines: [],
+      categoryInflows: [{ category_id: "groceries", year: 2026, month: 9, amount: 20 }],
+    });
+    const data = budgetMonthFromCore(refunded, 2026, 9);
+    expect(data.incomeThisMonth).toBe(1000);
+    expect(data.groups[0].categories[0].activity).toBe(-30);
+    expect(data.groups[0].categories[0].available).toBe(20);
+    expect(refunded.spending).toEqual([{ year: 2026, month: 9, amount: 30 }]);
+
+    const paycheck = coreFromSql({
+      categories: [{ ...category, id: "salary", name: "Wynagrodzenie", group_name: "Przychody", kind: "income" }],
+      allocations: [],
+      accounts: [account],
+      scheduled: [],
+      activity: [],
+      income: [{ year: 2026, month: 9, amount: 3253 }],
+      spending: [],
+      uncategorized: [],
+      splitLines: [],
+      categoryInflows: [{ category_id: "salary", year: 2026, month: 9, amount: 3253 }],
+    });
+    expect(budgetMonthFromCore(paycheck, 2026, 9).incomeThisMonth).toBe(3253);
   });
 
   it("rolls SQL split lines into each envelope instead of leaving parent-only activity", () => {

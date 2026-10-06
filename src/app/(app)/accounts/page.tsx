@@ -31,7 +31,9 @@ import {
 import { useFamily } from "@/hooks/use-family";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency, getCurrentYearMonth, todayIso } from "@/lib/format";
+import { accountFlowsFromTransactions, accountsAsOfMonth } from "@/lib/account-balances";
 import { checkBudgetMonthAccounts, isOnBudget } from "@/lib/budget";
+import { CREDIT_OVERPAY_MESSAGE, creditLedgerWouldGoPositive } from "@/lib/credit-cards";
 import { OPENING_MEMO, OPENING_PAYEE } from "@/lib/opening-balance";
 import { ACCOUNT_TYPE_META, computeNetWorth, displayBalance, isLiabilityType } from "@/lib/wealth";
 import { isQaLeftoverAccountName } from "@/lib/account-delete-policy";
@@ -170,6 +172,9 @@ export default function AccountsPage() {
     mutationFn: async ({ account, balance }: { account: Account; balance: number }) => {
       const diff = balance - Number(account.balance);
       if (diff === 0) return;
+      if (account.type === "credit" && creditLedgerWouldGoPositive(Number(account.balance), diff)) {
+        throw new Error(CREDIT_OVERPAY_MESSAGE);
+      }
 
       const { error: txError } = await supabase.from("transactions").insert({
         family_id: familyData!.family.id,
@@ -190,7 +195,7 @@ export default function AccountsPage() {
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       setReconcileOpen(null);
     },
-    onError: () => toast.error("Błąd korekty salda"),
+    onError: (err) => toast.error(err instanceof Error ? err.message : "Błąd korekty salda"),
   });
 
   const deleteAccount = useMutation({
@@ -244,8 +249,18 @@ export default function AccountsPage() {
     budgetMonth,
     Boolean(familyData?.family.id && accounts)
   );
-  const accountsBudgetCheck =
-    budgetReady && accounts ? checkBudgetMonthAccounts(budget, accounts) : null;
+  const accountsAsOfBudgetMonth =
+    accounts && transactions
+      ? accountsAsOfMonth(
+          accounts,
+          accountFlowsFromTransactions(transactions),
+          budgetYear,
+          budgetMonth
+        )
+      : undefined;
+  const accountsBudgetCheck = budgetReady
+    ? checkBudgetMonthAccounts(budget, accountsAsOfBudgetMonth)
+    : null;
 
   const clearedByAccount = useMemo(() => {
     const map = new Map<string, number>();

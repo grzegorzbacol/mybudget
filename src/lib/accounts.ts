@@ -188,7 +188,26 @@ export type LedgerAccount = {
   id: string;
   name: string;
   on_budget?: boolean;
+  type?: string;
+  balance?: number;
 };
+
+function asLedgerAccount(row: {
+  id: string;
+  name?: string | null;
+  on_budget?: boolean | null;
+  type?: string | null;
+  balance?: number | string | null;
+}): LedgerAccount {
+  const account: LedgerAccount = {
+    id: row.id,
+    name: typeof row.name === "string" ? row.name : "",
+  };
+  if (row.on_budget != null) account.on_budget = row.on_budget;
+  if (typeof row.type === "string") account.type = row.type;
+  if (row.balance != null && Number.isFinite(Number(row.balance))) account.balance = Number(row.balance);
+  return account;
+}
 
 export async function loadAccountForLedger(
   supabase: AccountClient,
@@ -197,7 +216,7 @@ export async function loadAccountForLedger(
 ): Promise<{ account: LedgerAccount | null; error?: string }> {
   const withBudget = await supabase
     .from("accounts")
-    .select("id, name, on_budget")
+    .select("id, name, on_budget, type, balance")
     .eq("id", accountId)
     .eq("family_id", familyId)
     .maybeSingle();
@@ -205,13 +224,7 @@ export async function loadAccountForLedger(
   if (!withBudget.error) {
     const row = withBudget.data;
     if (!row) return { account: null };
-    return {
-      account: {
-        id: row.id,
-        name: typeof row.name === "string" ? row.name : "",
-        on_budget: row.on_budget,
-      },
-    };
+    return { account: asLedgerAccount(row) };
   }
 
   if (isSchemaLagError(withBudget.error.message)) {

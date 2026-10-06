@@ -6,7 +6,7 @@ import {
   contributionToSpending,
   isIncomeToReadyToAssign,
 } from "./budget";
-import { applyCreditCardBudget } from "./credit-cards";
+import { applyCreditCardBudget, creditLedgerWouldGoPositive } from "./credit-cards";
 import type { Account, BudgetAllocation, BudgetCategory, BudgetMonthData, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -229,13 +229,70 @@ describe("credit card budget", () => {
   it("still puts a paycheck into Ready to Assign", () => {
     const checking = account("checking", 1000);
     const card = account("cc", 0, "credit");
-    const paycheck = tx({ amount: 1000, date: "2026-09-01", category_id: "groceries", payee: "Wynagrodzenie" });
+    const paycheck = tx({ amount: 1000, date: "2026-09-01", payee: "Wynagrodzenie" });
     const data = buildBudgetMonthData(2026, 9, [groceries], [alloc("groceries", 0)], [checking, card], [paycheck]);
     expect(isIncomeToReadyToAssign(paycheck, [checking, card])).toBe(true);
+    expect(isIncomeToReadyToAssign(paycheck, [checking, card], [groceries])).toBe(true);
     expect(data.incomeThisMonth).toBe(1000);
     expect(row(data, "groceries").activity).toBe(0);
     expect(data.readyToAssign).toBe(1000);
     expect(paymentCategory(data).available).toBe(0);
+  });
+
+  it("returns a checking refund to the expense category instead of Ready to Assign", () => {
+    const checking = account("checking", 970);
+    const card = account("cc", 0, "credit");
+    const refund = tx({ amount: 20, date: "2026-09-18", category_id: "groceries", payee: "Zwrot" });
+    const data = buildBudgetMonthData(
+      2026,
+      9,
+      [groceries],
+      [alloc("groceries", 50)],
+      [checking, card],
+      [
+        tx({ amount: 1000, date: "2026-09-01" }),
+        tx({ amount: -50, date: "2026-09-04", category_id: "groceries" }),
+        refund,
+      ]
+    );
+    expect(isIncomeToReadyToAssign(refund, [checking, card], [groceries])).toBe(false);
+    expect(data.incomeThisMonth).toBe(1000);
+    expect(row(data, "groceries").activity).toBe(-30);
+    expect(row(data, "groceries").available).toBe(20);
+    expect(paymentCategory(data).available).toBe(0);
+    expect(data.readyToAssign).toBe(950);
+    expect(contributionToSpending(refund, [checking, card], [groceries])).toBe(-20);
+    expect(checkBudgetMonthAccounts(data, [checking, card]).matches).toBe(true);
+  });
+
+  it("uses the card balance at the end of the viewed month", () => {
+    const checking = account("checking", 1000);
+    const card = account("cc", -80, "credit");
+    const txs = [
+      tx({ amount: 1000, date: "2026-09-01" }),
+      tx({ amount: -50, date: "2026-09-04", account_id: "cc", category_id: "groceries" }),
+      tx({ amount: -30, date: "2026-10-04", account_id: "cc", category_id: "groceries" }),
+    ];
+    const september = buildBudgetMonthData(2026, 9, [groceries], [alloc("groceries", 0)], [checking, card], txs);
+    expect(september.creditCards?.[0]?.debt).toBe(50);
+    expect(row(september, "groceries").activity).toBe(-50);
+    expect(september.onBudgetBalance).toBe(950);
+    expect(september.readyToAssign).toBe(1000);
+
+    const october = buildBudgetMonthData(2026, 10, [groceries], [alloc("groceries", 0)], [checking, card], txs);
+    expect(october.creditCards?.[0]?.debt).toBe(80);
+    expect(row(october, "groceries").activity).toBe(-30);
+    expect(row(october, "groceries").available).toBe(-80);
+    expect(october.onBudgetBalance).toBe(920);
+    expect(october.readyToAssign).toBe(1000);
+  });
+
+  it("blocks a credit ledger from going positive and still allows paying down to zero", () => {
+    expect(creditLedgerWouldGoPositive(-40, 40)).toBe(false);
+    expect(creditLedgerWouldGoPositive(-40, 50)).toBe(true);
+    expect(creditLedgerWouldGoPositive(0, 1)).toBe(true);
+    expect(creditLedgerWouldGoPositive(-100, -20)).toBe(false);
+    expect(creditLedgerWouldGoPositive(2400, -50)).toBe(false);
   });
 
   it("does not budget pre-existing card debt or treat the opening balance as spending", () => {

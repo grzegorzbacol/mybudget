@@ -8,7 +8,7 @@ import {
   normalizeBudgetId,
   signedAccountBalance,
 } from "./budget";
-import { fromMonthIndex, isPlausibleBudgetYearMonth, money, monthIndex, parseYearMonthFromDate } from "./money";
+import { fromMonthIndex, isPlausibleBudgetYearMonth, money, monthIndex, parseMonthKey, parseYearMonthFromDate } from "./money";
 import { isOpeningBalanceTx } from "./opening-balance";
 import type {
   Account,
@@ -21,6 +21,18 @@ import type {
 } from "./types";
 
 export const CREDIT_PAYMENT_SORT = 9000;
+
+/** A card ledger is debt (negative) or zero. Legacy rows stored that debt as a positive number. */
+export const CREDIT_OVERPAY_MESSAGE =
+  "Karta nie może wyjść na plus. Spłać najwyżej kwotę długu (do zera).";
+
+export function creditLedgerWouldGoPositive(balanceBefore: number, amount: number): boolean {
+  const base = Number(balanceBefore);
+  const delta = Number(amount);
+  if (!Number.isFinite(base) || !Number.isFinite(delta)) return false;
+  if (base > 0.004) return false;
+  return base + delta > 0.004;
+}
 
 export type { CreditCardBudgetStatus };
 
@@ -280,6 +292,12 @@ export function planCreditCardLedger(input: {
     list.push(tx);
     byCategory.set(categoryId, list);
   }
+  for (const byMonth of Array.from(input.priorOutflows?.values() ?? [])) {
+    for (const key of Array.from(byMonth.keys())) {
+      const parsed = parseMonthKey(String(key));
+      if (parsed) noteMonth(parsed.year, parsed.month);
+    }
+  }
 
   const refundActivity = new Map<string, Map<MonthKey, number>>();
   const paymentActivity = new Map<string, Map<MonthKey, number>>();
@@ -367,7 +385,7 @@ export function planCreditCardLedger(input: {
             continue;
           }
 
-          if (amount < 0) available = money(available + amount);
+          available = money(available + amount);
         }
       }
     }
@@ -512,16 +530,21 @@ function cloneActivityMap(source: Map<string, Map<string, number>>): Map<string,
   return next;
 }
 
-/** Activity-map outflows with on-budget card purchases removed, so the plan can replay those purchases itself. */
+/**
+ * Activity map with on-budget card category lines removed, so the plan can replay them.
+ * `includeInflows` also removes card refunds already merged into the map.
+ */
 export function nonCreditOutflows(
   activityMap: Map<string, Map<string, number>>,
-  creditTransactions: LedgerTransaction[]
+  creditTransactions: LedgerTransaction[],
+  options?: { includeInflows?: boolean }
 ): Map<string, Map<MonthKey, number>> {
   const map = cloneActivityMap(activityMap);
   for (const tx of creditTransactions) {
     if (isTransferTx(tx) || isOpeningBalanceTx(tx)) continue;
     const amount = Number(tx.amount);
-    if (!Number.isFinite(amount) || amount >= 0) continue;
+    if (!Number.isFinite(amount) || amount === 0) continue;
+    if (amount > 0 && !options?.includeInflows) continue;
     const categoryId = normalizeBudgetId(tx.category_id);
     if (!categoryId) continue;
     const ym = parseYearMonthFromDate(tx.date);

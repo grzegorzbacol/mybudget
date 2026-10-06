@@ -64,6 +64,11 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL).not.toContain("src.on_budget = FALSE");
     expect(FAMILY_BUDGET_SQL).toContain("'creditLines'");
     expect(FAMILY_BUDGET_SQL).toContain("payment_account_id");
+    expect(FAMILY_BUDGET_SQL).toContain("'accountFlows'");
+    expect(FAMILY_BUDGET_SQL).toContain("'liabilityByMonth'");
+    expect(FAMILY_BUDGET_SQL).toContain("'trackingByMonth'");
+    expect(FAMILY_BUDGET_SQL).toContain("'categoryInflows'");
+    expect(FAMILY_BUDGET_SQL).toContain("account_type IS DISTINCT FROM 'credit'");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("WITH ledger AS MATERIALIZED");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("amount > 0");
     expect(FAMILY_BUDGET_SQL_SAFE).toContain("family_id = $1::uuid");
@@ -75,6 +80,10 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL_SAFE).not.toContain("transfer_account_id IS NOT NULL");
     expect(FAMILY_BUDGET_SQL_SAFE).not.toContain("payment_account_id");
     expect(FAMILY_BUDGET_SQL_SAFE).not.toContain("creditLines");
+    expect(FAMILY_BUDGET_SQL_SAFE).toContain("'accountFlows'");
+    expect(FAMILY_BUDGET_SQL_SAFE).toContain("'liabilityByMonth'");
+    expect(FAMILY_BUDGET_SQL_SAFE).toContain("'categoryInflows'");
+    expect(FAMILY_BUDGET_SQL_SAFE).not.toContain("account_type");
   });
 
   it("parses a compact payload into month totals", () => {
