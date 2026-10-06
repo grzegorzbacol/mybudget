@@ -608,6 +608,39 @@ describe("YNAB envelope math", () => {
     expect(data.readyToAssign).toBe(900);
   });
 
+  it("rewinds a past month to the balance at the end of that month", () => {
+    const txs = [
+      tx({ amount: 1000, date: "2026-09-01" }),
+      tx({ amount: -200, date: "2026-10-02", category_id: "groceries" }),
+    ];
+    const september = buildBudgetMonthData(
+      2026,
+      9,
+      [category("groceries", "Zakupy")],
+      [],
+      [account("checking", 800)],
+      txs
+    );
+    expect(september.onBudgetBalance).toBe(1000);
+    expect(september.incomeThisMonth).toBe(1000);
+    expect(september.groups[0].categories[0].activity).toBe(0);
+    expect(september.readyToAssign).toBe(1000);
+
+    const october = buildBudgetMonthData(
+      2026,
+      10,
+      [category("groceries", "Zakupy")],
+      [],
+      [account("checking", 800)],
+      txs
+    );
+    expect(october.onBudgetBalance).toBe(800);
+    expect(october.incomeThisMonth).toBe(0);
+    expect(october.groups[0].categories[0].activity).toBe(-200);
+    expect(october.groups[0].categories[0].available).toBe(-200);
+    expect(october.readyToAssign).toBe(1000);
+  });
+
   it("Ready to Assign equals on-budget cash minus envelope available", () => {
     expect(computeReadyToAssign(2800, 300)).toBe(2500);
     expect(computeReadyToAssign(850, -50)).toBe(900);

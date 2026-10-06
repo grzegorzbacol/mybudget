@@ -329,7 +329,14 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction, 
       }
       const payload = {
         account_id: accountId,
-        category_id: type === "income" ? null : envelopeSplit ? parsedLines[0]?.category_id : categoryId || null,
+        category_id:
+          type === "income"
+            ? selectedOnBudget && categoryId
+              ? categoryId
+              : null
+            : envelopeSplit
+              ? parsedLines[0]?.category_id
+              : categoryId || null,
         amount: numAmount,
         payee,
         memo,
@@ -515,9 +522,42 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction, 
               Przelew między kontami nie zwiększa <strong>Do rozdzielenia</strong> — suma pieniędzy zostaje ta sama.
             </p>
           )}
+          {type === "transfer" && (fromAccount?.type === "credit" || toAccount?.type === "credit") && (
+            <p className="text-sm text-muted-foreground">
+              Spłata karty to przelew, nie wydatek. Kwota schodzi z koperty „Płatność”, a nie drugi raz z kategorii zakupów i nie liczy się jako wydatek w raportach.
+            </p>
+          )}
+          {type === "expense" && fromAccount?.type === "credit" && (
+            <p className="text-sm text-muted-foreground">
+              Zakup kartą zmniejsza wybraną kopertę. Pokryta kwota zostaje odłożona w „Płatność: {fromAccount.name}” na spłatę. To, czego koperta nie pokryje, zostaje nowym długiem.
+            </p>
+          )}
+          {type === "income" && selectedOnBudget && (
+            <div>
+              <Label>Zwrot do koperty (opcjonalnie)</Label>
+              <Select value={categoryId || "rta"} onValueChange={(value) => setCategoryId(value === "rta" ? "" : value)}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Do rozdzielenia" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="rta">Bez kategorii — Do rozdzielenia</SelectItem>
+                  {expenseCategories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.icon} {c.group_name} / {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           {type === "income" && (
             <p className="text-sm text-muted-foreground">
-              {selectedOnBudget ? (
+              {selectedOnBudget && categoryId ? (
+                <>
+                  Zwrot wraca do wybranej koperty i zmniejsza wydatki w tej kategorii. Nie zwiększa{" "}
+                  <strong>Do rozdzielenia</strong> i nie liczy się jako przychód.
+                </>
+              ) : selectedOnBudget ? (
                 <>
                   Przychód trafia do <strong>Do rozdzielenia</strong>. Potem przydzielasz go do kopert w budżecie.
                 </>

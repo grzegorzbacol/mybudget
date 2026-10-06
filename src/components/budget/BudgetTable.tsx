@@ -193,6 +193,25 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
             Nadaj każdej złotówce zadanie — przydziel przychód do kopert.
           </p>
         )}
+        {(data?.creditCards ?? [])
+          .filter((card) => card.unfunded > 0.004)
+          .map((card) => (
+            <div
+              key={card.accountId}
+              className="mt-3 rounded-md border border-amber-500/40 bg-background px-3 py-2 text-sm text-amber-800 dark:text-amber-300"
+            >
+              <p>
+                <strong>{card.accountName}</strong>: dług {formatCurrency(card.debt)}, na spłatę odłożone{" "}
+                {formatCurrency(card.reserved)}. Brakuje {formatCurrency(card.unfunded)} w kopercie „Płatność:{" "}
+                {card.accountName}”.
+              </p>
+              {card.overspent > 0.004 && (
+                <p className="mt-1">
+                  Wydatki ponad kopertę ({formatCurrency(card.overspent)}) to nowy dług — nie wracają do Do rozdzielenia.
+                </p>
+              )}
+            </div>
+          ))}
         {(data?.uncategorizedCount ?? 0) > 0 && (
           <a
             href={uncategorizedQueueHref(year, month)}
@@ -311,6 +330,16 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                         {unfunded && `Plan: ${formatCurrency(row.upcoming)}`}
                       </p>
                     )}
+                    {(() => {
+                      const card = (data?.creditCards ?? []).find((status) => status.categoryId === row.category.id);
+                      if (!card) return null;
+                      return (
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          Dług {formatCurrency(card.debt)} · odłożone {formatCurrency(card.reserved)}
+                          {card.unfunded > 0.004 ? ` · brakuje ${formatCurrency(card.unfunded)}` : ""}
+                        </p>
+                      );
+                    })()}
                   </button>
 
                   <div className="col-span-3 md:col-span-2">

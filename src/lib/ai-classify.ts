@@ -1,5 +1,5 @@
 import type OpenAI from "openai";
-import { isEnvelopeCategory } from "./budget";
+import { isExpenseCategory } from "./budget";
 import { getOpenAIClient, VISION_MODEL } from "./openai-client";
 import type { BudgetCategory } from "./types";
 
@@ -72,7 +72,7 @@ export type ClassifyLlmFn = (input: {
 export function toClassifyCatalog(
   categories: Array<Pick<BudgetCategory, "id" | "name" | "group_name" | "kind">>
 ): ClassifyCatalogItem[] {
-  return categories.filter(isEnvelopeCategory).map((c) => ({
+  return categories.filter(isExpenseCategory).map((c) => ({
     id: c.id,
     name: String(c.name ?? "").trim(),
     group_name: String(c.group_name ?? "").trim(),

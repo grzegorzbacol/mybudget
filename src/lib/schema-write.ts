@@ -16,6 +16,7 @@ export const OPTIONAL_WRITE_COLUMNS = [
   "transfer_id",
   "scheduled_id",
   "interval_days",
+  "payment_account_id",
 ] as const;
 
 /** Pairing columns must stay on transfer inserts after a schema-cache miss. */

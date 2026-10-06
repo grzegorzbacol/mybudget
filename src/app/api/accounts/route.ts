@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { createAccountRow } from "@/lib/accounts";
+import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { ensureCreditPaymentCategoryForAccount } from "@/lib/credit-cards-write";
 import { accountSchema } from "@/lib/validators";
 import { ACCOUNT_TYPE_META } from "@/lib/wealth";
 
@@ -51,6 +53,11 @@ export async function POST(request: Request) {
       { error: created.error, schemaLag: /on_budget|schema|accounts_type/i.test(created.error ?? "") },
       { status: 500 }
     );
+  }
+
+  if (created.account.type === "credit" && created.account.on_budget !== false) {
+    await ensureCreditPaymentCategoryForAccount(ctx.supabase, ctx.family.id, created.account);
+    invalidateFamilyBudgetCache(ctx.family.id);
   }
 
   return NextResponse.json(

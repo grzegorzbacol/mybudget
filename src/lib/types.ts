@@ -63,6 +63,8 @@ export interface BudgetCategory {
   color: string;
   sort_order: number;
   kind?: CategoryKind;
+  /** Set on the envelope that reserves cash to pay this credit card. */
+  payment_account_id?: string | null;
 }
 
 export interface BudgetAllocation {
@@ -194,6 +196,20 @@ export interface Goal {
   category?: BudgetCategory;
 }
 
+export interface CreditCardBudgetStatus {
+  accountId: string;
+  accountName: string;
+  categoryId: string;
+  /** Positive amount owed on the card. */
+  debt: number;
+  /** Money sitting in the card's payment envelope. */
+  reserved: number;
+  /** Debt that is not yet reserved — old balance or new overspending. */
+  unfunded: number;
+  /** Card spending the category could not cover. New debt, not Ready to Assign. */
+  overspent: number;
+}
+
 export interface BudgetMonthData {
   year: number;
   month: number;
@@ -206,8 +222,10 @@ export interface BudgetMonthData {
   onBudgetBalance: number;
   /** On-budget cash used for Ready to Assign (transfers from tracking/CC do not inflate it). Identity: onBudgetCash = readyToAssign + totalAvailable. */
   onBudgetCash?: number;
-  /** Posted non-opening, non-transfer activity on on-budget credit/loan accounts. */
+  /** Posted non-opening, non-transfer activity on on-budget loans, plus uncovered card debt. */
   liabilityDelta?: number;
+  /** On-budget credit cards: debt versus cash reserved in the payment envelope. */
+  creditCards?: CreditCardBudgetStatus[];
   /** Net transfer amounts on Ready to Assign cash accounts (not new income). */
   trackingInflows?: number;
   uncategorizedCount: number;

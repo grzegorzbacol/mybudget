@@ -1,4 +1,4 @@
-import { isTransferTx } from "@/lib/budget";
+import { isIncomeCategoryName, isTransferTx } from "@/lib/budget";
 import { getMonthLabel } from "@/lib/format";
 import { isValidYearMonth, parseYearMonthFromDate } from "@/lib/money";
 import { isOpeningBalanceTx } from "@/lib/opening-balance";
@@ -145,8 +145,12 @@ export function transactionRegisterHint(
   }
 ): string {
   if (isTransferTx(tx)) return "Transfer";
-  if (Number(tx.amount) > 0) return "Do rozdzielenia";
   if (isOpeningBalanceTx(tx)) return "Saldo konta";
+  if (Number(tx.amount) > 0) {
+    const name = tx.category?.name?.trim();
+    if (name && !isIncomeCategoryName(name)) return `${tx.category?.icon ?? ""} ${name}`.trim();
+    return "Do rozdzielenia";
+  }
   const splitCount = (tx.category_splits ?? []).filter((line) => line.category_id && Number(line.amount) > 0).length;
   if (splitCount > 1) return `Podział (${splitCount})`;
   if (tx.category?.name) return `${tx.category.icon ?? ""} ${tx.category.name}`.trim();

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { CREDIT_OVERPAY_MESSAGE, creditLedgerWouldGoPositive } from "@/lib/credit-cards";
 import { buildTransferLegs, convertTransactionToTransfer, insertTransferPair } from "@/lib/transfer-write";
 import { transferSchema } from "@/lib/validators";
 
@@ -44,6 +45,12 @@ export async function POST(request: Request) {
 
   const from = accounts.find((a) => a.id === from_account_id)!;
   const to = accounts.find((a) => a.id === to_account_id)!;
+  if (to.type === "credit" && creditLedgerWouldGoPositive(Number(to.balance), amount)) {
+    return NextResponse.json({ error: CREDIT_OVERPAY_MESSAGE }, { status: 400 });
+  }
+  if (from.type === "credit" && creditLedgerWouldGoPositive(Number(from.balance), -amount)) {
+    return NextResponse.json({ error: CREDIT_OVERPAY_MESSAGE }, { status: 400 });
+  }
   const involvesTracking = from.on_budget === false || to.on_budget === false;
   if (involvesTracking && !category_id) {
     return NextResponse.json(

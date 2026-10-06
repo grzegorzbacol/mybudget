@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { isAccountId } from "@/lib/account-delete-policy";
 import { deleteAccountRow, updateAccountRow } from "@/lib/accounts";
+import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { ensureCreditPaymentCategoryForAccount } from "@/lib/credit-cards-write";
 import { accountUpdateSchema } from "@/lib/validators";
 import { ACCOUNT_TYPE_META } from "@/lib/wealth";
 
@@ -57,6 +59,11 @@ export async function PATCH(
       { error: result.error, schemaLag: /on_budget|schema|accounts_type/i.test(result.error ?? "") },
       { status: result.status ?? 500 }
     );
+  }
+
+  if (result.account.type === "credit" && result.account.on_budget !== false) {
+    await ensureCreditPaymentCategoryForAccount(ctx.supabase, ctx.family.id, result.account);
+    invalidateFamilyBudgetCache(ctx.family.id);
   }
 
   return NextResponse.json(result.warning ? { ...result.account, warning: result.warning } : result.account);
