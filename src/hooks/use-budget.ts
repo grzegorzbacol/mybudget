@@ -56,11 +56,15 @@ export function useAllocateBudget() {
 
       return { previous };
     },
-    onError: (_err, input, context) => {
+    onError: (err, input, context) => {
       if (context?.previous) {
         queryClient.setQueryData(["budget", input.year, input.month], context.previous);
       }
-      toast.error("Nie udało się zaktualizować przydziału");
+      const message =
+        err instanceof Error && err.message.trim()
+          ? err.message
+          : "Nie udało się zaktualizować przydziału";
+      toast.error(message);
     },
     onSettled: (_data, _err, input) => {
       queryClient.invalidateQueries({ queryKey: ["budget", input.year, input.month] });
