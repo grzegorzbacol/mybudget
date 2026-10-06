@@ -524,12 +524,12 @@ export function TransactionForm({ open, onOpenChange, prefill, editTransaction, 
           )}
           {type === "transfer" && (fromAccount?.type === "credit" || toAccount?.type === "credit") && (
             <p className="text-sm text-muted-foreground">
-              Spłata karty to przelew, nie wydatek. Kwota schodzi z koperty „Płatność”, a nie drugi raz z kategorii zakupów i nie liczy się jako wydatek w raportach.
+              Spłata karty to przelew, nie wydatek. Kwota schodzi z kategorii „Płatność”, a nie drugi raz z kategorii zakupów i nie liczy się jako wydatek w raportach.
             </p>
           )}
           {type === "expense" && fromAccount?.type === "credit" && (
             <p className="text-sm text-muted-foreground">
-              Zakup kartą zmniejsza wybraną kopertę. Pokryta kwota zostaje odłożona w „Płatność: {fromAccount.name}” na spłatę. To, czego koperta nie pokryje, zostaje nowym długiem.
+              Zakup kartą zmniejsza wybraną kategorię. Pokryta kwota zostaje odłożona w „Płatność: {fromAccount.name}” na spłatę. To, czego kategoria nie pokryje, zostaje nowym długiem.
             </p>
           )}
           {type === "income" && selectedOnBudget && (

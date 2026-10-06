@@ -18,10 +18,12 @@ import { useAllocateMany, useBudget } from "@/hooks/use-budget";
 import { formatCurrency, getMonthLabel } from "@/lib/format";
 import {
   checkBudgetMonthAccounts,
+  CREDIT_PAYMENT_GROUP,
   envelopeRowsFromBudget,
   planFillEnvelopeGaps,
   readyToAssignWarning,
 } from "@/lib/budget";
+import { creditCardFundingBanner, creditCardOverspendNote, creditCardRowStatus } from "@/lib/credit-cards";
 import { AccountsBudgetCheckBanner } from "./AccountsBudgetCheck";
 import { DEFAULT_CATEGORY_ICON, uniqueGroupNames } from "@/lib/categories";
 import { cn } from "@/lib/utils";
@@ -50,6 +52,23 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
   const [catName, setCatName] = useState("");
   const [catIcon, setCatIcon] = useState(DEFAULT_CATEGORY_ICON);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const revealPaymentCategory = (categoryId: string) => {
+    setCollapsed((prev) => {
+      if (!prev.has(CREDIT_PAYMENT_GROUP)) return prev;
+      const next = new Set(prev);
+      next.delete(CREDIT_PAYMENT_GROUP);
+      return next;
+    });
+    window.setTimeout(() => {
+      const row = document.getElementById(`budget-category-${categoryId}`);
+      row?.scrollIntoView({ behavior: "smooth", block: "center" });
+      const input = row?.querySelector("input");
+      if (input instanceof HTMLInputElement) {
+        input.focus();
+        input.select();
+      }
+    }, 50);
+  };
   const allocateMany = useAllocateMany();
   const queryClient = useQueryClient();
 
@@ -200,15 +219,16 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
               key={card.accountId}
               className="mt-3 rounded-md border border-amber-500/40 bg-background px-3 py-2 text-sm text-amber-800 dark:text-amber-300"
             >
-              <p>
-                <strong>{card.accountName}</strong>: dług {formatCurrency(card.debt)}, na spłatę odłożone{" "}
-                {formatCurrency(card.reserved)}. Brakuje {formatCurrency(card.unfunded)} w kopercie „Płatność:{" "}
-                {card.accountName}”.
-              </p>
-              {card.overspent > 0.004 && (
-                <p className="mt-1">
-                  Wydatki ponad kopertę ({formatCurrency(card.overspent)}) to nowy dług — nie wracają do Do rozdzielenia.
-                </p>
+              <p>{creditCardFundingBanner(card)}</p>
+              {card.overspent > 0.004 && <p className="mt-1">{creditCardOverspendNote(card)}</p>}
+              {card.categoryId && (
+                <button
+                  type="button"
+                  className="mt-2 font-medium underline"
+                  onClick={() => revealPaymentCategory(card.categoryId)}
+                >
+                  Przejdź do kategorii „Płatność: {card.accountName}”
+                </button>
               )}
             </div>
           ))}
@@ -312,6 +332,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
               return (
                 <div
                   key={row.category.id}
+                  id={`budget-category-${row.category.id}`}
                   className="grid grid-cols-12 items-center gap-2 border-b px-4 py-3 hover:bg-muted/30"
                 >
                   <button
@@ -334,10 +355,7 @@ export function BudgetTable({ year, month, onMonthChange }: BudgetTableProps) {
                       const card = (data?.creditCards ?? []).find((status) => status.categoryId === row.category.id);
                       if (!card) return null;
                       return (
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          Dług {formatCurrency(card.debt)} · odłożone {formatCurrency(card.reserved)}
-                          {card.unfunded > 0.004 ? ` · brakuje ${formatCurrency(card.unfunded)}` : ""}
-                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{creditCardRowStatus(card)}</p>
                       );
                     })()}
                   </button>

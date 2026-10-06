@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { getAuthContext } from "@/lib/api-helpers";
 import { saveCategoryAllocated } from "@/lib/allocation-write";
 import { invalidateFamilyBudgetCache } from "@/lib/budget-read";
+import { syntheticPaymentAccountId } from "@/lib/credit-cards";
+import { resolveCreditPaymentCategoryId } from "@/lib/credit-cards-write";
 import { allocateSchema } from "@/lib/validators";
 
 export async function POST(request: Request) {
@@ -17,9 +19,28 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Nieprawidłowe dane przydziału" }, { status: 400 });
   }
 
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const rawId = "category_id" in body ? String((body as { category_id?: unknown }).category_id ?? "") : "";
+    if (syntheticPaymentAccountId(rawId)) {
+      const resolved = await resolveCreditPaymentCategoryId(ctx.supabase, ctx.family.id, rawId);
+      if (!resolved.ok) {
+        return NextResponse.json({ error: resolved.error }, { status: 400 });
+      }
+      body = { ...body, category_id: resolved.categoryId };
+    }
+  }
+
   const parsed = allocateSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ error: "Nieprawidłowe dane przydziału" }, { status: 400 });
+    const invalidCategory = parsed.error.issues.some((issue) => issue.path[0] === "category_id");
+    return NextResponse.json(
+      {
+        error: invalidCategory
+          ? "Nieprawidłowa kategoria przydziału. Odśwież budżet i wpisz kwotę jeszcze raz."
+          : "Nieprawidłowe dane przydziału",
+      },
+      { status: 400 }
+    );
   }
 
   const { category_id, year, month, allocated, rollover } = parsed.data;

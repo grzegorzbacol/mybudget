@@ -6,7 +6,16 @@ import {
   contributionToSpending,
   isIncomeToReadyToAssign,
 } from "./budget";
-import { applyCreditCardBudget, creditLedgerWouldGoPositive } from "./credit-cards";
+import {
+  applyCreditCardBudget,
+  CREDIT_OVERPAY_MESSAGE,
+  creditCardFundingBanner,
+  creditCardOverspendNote,
+  creditCardRowStatus,
+  creditLedgerWouldGoPositive,
+  withCreditPaymentCategories,
+} from "./credit-cards";
+import { formatCurrency } from "./format";
 import type { Account, BudgetAllocation, BudgetCategory, BudgetMonthData, LedgerTransaction } from "./types";
 
 const family = "fam-1";
@@ -392,5 +401,57 @@ describe("credit card budget", () => {
     expect(paymentId).toBeTruthy();
     expect(applied.activityMap.get(paymentId!)?.get("2026-9")).toBe(30);
     expect(applied.uncoveredByAccount).toEqual({});
+  });
+});
+
+describe("credit card copy", () => {
+  it("tells you what to assign, in the same currency format as the rest of the budget", () => {
+    const debt = formatCurrency(9813.51);
+    expect(
+      creditCardFundingBanner({
+        accountName: "Karta Kredytowa",
+        debt: 9813.51,
+        reserved: 0,
+        unfunded: 9813.51,
+      })
+    ).toBe(
+      `Karta Kredytowa: do spłaty ${debt}, a w budżecie nie masz jeszcze na to odłożonych pieniędzy. Przydziel ${debt} do kategorii „Płatność: Karta Kredytowa”, żeby pokryć spłatę.`
+    );
+    expect(
+      creditCardFundingBanner({
+        accountName: "Karta Kredytowa",
+        debt: 9813.51,
+        reserved: 100,
+        unfunded: 9713.51,
+      })
+    ).toBe(
+      `Karta Kredytowa: do spłaty ${debt}. W budżecie odłożone ${formatCurrency(100)}, brakuje jeszcze ${formatCurrency(9713.51)}. Przydziel tę kwotę do kategorii „Płatność: Karta Kredytowa”.`
+    );
+    expect(creditCardOverspendNote({ accountName: "Karta Kredytowa", overspent: 40 })).toBe(
+      `W tym miesiącu karta wydała ${formatCurrency(40)} więcej, niż było w kategoriach. To nowy dług — przydziel go do kategorii „Płatność: Karta Kredytowa”. Sam nie wróci do Do rozdzielenia.`
+    );
+    expect(creditCardRowStatus({ debt: 9813.51, reserved: 0, unfunded: 9813.51 })).toBe(
+      `Do spłaty ${debt}. W budżecie odłożone ${formatCurrency(0)}. Brakuje ${debt}.`
+    );
+    expect(CREDIT_OVERPAY_MESSAGE).toBe(
+      "Nie da się spłacić więcej, niż wynosi dług. Karta może zejść najwyżej do zera."
+    );
+  });
+});
+
+describe("payment category identity", () => {
+  it("keeps a stored payment category when the account id differs only by letter case", () => {
+    const card = account("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA", -10, "credit");
+    card.name = "Karta Kredytowa";
+    const stored = category(
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "Płatność: Karta Kredytowa",
+      "Karty kredytowe"
+    );
+    stored.payment_account_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const next = withCreditPaymentCategories([stored], [card]);
+    const payments = next.filter((item) => item.name.startsWith("Płatność:"));
+    expect(payments).toHaveLength(1);
+    expect(String(payments[0].id).startsWith("cc-payment:")).toBe(false);
   });
 });

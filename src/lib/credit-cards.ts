@@ -8,6 +8,7 @@ import {
   normalizeBudgetId,
   signedAccountBalance,
 } from "./budget";
+import { formatCurrency } from "./format";
 import { fromMonthIndex, isPlausibleBudgetYearMonth, money, monthIndex, parseMonthKey, parseYearMonthFromDate } from "./money";
 import { isOpeningBalanceTx } from "./opening-balance";
 import type {
@@ -24,7 +25,45 @@ export const CREDIT_PAYMENT_SORT = 9000;
 
 /** A card ledger is debt (negative) or zero. Legacy rows stored that debt as a positive number. */
 export const CREDIT_OVERPAY_MESSAGE =
-  "Karta nie może wyjść na plus. Spłać najwyżej kwotę długu (do zera).";
+  "Nie da się spłacić więcej, niż wynosi dług. Karta może zejść najwyżej do zera.";
+
+const SYNTHETIC_PAYMENT_ID = /^cc-payment:(.+)$/i;
+
+/** Account id encoded in a not-yet-saved payment category (`cc-payment:{accountId}`). */
+export function syntheticPaymentAccountId(categoryId: unknown): string | null {
+  if (typeof categoryId !== "string") return null;
+  const match = SYNTHETIC_PAYMENT_ID.exec(categoryId.trim());
+  const accountId = match?.[1]?.trim() ?? "";
+  return accountId || null;
+}
+
+export function isSyntheticPaymentCategoryId(categoryId: unknown): boolean {
+  return syntheticPaymentAccountId(categoryId) !== null;
+}
+
+export function creditCardFundingBanner(
+  card: Pick<CreditCardBudgetStatus, "accountName" | "debt" | "reserved" | "unfunded">
+): string {
+  const category = `„Płatność: ${card.accountName}”`;
+  if (card.reserved > 0.004) {
+    return `${card.accountName}: do spłaty ${formatCurrency(card.debt)}. W budżecie odłożone ${formatCurrency(card.reserved)}, brakuje jeszcze ${formatCurrency(card.unfunded)}. Przydziel tę kwotę do kategorii ${category}.`;
+  }
+  return `${card.accountName}: do spłaty ${formatCurrency(card.debt)}, a w budżecie nie masz jeszcze na to odłożonych pieniędzy. Przydziel ${formatCurrency(card.unfunded)} do kategorii ${category}, żeby pokryć spłatę.`;
+}
+
+export function creditCardOverspendNote(
+  card: Pick<CreditCardBudgetStatus, "accountName" | "overspent">
+): string {
+  return `W tym miesiącu karta wydała ${formatCurrency(card.overspent)} więcej, niż było w kategoriach. To nowy dług — przydziel go do kategorii „Płatność: ${card.accountName}”. Sam nie wróci do Do rozdzielenia.`;
+}
+
+export function creditCardRowStatus(
+  card: Pick<CreditCardBudgetStatus, "debt" | "reserved" | "unfunded">
+): string {
+  const base = `Do spłaty ${formatCurrency(card.debt)}. W budżecie odłożone ${formatCurrency(card.reserved)}.`;
+  if (card.unfunded > 0.004) return `${base} Brakuje ${formatCurrency(card.unfunded)}.`;
+  return base;
+}
 
 export function creditLedgerWouldGoPositive(balanceBefore: number, amount: number): boolean {
   const base = Number(balanceBefore);
@@ -64,6 +103,20 @@ export function linkedPaymentAccountId(
   return account?.id ?? null;
 }
 
+/** Stored payment category for a card. Draft ids are not rows in `budget_categories`. */
+export function storedCreditPaymentCategory(
+  categories: BudgetCategory[],
+  account: Pick<Account, "id">,
+  accounts: Account[]
+): BudgetCategory | undefined {
+  const accountId = normalizeBudgetId(account.id);
+  if (!accountId) return undefined;
+  return categories.find((category) => {
+    if (isSyntheticPaymentCategoryId(category.id)) return false;
+    return normalizeBudgetId(linkedPaymentAccountId(category, accounts) ?? "") === accountId;
+  });
+}
+
 export function creditPaymentCategoryDraft(account: Account): BudgetCategory {
   return {
     id: `cc-payment:${account.id}`,
@@ -85,13 +138,16 @@ export function withCreditPaymentCategories(categories: BudgetCategory[], accoun
     return { ...category, payment_account_id: linked };
   });
   const linked = new Set(
-    stamped.map((category) => linkedPaymentAccountId(category, accounts)).filter((id): id is string => Boolean(id))
+    stamped
+      .map((category) => linkedPaymentAccountId(category, accounts))
+      .filter((id): id is string => Boolean(id))
+      .map((id) => normalizeBudgetId(id))
   );
   const extra: BudgetCategory[] = [];
   for (const account of accounts) {
-    if (!isOnBudgetCreditAccount(account) || linked.has(account.id)) continue;
+    if (!isOnBudgetCreditAccount(account) || linked.has(normalizeBudgetId(account.id))) continue;
     extra.push(creditPaymentCategoryDraft(account));
-    linked.add(account.id);
+    linked.add(normalizeBudgetId(account.id));
   }
   return extra.length ? [...stamped, ...extra] : stamped;
 }
