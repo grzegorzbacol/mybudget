@@ -503,7 +503,8 @@ export function budgetMonthFromCore(
       trackingInflows = trackingAfterCreditCards(
         rawTracking,
         plan.cardPaymentOutflows,
-        core.trackingIncludesCardPayments === true
+        core.trackingIncludesCardPayments === true,
+        plan.externalCardPaymentOutflows
       );
       uncovered = plan.uncoveredByAccount;
     } else {

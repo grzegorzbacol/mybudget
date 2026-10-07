@@ -786,7 +786,9 @@ export interface CreditCardPlan {
   borrowedCash: number;
   /**
    * Slice of cardPaymentOutflows whose source is outside the cash pool (negative).
-   * Those rows are not in the cash balance, so Ready to Assign must not rise by them.
+   * Payment activity is the opposite sign, so Ready to Assign adds this negative
+   * amount back. Otherwise an off-budget payment inflates the envelope and
+   * Do rozdzielenia falls by the same amount twice.
    */
   externalCardPaymentOutflows: number;
 }
@@ -977,15 +979,16 @@ export function planCreditCardLedger(input: {
   }
 
   for (const event of creditCardPaymentEvents(transactions, accounts)) {
-    addPayment(event.cardId, event.year, event.month, -event.amount);
+    // One-leg rows are negative on the source account. The card is the destination,
+    // so the sign flips: a payment reduces debt and is positive activity.
+    addPayment(event.cardId, event.year, event.month, event.amount);
   }
   for (const move of creditToCreditTransferEvents(transactions, accounts)) {
     addPayment(move.fromId, move.year, move.month, move.amount);
     addPayment(move.toId, move.year, move.month, -move.amount);
   }
-  // Card → account increases debt. YNAB records it as negative activity on the
-  // payment category (a hole to fund), never as money set aside. A payment onto
-  // the card is also negative: it spends the envelope.
+  // Card → account increases debt and is negative activity. A payment onto the
+  // card is the opposite sign: positive activity, debt down.
   let borrowedCash = 0;
   for (const event of creditCardOutboundEvents(transactions, accounts)) {
     addPayment(event.cardId, event.year, event.month, -event.amount);
@@ -1063,10 +1066,17 @@ export function liabilityAfterCreditCards(
 export function trackingAfterCreditCards(
   rawTracking: number,
   cardPaymentOutflows: number,
-  trackingIncludesCardPayments: boolean
+  trackingIncludesCardPayments: boolean,
+  externalCardPaymentOutflows = 0
 ): number {
   if (!trackingIncludesCardPayments) return money(rawTracking || 0);
-  return money((Number(rawTracking) || 0) - (Number(cardPaymentOutflows) || 0));
+  // SQL tracking already includes on-budget payments (negative on the cash account).
+  // Add those back. External payments are absent from that sum; keep them as the
+  // same negative so positive payment activity does not lower Do rozdzielenia.
+  const outflows = Number(cardPaymentOutflows) || 0;
+  const external = Number(externalCardPaymentOutflows) || 0;
+  const onBudgetPayments = money(outflows - external);
+  return money((Number(rawTracking) || 0) - onBudgetPayments + external);
 }
 
 export function describeCreditCards(
@@ -1232,7 +1242,8 @@ export function applyCreditCardBudget(input: {
     trackingInflows: trackingAfterCreditCards(
       input.trackingInflows ?? 0,
       plan.cardPaymentOutflows,
-      input.trackingIncludesCardPayments
+      input.trackingIncludesCardPayments,
+      plan.externalCardPaymentOutflows
     ),
     income: nextIncome,
     spending: nextSpending,
