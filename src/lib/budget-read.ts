@@ -494,7 +494,12 @@ export function budgetMonthFromCore(
             })
           : undefined,
       });
-      liabilityDelta = liabilityAfterCreditCards(rawLiability, plan.creditActivity, plan.uncovered);
+      liabilityDelta = liabilityAfterCreditCards(
+        rawLiability,
+        plan.creditActivity,
+        plan.uncovered,
+        plan.borrowedCash
+      );
       trackingInflows = trackingAfterCreditCards(
         rawTracking,
         plan.cardPaymentOutflows,
