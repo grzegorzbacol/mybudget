@@ -7,7 +7,7 @@ import {
   type SplitActivityLine,
 } from "./budget";
 import type { Account, BudgetAllocation, BudgetCategory, LedgerTransaction, ScheduledTransaction } from "./types";
-import { sqlOpeningBalanceExpr } from "./opening-balance";
+import { sqlBalanceAdjustmentExpr, sqlOpeningBalanceExpr } from "./opening-balance";
 
 export type MonthTotal = { year: number; month: number; amount: number };
 export type FamilyPred = "uuid" | "text";
@@ -88,6 +88,7 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind, omitPaymentAccountId 
   // LEFT JOIN + text id match: INNER JOIN dropped every expense when account_id/id
   // types differed (uuid vs text). Missing account ⇒ on-budget, matching REST.
   const opening = sqlOpeningBalanceExpr("t");
+  const adjustment = sqlBalanceAdjustmentExpr("t");
   const ledger =
     kind === "full"
       ? `SELECT t.category_id::text AS category_id,
@@ -95,6 +96,7 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind, omitPaymentAccountId 
                ${sqlWarsawMonth("t")} AS month,
                t.amount::float8 AS amount,
                ${opening} AS is_opening,
+               ${adjustment} AS is_adjustment,
                COALESCE(a.type, '') AS account_type
         FROM transactions t
         LEFT JOIN accounts a ON a.id::text = t.account_id::text
@@ -107,7 +109,8 @@ function snapshotSql(pred: FamilyPred, kind: SnapshotKind, omitPaymentAccountId 
                ${sqlWarsawYear("t")} AS year,
                ${sqlWarsawMonth("t")} AS month,
                t.amount::float8 AS amount,
-               ${opening} AS is_opening
+               ${opening} AS is_opening,
+               ${adjustment} AS is_adjustment
         FROM transactions t
         WHERE ${tFamily}
           AND ${SQL_TRANSFER_PAYEE_PRED}`;
@@ -290,7 +293,7 @@ SELECT json_build_object(
     SELECT json_agg(x) FROM (
       SELECT year, month, SUM(amount)::float8 AS amount
       FROM ledger
-      WHERE amount > 0
+      WHERE amount > 0${kind === "full" ? " AND NOT (is_adjustment AND account_type = 'credit')" : ""}
       GROUP BY 1, 2
     ) x
   ), '[]'::json),
@@ -298,7 +301,7 @@ SELECT json_build_object(
     SELECT json_agg(x) FROM (
       SELECT year, month, SUM(-amount)::float8 AS amount
       FROM ledger
-      WHERE amount < 0 AND NOT is_opening
+      WHERE amount < 0 AND NOT is_opening AND NOT is_adjustment
       GROUP BY 1, 2
     ) x
   ), '[]'::json),
@@ -306,7 +309,7 @@ SELECT json_build_object(
     SELECT json_agg(x) FROM (
       SELECT year, month, COUNT(*)::int AS n
       FROM ledger
-      WHERE category_id IS NULL AND amount < 0 AND NOT is_opening
+      WHERE category_id IS NULL AND amount < 0 AND NOT is_opening AND NOT is_adjustment
       GROUP BY 1, 2
     ) x
   ), '[]'::json)${history}${rtaAdjust}${creditLines}${flags}
@@ -416,16 +419,17 @@ function dailyActualsSql(pred: FamilyPred, kind: SnapshotKind): string {
     kind === "full"
       ? `SUM(CASE WHEN t.amount > 0 AND COALESCE(a.type, '') <> 'credit' AND NOT (${expenseRefundSql}) THEN t.amount ELSE 0 END)::float8`
       : `SUM(CASE WHEN t.amount > 0 AND NOT (${expenseRefundSql}) THEN t.amount ELSE 0 END)::float8`;
+  const adjustment = sqlBalanceAdjustmentExpr("t");
   const actualOut =
     kind === "full"
       ? `SUM(CASE
-         WHEN t.amount < 0 AND NOT ${sqlOpeningBalanceExpr("t")} THEN -t.amount
-         WHEN t.amount > 0 AND a.type = 'credit' AND NOT ${sqlOpeningBalanceExpr("t")} THEN -t.amount
+         WHEN t.amount < 0 AND NOT ${sqlOpeningBalanceExpr("t")} AND NOT ${adjustment} THEN -t.amount
+         WHEN t.amount > 0 AND a.type = 'credit' AND NOT ${sqlOpeningBalanceExpr("t")} AND NOT ${adjustment} THEN -t.amount
          WHEN ${expenseRefundSql} THEN -t.amount
          ELSE 0
        END)::float8`
       : `SUM(CASE
-         WHEN t.amount < 0 AND NOT ${sqlOpeningBalanceExpr("t")} THEN -t.amount
+         WHEN t.amount < 0 AND NOT ${sqlOpeningBalanceExpr("t")} AND NOT ${adjustment} THEN -t.amount
          WHEN ${expenseRefundSql} THEN -t.amount
          ELSE 0
        END)::float8`;

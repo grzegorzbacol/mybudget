@@ -1,5 +1,5 @@
 import {
-  applyUnpairedCreditLegs,
+  accountsForBudgetMonth,
   describeCreditCards,
   isCashToCreditPayment,
   liabilityAfterCreditCards,
@@ -8,8 +8,8 @@ import {
   trackingAfterCreditCards,
   transferPairs,
 } from "./credit-cards";
-import { accountFlowsFromTransactions, accountsAsOfMonth, isOnOrBeforeMonthDate } from "./account-balances";
-import { isOpeningBalanceTx } from "./opening-balance";
+import { accountFlowsFromTransactions, isOnOrBeforeMonthDate } from "./account-balances";
+import { isBalanceAdjustmentTx, isOpeningBalanceTx } from "./opening-balance";
 import { isPlausibleBudgetYearMonth, isValidYearMonth, money, monthIndex, parseMonthKey, parseYearMonthFromDate } from "./money";
 import type {
   Account,
@@ -177,7 +177,7 @@ export function contributionToSpending(
   accounts: Account[] = [],
   categories: CategoryRef[] = []
 ): number {
-  if (isTransferTx(tx) || isOpeningBalanceTx(tx)) return 0;
+  if (isTransferTx(tx) || isOpeningBalanceTx(tx) || isBalanceAdjustmentTx(tx)) return 0;
   if (!isOnBudgetAccount(tx, accounts)) return 0;
   const amount = Number(tx.amount);
   if (!Number.isFinite(amount) || amount === 0) return 0;
@@ -277,7 +277,7 @@ export function uncategorizedExpenses(
   accounts: Account[] = []
 ): LedgerTransaction[] {
   return transactions.filter((tx) => {
-    if (isTransferTx(tx) || isOpeningBalanceTx(tx) || Number(tx.amount) >= 0 || tx.category_id) return false;
+    if (isTransferTx(tx) || isOpeningBalanceTx(tx) || isBalanceAdjustmentTx(tx) || Number(tx.amount) >= 0 || tx.category_id) return false;
     if (!isOnBudgetAccount(tx, accounts)) return false;
     if (year != null && month != null) {
       const ym = parseYearMonthFromDate(tx.date);
@@ -1016,10 +1016,12 @@ export function buildBudgetMonthData(
   const ledger = transactions ?? [];
   const postedAccounts = accounts ?? [];
   const through = ledger.filter((tx) => isOnOrBeforeMonthDate(tx.date, year, month));
-  const accountList = applyUnpairedCreditLegs(
-    accountsAsOfMonth(postedAccounts, accountFlowsFromTransactions(ledger), year, month),
-    through,
-    postedAccounts
+  const accountList = accountsForBudgetMonth(
+    postedAccounts,
+    accountFlowsFromTransactions(ledger),
+    ledger,
+    year,
+    month
   );
   const target = monthIndex(year, month);
   const planAllocations = (allocations ?? []).filter((row) => {

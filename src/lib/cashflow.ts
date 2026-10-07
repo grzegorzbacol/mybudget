@@ -1,5 +1,5 @@
 import { contributionToSpending, isOnBudget, isTransferTx } from "./budget";
-import { isOpeningBalanceTx } from "./opening-balance";
+import { isBalanceAdjustmentTx, isOpeningBalanceTx } from "./opening-balance";
 import { addDays, addMonthsToDate, money, yearMonthFromDate } from "./money";
 import type {
   Account,
@@ -280,7 +280,9 @@ export function buildCashflowTimeline(input: {
         if (spent) row.actualOut = money(row.actualOut + spent);
         else row.actualIn = money(row.actualIn + amount);
       }
-      if (amount < 0 && !isOpeningBalanceTx(tx)) row.actualOut = money(row.actualOut + Math.abs(amount));
+      if (amount < 0 && !isOpeningBalanceTx(tx) && !isBalanceAdjustmentTx(tx)) {
+        row.actualOut = money(row.actualOut + Math.abs(amount));
+      }
     }
   }
 

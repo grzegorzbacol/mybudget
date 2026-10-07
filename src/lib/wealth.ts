@@ -1,5 +1,6 @@
 import { contributionToSpending, isOnBudget, isTransferTx, signedAccountBalance } from "./budget";
-import { isOpeningBalanceTx } from "./opening-balance";
+import { accountsWithCreditTruth, unpairedCreditLegs } from "./credit-cards";
+import { isBalanceAdjustmentTx, isOpeningBalanceTx } from "./opening-balance";
 import { generateScheduleOccurrences } from "./cashflow";
 import { todayIso } from "./format";
 import { addDays, daysInMonth, money } from "./money";
@@ -63,18 +64,26 @@ export function wealthLayers(accounts: Account[]) {
  */
 export function netWorthHistory(
   accounts: Account[],
-  transactions: Array<Pick<LedgerTransaction, "account_id" | "amount" | "date">>,
+  transactions: Array<
+    Pick<LedgerTransaction, "account_id" | "amount" | "date"> &
+      Partial<Pick<LedgerTransaction, "transfer_id" | "transfer_account_id" | "payee" | "id">>
+  >,
   asOf?: string
 ): Array<{ date: string; netWorth: number; assets: number; liabilities: number }> {
   const today = asOf ?? todayIso();
+  const truthful = accountsWithCreditTruth(accounts, transactions);
+  const legs = unpairedCreditLegs(transactions as LedgerTransaction[], truthful);
   const txSum = new Map<string, number>();
   for (const tx of transactions) {
     txSum.set(tx.account_id, money((txSum.get(tx.account_id) ?? 0) + Number(tx.amount)));
   }
 
   const byAccount = new Map<string, number>();
-  for (const account of accounts) {
+  for (const account of truthful) {
     byAccount.set(account.id, money(Number(account.balance) - (txSum.get(account.id) ?? 0)));
+  }
+  for (const leg of legs) {
+    byAccount.set(leg.cardId, money((byAccount.get(leg.cardId) ?? 0) - leg.amount));
   }
 
   const snapshot = () => {
@@ -96,7 +105,10 @@ export function netWorthHistory(
     }
   };
 
-  const sorted = [...transactions].sort((a, b) => a.date.localeCompare(b.date) || a.account_id.localeCompare(b.account_id));
+  const sorted = [
+    ...transactions.map((tx) => ({ date: tx.date, accountId: tx.account_id, amount: Number(tx.amount) })),
+    ...legs.map((leg) => ({ date: leg.date, accountId: leg.cardId, amount: leg.amount })),
+  ].sort((a, b) => a.date.localeCompare(b.date) || a.accountId.localeCompare(b.accountId));
   if (sorted.length === 0) {
     push(today);
     return points;
@@ -104,7 +116,7 @@ export function netWorthHistory(
 
   push(addDays(sorted[0].date, -1));
   for (const tx of sorted) {
-    byAccount.set(tx.account_id, money((byAccount.get(tx.account_id) ?? 0) + Number(tx.amount)));
+    byAccount.set(tx.accountId, money((byAccount.get(tx.accountId) ?? 0) + tx.amount));
     push(tx.date);
   }
   if (points[points.length - 1]?.date !== today) {
@@ -174,6 +186,11 @@ export function monthCashActual(
     if (isTransferTx(tx) || isOpeningBalanceTx(tx)) continue;
     const account = accounts.find((a) => a.id === tx.account_id);
     if (account && !isOnBudget(account)) continue;
+    if (isBalanceAdjustmentTx(tx)) {
+      const adjustment = Number(tx.amount);
+      if (adjustment > 0 && account?.type !== "credit") income = money(income + adjustment);
+      continue;
+    }
     const amount = Number(tx.amount);
     if (account?.type === "credit") {
       const spent = contributionToSpending(tx, accounts, categories);

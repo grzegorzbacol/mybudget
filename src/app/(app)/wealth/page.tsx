@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatCurrency, todayIso } from "@/lib/format";
+import { accountsWithCreditTruth } from "@/lib/credit-cards";
 import { ACCOUNT_TYPE_META, displayBalance, isLiabilityType, netWorthHistory, wealthLayers } from "@/lib/wealth";
 import { isOnBudget } from "@/lib/budget";
 import { useFamily } from "@/hooks/use-family";
@@ -54,14 +55,22 @@ export default function WealthPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from("transactions")
-        .select("date, amount, account_id")
+        .select("date, amount, account_id, payee, transfer_id, transfer_account_id")
         .eq("family_id", familyData!.family.id)
         .order("date");
-      return (data ?? []) as Pick<Transaction, "date" | "amount" | "account_id">[];
+      return (data ?? []) as Pick<Transaction, "date" | "amount" | "account_id" | "payee" | "transfer_id" | "transfer_account_id">[];
     },
   });
 
-  const totals = wealthLayers(accounts ?? []);
+  const truthfulAccounts = useMemo(
+    () => accountsWithCreditTruth(accounts ?? [], transactions ?? []),
+    [accounts, transactions]
+  );
+  const truthById = useMemo(
+    () => new Map(truthfulAccounts.map((account) => [account.id, account])),
+    [truthfulAccounts]
+  );
+  const totals = wealthLayers(truthfulAccounts);
   const history = netWorthHistory(accounts ?? [], transactions ?? []);
   const assets = (accounts ?? []).filter((a) => !isLiabilityType(a.type));
   const debts = (accounts ?? []).filter((a) => isLiabilityType(a.type));
@@ -95,14 +104,16 @@ export default function WealthPage() {
     onError: () => toast.error("Nie udało się zapisać wartości"),
   });
 
-  const renderRow = (account: Account, liability: boolean) => (
+  const renderRow = (account: Account, liability: boolean) => {
+    const shown = truthById.get(account.id) ?? account;
+    return (
     <button
       type="button"
       key={account.id}
       className="flex w-full justify-between rounded border px-3 py-2 text-left text-sm hover:bg-muted/40"
       onClick={() => {
-        setEditAccount(account);
-        setNewValue(String(Math.abs(Number(account.balance))));
+        setEditAccount(shown);
+        setNewValue(String(Math.abs(Number(shown.balance))));
       }}
     >
       <span>
@@ -113,10 +124,11 @@ export default function WealthPage() {
         </span>
       </span>
       <span className={cn("font-medium", liability && "text-red-500")}>
-        {formatCurrency(Math.abs(displayBalance(account)))}
+        {formatCurrency(Math.abs(displayBalance(shown)))}
       </span>
     </button>
-  );
+    );
+  };
 
   const section = (title: string, list: Account[], liability: boolean) => {
     const inBudget = list.filter(isOnBudget);

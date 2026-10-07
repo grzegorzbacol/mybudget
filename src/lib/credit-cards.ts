@@ -10,7 +10,8 @@ import {
 } from "./budget";
 import { formatCurrency } from "./format";
 import { fromMonthIndex, isPlausibleBudgetYearMonth, money, monthIndex, parseMonthKey, parseYearMonthFromDate } from "./money";
-import { isOpeningBalanceTx } from "./opening-balance";
+import { accountFlowsFromTransactions, accountsAsOfMonth, isOnOrBeforeMonthDate, type AccountMonthFlow } from "./account-balances";
+import { isBalanceAdjustmentTx, isOpeningBalanceTx } from "./opening-balance";
 import type {
   Account,
   BudgetAllocation,
@@ -517,6 +518,7 @@ export function creditToCreditTransferEvents(
 /**
  * Money leaving an on-budget credit card for a non-card account.
  * Counted once per pair. A lone positive row on the destination still counts.
+ * This is new debt, not money set aside: it must not fund the payment envelope.
  */
 export function creditCardOutboundEvents(transactions: LedgerTransaction[], accounts: Account[]): CardPaymentEvent[] {
   const pairs = transferPairs(transactions);
@@ -563,13 +565,13 @@ function transferGroupKey(tx: LedgerTransaction): string {
   return `tx:${tx.id ?? `${tx.account_id}:${tx.date}:${tx.amount}:${tx.transfer_account_id ?? ""}`}`;
 }
 
+export type UnpairedCreditLeg = { cardId: string; amount: number; date: string };
+
 /**
- * Signed balance delta for an on-budget card whose transfer never posted a row
- * on that card. The other leg's amount A means the card moved by −A.
- * A pair that already has a card row contributes nothing (the stored balance
- * and account flows already include it).
+ * One transfer row whose other side never posted on the card.
+ * `amount` is the signed change to the card balance (−A when the visible row is A).
  */
-export function unpairedCreditDeltas(transactions: LedgerTransaction[], accounts: Account[]): Map<string, number> {
+export function unpairedCreditLegs(transactions: LedgerTransaction[], accounts: Account[]): UnpairedCreditLeg[] {
   const pairs = transferPairs(transactions);
   const byId = accountMap(accounts);
   const groups = new Map<string, LedgerTransaction[]>();
@@ -581,7 +583,7 @@ export function unpairedCreditDeltas(transactions: LedgerTransaction[], accounts
     groups.set(key, list);
   }
 
-  const deltas = new Map<string, number>();
+  const legs: UnpairedCreditLeg[] = [];
   for (const rows of Array.from(groups.values())) {
     const postedOnCard = rows.some((tx) => isOnBudgetCreditAccount(byId.get(normalizeBudgetId(tx.account_id))));
     if (postedOnCard) continue;
@@ -591,12 +593,129 @@ export function unpairedCreditDeltas(transactions: LedgerTransaction[], accounts
       if (!isOnBudgetCreditAccount(other)) continue;
       const amount = Number(tx.amount);
       if (!Number.isFinite(amount) || amount === 0) continue;
-      const id = normalizeBudgetId(other!.id);
-      deltas.set(id, money((deltas.get(id) ?? 0) + -amount));
+      legs.push({ cardId: other!.id, amount: money(-amount), date: tx.date });
       break;
     }
   }
+  return legs;
+}
+
+/**
+ * Signed balance delta for an on-budget card whose transfer never posted a row
+ * on that card. The other leg's amount A means the card moved by −A.
+ * A pair that already has a card row contributes nothing (the stored balance
+ * and account flows already include it).
+ */
+export function unpairedCreditDeltas(transactions: LedgerTransaction[], accounts: Account[]): Map<string, number> {
+  const deltas = new Map<string, number>();
+  for (const leg of unpairedCreditLegs(transactions, accounts)) {
+    const id = normalizeBudgetId(leg.cardId);
+    deltas.set(id, money((deltas.get(id) ?? 0) + leg.amount));
+  }
   return deltas;
+}
+
+const BALANCE_EPS = 0.005;
+
+function cardLedgerSums(
+  transactions: Array<{ account_id?: string | null; amount?: number | string | null }> | null | undefined
+): Map<string, { sum: number; count: number }> {
+  const sums = new Map<string, { sum: number; count: number }>();
+  for (const tx of transactions ?? []) {
+    const id = normalizeBudgetId(tx.account_id);
+    if (!id) continue;
+    const amount = Number(tx.amount);
+    if (!Number.isFinite(amount) || amount === 0) continue;
+    const row = sums.get(id) ?? { sum: 0, count: 0 };
+    row.sum = money(row.sum + amount);
+    row.count += 1;
+    sums.set(id, row);
+  }
+  return sums;
+}
+
+function flowSumByAccount(flows: AccountMonthFlow[] | null | undefined): Map<string, number> {
+  const sums = new Map<string, number>();
+  for (const row of flows ?? []) {
+    const id = normalizeBudgetId(row.account_id);
+    if (!id) continue;
+    sums.set(id, money((sums.get(id) ?? 0) + (Number(row.amount) || 0)));
+  }
+  return sums;
+}
+
+type BalanceAccount = { id: string; balance: number; type?: string | null; on_budget?: boolean | null };
+
+/**
+ * On-budget credit cards: when the ledger and `accounts.balance` disagree, the
+ * ledger wins. A balance with no card rows is kept (opening debt, one-sided
+ * payments). Pass `flows` when the transaction list might be only the card
+ * subset — we replace the balance only if those flows tell the same story.
+ * Cash and tracking accounts are left alone.
+ */
+export function reconcileOnBudgetCreditBalances<T extends BalanceAccount>(
+  accounts: T[],
+  transactions: Array<{ account_id?: string | null; amount?: number | string | null }> | null | undefined,
+  flows?: AccountMonthFlow[] | null
+): T[] {
+  const sums = cardLedgerSums(transactions);
+  const flowSums = flows ? flowSumByAccount(flows) : null;
+  let changed = false;
+  const next = accounts.map((account) => {
+    if (account.type !== "credit" || account.on_budget === false) return account;
+    const row = sums.get(normalizeBudgetId(account.id));
+    if (!row?.count) return account;
+    if (flowSums) {
+      const flow = flowSums.get(normalizeBudgetId(account.id)) ?? 0;
+      if (Math.abs(flow - row.sum) > BALANCE_EPS) return account;
+    }
+    if (Math.abs(row.sum - Number(account.balance)) <= BALANCE_EPS) return account;
+    changed = true;
+    return { ...account, balance: row.sum };
+  });
+  return changed ? next : accounts;
+}
+
+/**
+ * Month-end balances for the budget. Credit cards share one figure: ledger
+ * (when it disagrees with the stored balance), rewind of later months, then
+ * one-sided transfers that never posted on the card.
+ */
+export function accountsForBudgetMonth<T extends BalanceAccount>(
+  accounts: T[],
+  flows: AccountMonthFlow[] | null | undefined,
+  transactions: LedgerTransaction[] | null | undefined,
+  year: number,
+  month: number
+): T[] {
+  const reconciled = flows ? reconcileOnBudgetCreditBalances(accounts, transactions, flows) : accounts;
+  const asOf = accountsAsOfMonth(reconciled, flows, year, month);
+  if (!transactions?.length) return asOf;
+  const through = transactions.filter((tx) => isOnOrBeforeMonthDate(tx.date, year, month));
+  return applyUnpairedCreditLegs(asOf, through, asOf as unknown as Account[]);
+}
+
+type CreditTruthTx = {
+  id?: string;
+  account_id?: string | null;
+  category_id?: string | null;
+  amount?: number | string | null;
+  date?: string | null;
+  payee?: string | null;
+  memo?: string | null;
+  transfer_account_id?: string | null;
+  transfer_id?: string | null;
+};
+
+/** Current card balances: full ledger plus one-sided transfers. No month rewind. */
+export function accountsWithCreditTruth<T extends BalanceAccount>(
+  accounts: T[],
+  transactions: CreditTruthTx[] | null | undefined
+): T[] {
+  const rows = (transactions ?? []) as LedgerTransaction[];
+  const reconciled = reconcileOnBudgetCreditBalances(accounts, rows, accountFlowsFromTransactions(rows));
+  if (!rows.length) return reconciled;
+  return applyUnpairedCreditLegs(reconciled, rows, reconciled as unknown as Account[]);
 }
 
 /** Add unpaired card-transfer deltas onto month-end balances. Does not mutate the input. */
@@ -831,7 +950,7 @@ export function planCreditCardLedger(input: {
   }
 
   const uncategorizedCardTxs = tagged
-    .filter((tx) => !handled.has(tx._i) && !isTransferTx(tx) && !isOpeningBalanceTx(tx))
+    .filter((tx) => !handled.has(tx._i) && !isTransferTx(tx) && !isOpeningBalanceTx(tx) && !isBalanceAdjustmentTx(tx))
     .sort((a, b) => a.date.localeCompare(b.date) || a._i - b._i);
   for (const tx of uncategorizedCardTxs) {
     const account = byId.get(normalizeBudgetId(tx.account_id));
@@ -855,9 +974,7 @@ export function planCreditCardLedger(input: {
     addPayment(move.fromId, move.year, move.month, move.amount);
     addPayment(move.toId, move.year, move.month, -move.amount);
   }
-  for (const event of creditCardOutboundEvents(transactions, accounts)) {
-    addPayment(event.cardId, event.year, event.month, event.amount);
-  }
+  // Card → account is borrowed cash. It increases debt and does not fund Płatność.
 
   const pairs = transferPairs(transactions);
   let cardPaymentOutflows = 0;
@@ -963,7 +1080,7 @@ export function creditCardInflowByMonth(
   const byId = accountMap(accounts);
   const map = new Map<MonthKey, number>();
   for (const tx of transactions) {
-    if (isTransferTx(tx) || isOpeningBalanceTx(tx) || Number(tx.amount) <= 0) continue;
+    if (isTransferTx(tx) || isOpeningBalanceTx(tx) || isBalanceAdjustmentTx(tx) || Number(tx.amount) <= 0) continue;
     const account = byId.get(normalizeBudgetId(tx.account_id));
     if (!isOnBudgetCreditAccount(account)) continue;
     const ym = parseYearMonthFromDate(tx.date);
