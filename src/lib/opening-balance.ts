@@ -23,3 +23,15 @@ export function isOpeningBalanceTx(tx: {
 export function sqlOpeningBalanceExpr(alias = "t"): string {
   return `(lower(btrim(COALESCE(${alias}.payee, ''))) = lower('${OPENING_PAYEE}') OR lower(btrim(COALESCE(${alias}.memo, ''))) = lower('${OPENING_MEMO}'))`;
 }
+
+/** Reconciliation row inserted by the accounts screen. It moves the balance, it is not spending. */
+export const BALANCE_ADJUSTMENT_PAYEE = "Korekta salda";
+
+export function isBalanceAdjustmentTx(tx: { payee?: string | null }): boolean {
+  return normalizeOpeningField(tx.payee) === normalizeOpeningField(BALANCE_ADJUSTMENT_PAYEE);
+}
+
+/** SQL boolean: balance-adjustment row on alias `t`. */
+export function sqlBalanceAdjustmentExpr(alias = "t"): string {
+  return `lower(regexp_replace(btrim(COALESCE(${alias}.payee, '')), '\\s+', ' ', 'g')) = '${normalizeOpeningField(BALANCE_ADJUSTMENT_PAYEE)}'`;
+}

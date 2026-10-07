@@ -1,4 +1,4 @@
-import { accountsAsOfMonth, isOnOrBeforeMonthDate, sumAmountsThrough } from "@/lib/account-balances";
+import { isOnOrBeforeMonthDate, sumAmountsThrough } from "@/lib/account-balances";
 import { upcomingByCategory } from "@/lib/cashflow";
 import { plannedMonthTotals } from "@/lib/plan";
 import {
@@ -19,7 +19,7 @@ import {
 } from "@/lib/budget";
 import {
   applyCreditCardBudget,
-  applyUnpairedCreditLegs,
+  accountsForBudgetMonth,
   describeCreditCards,
   isOnBudgetCreditAccount,
   liabilityAfterCreditCards,
@@ -29,7 +29,7 @@ import {
 } from "@/lib/credit-cards";
 import { ensureCreditPaymentCategories } from "@/lib/credit-cards-write";
 import { addDays, isPlausibleBudgetYearMonth, monthIndex, monthRange, parseMonthKey } from "@/lib/money";
-import { isOpeningBalanceTx } from "@/lib/opening-balance";
+import { isBalanceAdjustmentTx, isOpeningBalanceTx } from "@/lib/opening-balance";
 import {
   excludeSplitParentsFromUncategorized,
   monthAmount,
@@ -463,16 +463,7 @@ export function budgetMonthFromCore(
   month: number
 ): BudgetMonthData {
   const { start, end } = monthRange(year, month);
-  const rewound = core.accountFlows
-    ? accountsAsOfMonth(core.accounts, core.accountFlows, year, month)
-    : core.accounts;
-  const accounts = core.creditLines
-    ? applyUnpairedCreditLegs(
-        rewound,
-        core.creditLines.filter((tx) => isOnOrBeforeMonthDate(tx.date, year, month)),
-        core.accounts
-      )
-    : rewound;
+  const accounts = accountsForBudgetMonth(core.accounts, core.accountFlows, core.creditLines, year, month);
   const upcoming = upcomingByCategory(core.scheduled, start, addDays(end, -1));
   const planned = plannedMonthTotals(core.scheduled, year, month, accounts);
 
@@ -603,7 +594,8 @@ export function attachRestMonthTotals(
     if (account && account.on_budget === false) continue;
     if (isTransferTx(tx)) continue;
     const amount = Number(tx.amount);
-    const creditRefund = account?.type === "credit" && amount > 0 && !isOpeningBalanceTx(tx);
+    const creditRefund =
+      account?.type === "credit" && amount > 0 && !isOpeningBalanceTx(tx) && !isBalanceAdjustmentTx(tx);
     const expenseRefund =
       amount > 0 &&
       !isOpeningBalanceTx(tx) &&
@@ -616,7 +608,7 @@ export function attachRestMonthTotals(
       incomeByMonth.set(key, (incomeByMonth.get(key) ?? 0) + amount);
     } else if (creditRefund) {
       spendByMonth.set(key, (spendByMonth.get(key) ?? 0) - amount);
-    } else if (amount < 0 && !isOpeningBalanceTx(tx)) {
+    } else if (amount < 0 && !isOpeningBalanceTx(tx) && !isBalanceAdjustmentTx(tx)) {
       spendByMonth.set(key, (spendByMonth.get(key) ?? 0) + Math.abs(amount));
       if (!core.transferMarkersMissing && !tx.category_id) {
         uncategorizedByMonth.set(key, (uncategorizedByMonth.get(key) ?? 0) + 1);

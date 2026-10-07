@@ -1,7 +1,7 @@
 import { isIncomeCategoryName, isTransferTx } from "@/lib/budget";
 import { getMonthLabel } from "@/lib/format";
 import { isValidYearMonth, parseYearMonthFromDate } from "@/lib/money";
-import { isOpeningBalanceTx } from "@/lib/opening-balance";
+import { isBalanceAdjustmentTx, isOpeningBalanceTx } from "@/lib/opening-balance";
 import type { Account, Transaction } from "@/lib/types";
 
 export const ALL_ACCOUNTS_FILTER = "all";
@@ -102,7 +102,9 @@ export function needsBudgetCategory(
     category_splits?: LedgerTx["category_splits"];
   }
 ): boolean {
-  if (Number(tx.amount) >= 0 || isTransferTx(tx) || isOpeningBalanceTx(tx) || tx.category_id) return false;
+  if (Number(tx.amount) >= 0 || isTransferTx(tx) || isOpeningBalanceTx(tx) || isBalanceAdjustmentTx(tx) || tx.category_id) {
+    return false;
+  }
   return !hasEnvelopeSplits(tx);
 }
 
@@ -146,6 +148,7 @@ export function transactionRegisterHint(
 ): string {
   if (isTransferTx(tx)) return "Transfer";
   if (isOpeningBalanceTx(tx)) return "Saldo konta";
+  if (isBalanceAdjustmentTx(tx)) return Number(tx.amount) > 0 ? "Do rozdzielenia" : "Dług karty";
   if (Number(tx.amount) > 0) {
     const name = tx.category?.name?.trim();
     if (name && !isIncomeCategoryName(name)) return `${tx.category?.icon ?? ""} ${name}`.trim();

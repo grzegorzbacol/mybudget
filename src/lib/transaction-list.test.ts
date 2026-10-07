@@ -178,6 +178,11 @@ describe("opening balances in the register", () => {
     expect(transactionRegisterHint(opening)).toBe("Saldo konta");
     expect(transactionRegisterHint(groceryUncat)).toBe("Bez kategorii");
     expect(transactionRegisterHint(salary)).toBe("Do rozdzielenia");
+    const cardAdjustment = tx({ id: "adj", account_id: "cc", amount: -12512.98, payee: "Korekta salda" });
+    const cashAdjustment = tx({ id: "adj-cash", account_id: "checking", amount: 446.61, payee: "Korekta salda" });
+    expect(matchesLedgerKind(cardAdjustment, "uncategorized")).toBe(false);
+    expect(transactionRegisterHint(cardAdjustment)).toBe("Dług karty");
+    expect(transactionRegisterHint(cashAdjustment)).toBe("Do rozdzielenia");
   });
 
   it("does not treat a split receipt as Bez kategorii", () => {

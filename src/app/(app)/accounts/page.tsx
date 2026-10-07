@@ -33,7 +33,7 @@ import { createClient } from "@/lib/supabase/client";
 import { formatCurrency, getCurrentYearMonth, todayIso } from "@/lib/format";
 import { accountFlowsFromTransactions, accountsAsOfMonth } from "@/lib/account-balances";
 import { checkBudgetMonthAccounts, isOnBudget } from "@/lib/budget";
-import { CREDIT_OVERPAY_MESSAGE, creditLedgerWouldGoPositive } from "@/lib/credit-cards";
+import { accountsWithCreditTruth, CREDIT_OVERPAY_MESSAGE, creditLedgerWouldGoPositive } from "@/lib/credit-cards";
 import { OPENING_MEMO, OPENING_PAYEE } from "@/lib/opening-balance";
 import { ACCOUNT_TYPE_META, computeNetWorth, displayBalance, isLiabilityType } from "@/lib/wealth";
 import { isQaLeftoverAccountName } from "@/lib/account-delete-policy";
@@ -81,10 +81,13 @@ export default function AccountsPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from("transactions")
-        .select("date, amount, account_id, cleared")
+        .select("date, amount, account_id, cleared, payee, transfer_id, transfer_account_id")
         .eq("family_id", familyData!.family.id)
         .order("date");
-      return data as Pick<Transaction, "date" | "amount" | "account_id" | "cleared">[];
+      return data as Pick<
+        Transaction,
+        "date" | "amount" | "account_id" | "cleared" | "payee" | "transfer_id" | "transfer_account_id"
+      >[];
     },
   });
 
@@ -238,9 +241,17 @@ export default function AccountsPage() {
     : 0;
   const deleteIsQa = deleteOpen ? isQaLeftoverAccountName(deleteOpen.name) : false;
 
-  const onBudgetAccounts = accounts?.filter(isOnBudget) ?? [];
-  const trackingAccounts = accounts?.filter((a) => !isOnBudget(a)) ?? [];
-  const wealth = computeNetWorth(accounts ?? []);
+  const truthfulAccounts = useMemo(
+    () => accountsWithCreditTruth(accounts ?? [], transactions ?? []),
+    [accounts, transactions]
+  );
+  const truthById = useMemo(
+    () => new Map(truthfulAccounts.map((account) => [account.id, account])),
+    [truthfulAccounts]
+  );
+  const onBudgetAccounts = truthfulAccounts.filter(isOnBudget);
+  const trackingAccounts = truthfulAccounts.filter((a) => !isOnBudget(a));
+  const wealth = computeNetWorth(truthfulAccounts);
   const onBudgetWealth = computeNetWorth(onBudgetAccounts);
   const trackingWealth = computeNetWorth(trackingAccounts);
   const { year: budgetYear, month: budgetMonth } = getCurrentYearMonth();
@@ -290,8 +301,9 @@ export default function AccountsPage() {
   })();
 
   const renderAccount = (account: Account) => {
+    const shown = truthById.get(account.id) ?? account;
     const cleared = clearedByAccount.get(account.id) ?? 0;
-    const uncleared = Number(account.balance) - cleared;
+    const uncleared = Number(shown.balance) - cleared;
     return (
       <Card key={account.id}>
         <CardContent className="p-4">
@@ -305,7 +317,7 @@ export default function AccountsPage() {
             </button>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <div className="text-right">
-                <p className="text-lg font-bold">{formatCurrency(displayBalance(account))}</p>
+                <p className="text-lg font-bold">{formatCurrency(displayBalance(shown))}</p>
                 <p className="text-xs text-muted-foreground">
                   Uzgodnione {formatCurrency(cleared)}
                   {Math.abs(uncleared) > 0.001 ? ` · w drodze ${formatCurrency(uncleared)}` : ""}
@@ -323,8 +335,8 @@ export default function AccountsPage() {
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  setReconcileOpen(account);
-                  setNewBalance(String(account.balance));
+                  setReconcileOpen(shown);
+                  setNewBalance(String(shown.balance));
                 }}
               >
                 Uzgodnij

@@ -45,6 +45,8 @@ describe("budget SQL aggregates", () => {
     expect(FAMILY_BUDGET_SQL).toContain("family_id = $1::uuid");
     expect(FAMILY_BUDGET_SQL).toContain("amount > 0");
     expect(FAMILY_BUDGET_SQL).toContain("amount < 0 AND NOT is_opening");
+    expect(FAMILY_BUDGET_SQL).toContain("NOT is_adjustment");
+    expect(FAMILY_BUDGET_SQL).toContain("korekta salda");
     expect(FAMILY_BUDGET_SQL).toContain("Saldo początkowe");
     expect(FAMILY_BUDGET_SQL).toContain("btrim");
     expect(FAMILY_BUDGET_SQL).toContain("GROUP BY 1, 2, 3");

@@ -163,6 +163,13 @@ describe("credit card budget", () => {
     const payment = category("pay", "Płatność: Karta Kredytowa", "Karty kredytowe");
     const legs = [
       tx({
+        amount: -9813.51,
+        date: "2026-09-01",
+        account_id: "cc",
+        payee: "Saldo początkowe",
+        memo: "Opening balance",
+      }),
+      tx({
         amount: -6699.47,
         date: "2026-10-06",
         account_id: "checking",
@@ -390,6 +397,13 @@ describe("credit card budget", () => {
       [
         tx({ amount: 1000, date: "2026-09-01" }),
         tx({
+          amount: -500,
+          date: "2026-09-01",
+          account_id: "cc",
+          payee: "Saldo początkowe",
+          memo: "Opening balance",
+        }),
+        tx({
           amount: 100,
           date: "2026-09-03",
           account_id: "checking",
@@ -408,10 +422,10 @@ describe("credit card budget", () => {
       ]
     );
     expect(data.incomeThisMonth).toBe(1000);
-    expect(paymentCategory(data).activity).toBe(100);
-    expect(paymentCategory(data).available).toBe(100);
-    expect(data.readyToAssign).toBe(900);
-    expect(data.creditCards?.[0]).toMatchObject({ debt: 600, reserved: 100 });
+    expect(paymentCategory(data).activity).toBe(0);
+    expect(paymentCategory(data).available).toBe(0);
+    expect(data.readyToAssign).toBe(1000);
+    expect(data.creditCards?.[0]).toMatchObject({ debt: 600, reserved: 0, unfunded: 600 });
     expect(checkBudgetMonthAccounts(data, [checking, card]).matches).toBe(true);
   });
 
@@ -561,7 +575,8 @@ describe("one-sided production card transfer", () => {
     const credit = card(-9813.51);
     const legs = [productionRow(6699.47, "Transfer ← BONEA VAT")];
     const october = monthFromRoute(source, credit, legs, 2026, 10);
-    expect(paymentCategory(october).activity).toBe(6699.47);
+    expect(paymentCategory(october).activity).toBe(0);
+    expect(paymentCategory(october).available).toBe(0);
     expect(october.creditCards?.[0]?.debt).toBe(16512.98);
     const both = monthFromRoute(
       source,
@@ -580,7 +595,8 @@ describe("one-sided production card transfer", () => {
       2026,
       10
     );
-    expect(paymentCategory(both).activity).toBe(6699.47);
+    expect(paymentCategory(both).activity).toBe(0);
+    expect(paymentCategory(both).available).toBe(0);
     expect(both.creditCards?.[0]?.debt).toBe(16512.98);
   });
 
@@ -699,6 +715,13 @@ describe("several credit cards", () => {
       [checking, visa, mastercard],
       [
         tx({ amount: 1000, date: "2026-09-01" }),
+        tx({
+          amount: -20,
+          date: "2026-09-01",
+          account_id: "mc",
+          payee: "Saldo początkowe",
+          memo: "Opening balance",
+        }),
         tx({ amount: -60, date: "2026-09-04", account_id: "visa", category_id: "groceries" }),
         tx({ amount: -20, date: "2026-09-05", account_id: "mc", category_id: "groceries" }),
         tx({ amount: 10, date: "2026-09-06", account_id: "visa", category_id: "groceries", payee: "Zwrot" }),

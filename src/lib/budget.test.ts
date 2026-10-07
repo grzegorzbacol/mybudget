@@ -338,6 +338,13 @@ describe("YNAB envelope math", () => {
       [
         tx({ amount: 1000, date: "2026-09-01" }),
         tx({
+          amount: -500,
+          date: "2026-09-01",
+          account_id: "cc",
+          payee: "Saldo początkowe",
+          memo: "Opening balance",
+        }),
+        tx({
           amount: -100,
           date: "2026-09-02",
           account_id: "checking",
@@ -369,6 +376,13 @@ describe("YNAB envelope math", () => {
       [
         tx({ amount: 1000, date: "2026-09-01" }),
         tx({
+          amount: -500,
+          date: "2026-09-01",
+          account_id: "cc",
+          payee: "Saldo początkowe",
+          memo: "Opening balance",
+        }),
+        tx({
           amount: 100,
           date: "2026-09-03",
           account_id: "checking",
@@ -387,7 +401,7 @@ describe("YNAB envelope math", () => {
       ]
     );
     expect(cashAdvance.incomeThisMonth).toBe(1000);
-    expect(cashAdvance.readyToAssign).toBe(900);
+    expect(cashAdvance.readyToAssign).toBe(1000);
     expect(
       checkBudgetMonthAccounts(cashAdvance, [
         { ...account("checking", 1100), type: "checking" as const },
@@ -405,6 +419,13 @@ describe("YNAB envelope math", () => {
       [{ ...account("checking", 1000), type: "checking" as const }, { ...account("cc", -550), type: "credit" as const }],
       [
         tx({ amount: 1000, date: "2026-09-01" }),
+        tx({
+          amount: -500,
+          date: "2026-09-01",
+          account_id: "cc",
+          payee: "Saldo początkowe",
+          memo: "Opening balance",
+        }),
         tx({ amount: -50, date: "2026-09-04", account_id: "cc", category_id: "groceries" }),
       ]
     );
