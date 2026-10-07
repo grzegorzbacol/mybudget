@@ -647,14 +647,12 @@ function flowSumByAccount(flows: AccountMonthFlow[] | null | undefined): Map<str
 type BalanceAccount = { id: string; balance: number; type?: string | null; on_budget?: boolean | null };
 
 /**
- * On-budget credit cards. Opening debt often lives only in `accounts.balance`
- * (no "Saldo początkowe" row). When that balance disagrees with the sum of
- * rows posted on the card, add those rows — replacing the balance drops the
- * opening and ignores a later payment that never posted on the card.
- * If the signed balance already equals the card rows, leave it (the column
- * already absorbed them). Pass `flows` when the transaction list might be only
- * the card subset: skip the adjustment unless those flows tell the same story.
- * Cash and tracking accounts are left alone.
+ * On-budget credit cards. Debt is the sum of rows posted on the card.
+ * A stale `accounts.balance` (an old opening the correction already replaced)
+ * is not added on top. If the signed balance already equals those rows, leave
+ * it. Pass `flows` when the transaction list might be only the card subset:
+ * skip the adjustment unless those flows tell the same story.
+ * Cash and tracking accounts are left alone. A card with no rows keeps its column.
  */
 export function reconcileOnBudgetCreditBalances<T extends BalanceAccount>(
   accounts: T[],
@@ -676,15 +674,15 @@ export function reconcileOnBudgetCreditBalances<T extends BalanceAccount>(
     const signed = signedAccountBalance({ type: account.type, balance: Number(account.balance) });
     if (Math.abs(row.sum - signed) <= BALANCE_EPS) return account;
     changed = true;
-    return { ...account, balance: money(signed + row.sum) };
+    return { ...account, balance: row.sum };
   });
   return changed ? next : accounts;
 }
 
 /**
- * Month-end balances for the budget. Credit cards share one figure: stored
- * opening plus card rows (when they disagree), rewind of later months, then
- * one-sided transfers that never posted on the card.
+ * Month-end balances for the budget. Credit cards share one figure: the card
+ * ledger (when it disagrees with the stored balance), rewind of later months,
+ * then one-sided transfers that never posted on the card.
  */
 export function accountsForBudgetMonth<T extends BalanceAccount>(
   accounts: T[],
