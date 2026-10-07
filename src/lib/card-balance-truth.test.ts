@@ -29,19 +29,20 @@ const family = "fam-1";
 const OPENING = 9813.51;
 const ADJUSTMENT = 12512.98;
 const TRANSFER_OUT = 4000;
-/** Assigned on the payment row. The same number is also a real one-leg payment. */
-const ASSIGNED = 6699.47;
+/** What the owner assigned. The transfer itself is 6 699,47. */
+const ASSIGNED = 6699;
 const PAYMENT = 6699.47;
 const CASH_ADJUSTMENT = 446.61;
 const PAYCHECK = 10000;
 /** Korekta 12 512,98 + card → Revolut 4 000 − payment 6 699,47. Stale column is not added. */
 const OCTOBER_DEBT = 9813.51;
 const CHECKING_NOW = 3747.14;
-/** Checking cash after the payment. The payment must not be subtracted again in Do rozdzielenia. */
-const READY = 3747.14;
-const OCTOBER_ACTIVITY = 2699.47; // payment +6 699,47 − card → Revolut 4 000
-const OCTOBER_AVAILABLE = 9398.94;
-const OCTOBER_SHORTFALL = 414.57;
+/** Income minus the assignment. The payment uses the envelope, so it does not move Do rozdzielenia again. */
+const READY = 3747.61;
+/** Both outflows: payment −6 699,47 and card → Revolut −4 000. */
+const OCTOBER_ACTIVITY = -10699.47;
+const OCTOBER_AVAILABLE = -4000.47;
+const OCTOBER_SHORTFALL = 9813.51;
 
 function account(id: string, name: string, balance: number, type: Account["type"] = "checking"): Account {
   return {
@@ -208,7 +209,7 @@ function expectAgreed(data: BudgetMonthData, accounts: Account[], txs: LedgerTra
 }
 
 describe("October 2026 card balance", () => {
-  it("flips a one-leg payment stored on the source and keeps the card-out negative", () => {
+  it("records the payment and the card-out as outflows from the envelope", () => {
     const world = octoberLedger();
     const september = buildBudgetMonthData(2026, 9, world.categories, world.allocations, world.accounts, world.txs);
     expectAgreed(september, world.accounts, world.txs, 2026, 9, {
@@ -236,7 +237,7 @@ describe("October 2026 card balance", () => {
     expect(october.uncategorizedCount).toBe(0);
     expect(creditCardRowStatus(october.creditCards![0])).toContain(formatCurrency(OCTOBER_DEBT));
     expect(creditCardRowStatus(october.creditCards![0])).toContain(`Brakuje ${formatCurrency(OCTOBER_SHORTFALL)}`);
-    expect(creditCardRowStatus(october.creditCards![0])).toContain(`odłożone ${formatCurrency(OCTOBER_AVAILABLE)}`);
+    expect(creditCardRowStatus(october.creditCards![0])).toContain(`odłożone ${formatCurrency(0)}`);
     const paymentOnSource = world.txs.find((item) => item.transfer_id === "pay-card")!;
     expect(paymentOnSource.account_id).toBe("checking");
     expect(paymentOnSource.amount).toBe(-PAYMENT);
@@ -247,7 +248,7 @@ describe("October 2026 card balance", () => {
     expect(outboundOnCard.amount).toBe(-TRANSFER_OUT);
     expect(outboundOnCard.transfer_account_id).toBe("revolut");
     expect(world.txs.filter((item) => item.transfer_id === "to-revolut")).toHaveLength(1);
-    expect(paymentRow(october).activity).toBe(money(PAYMENT - TRANSFER_OUT));
+    expect(paymentRow(october).activity).toBe(money(-(PAYMENT + TRANSFER_OUT)));
     expect(creditCardOutboundEvents(world.txs, world.accounts)).toEqual([
       { cardId: "cc", amount: TRANSFER_OUT, year: 2026, month: 10 },
     ]);
@@ -286,12 +287,12 @@ describe("October 2026 card balance", () => {
     );
     expect(noTransfer.readyToAssign).toBe(october.readyToAssign);
     expect(noTransfer.creditCards?.[0]?.debt).toBe(5813.51);
-    expect(paymentRow(noTransfer).activity).toBe(PAYMENT);
-    expect(paymentRow(noTransfer).available).toBe(13398.94);
+    expect(paymentRow(noTransfer).activity).toBe(-PAYMENT);
+    expect(paymentRow(noTransfer).available).toBe(money(ASSIGNED - PAYMENT));
 
     const withoutCash = octoberLedger({ includeCashAdjustment: false });
     const noCash = buildBudgetMonthData(2026, 10, withoutCash.categories, withoutCash.allocations, withoutCash.accounts, withoutCash.txs);
-    expect(noCash.readyToAssign).toBe(3300.53);
+    expect(noCash.readyToAssign).toBe(3301);
     expect(noCash.creditCards?.[0]?.debt).toBe(OCTOBER_DEBT);
 
     const truth = accountsWithCreditTruth(world.accounts, world.txs);
@@ -361,15 +362,14 @@ describe("October 2026 card balance", () => {
     }
   });
 
-  it("budget page assembly flips a one-leg source payment even when stored activity is both negatives", () => {
+  it("budget page assembly spends the envelope for both the payment and the card-out", () => {
     const world = octoberLedger();
     const flows = ledgerHistoryBuckets(world.txs, world.accounts);
     const creditIds = new Set(world.accounts.filter((item) => item.type === "credit").map((item) => item.id));
     const creditLines = world.txs.filter(
       (item) => creditIds.has(item.account_id) || creditIds.has(item.transfer_account_id ?? "")
     );
-    const stored = money(-(PAYMENT + TRANSFER_OUT));
-    const activityMap = new Map<string, Map<string, number>>([["pay", new Map([["2026-10", stored]])]]);
+    const activityMap = new Map<string, Map<string, number>>([["pay", new Map([["2026-10", 2699.47]])]]);
     const core: FamilyBudgetCore = {
       categories: world.categories,
       allocations: world.allocations,
@@ -393,7 +393,6 @@ describe("October 2026 card balance", () => {
       creditSeparateCashOutflows: true,
     };
     const october = budgetMonthFromCore(core, 2026, 10);
-    expect(stored).toBe(-10699.47);
     expectAgreed(october, world.accounts, world.txs, 2026, 10, {
       debt: OCTOBER_DEBT,
       activity: OCTOBER_ACTIVITY,
@@ -438,8 +437,8 @@ describe("October 2026 card balance", () => {
     const october = buildBudgetMonthData(2026, 10, world.categories, world.allocations, world.accounts, world.txs);
     expectAgreed(october, world.accounts, world.txs, 2026, 10, {
       debt: money(OPENING + ADJUSTMENT + TRANSFER_OUT - payment - PAYMENT),
-      activity: money(OCTOBER_ACTIVITY + payment),
-      available: money(ASSIGNED + OCTOBER_ACTIVITY + payment),
+      activity: money(OCTOBER_ACTIVITY - payment),
+      available: money(ASSIGNED + OCTOBER_ACTIVITY - payment),
       assigned: ASSIGNED,
     });
   });
@@ -490,9 +489,9 @@ describe("October 2026 card balance", () => {
     const mcStatus = october.creditCards?.find((card) => card.accountId === "mc");
     const visaRow = october.groups.flatMap((group) => group.categories).find((row) => row.category.id === visaStatus?.categoryId);
     const mcRow = october.groups.flatMap((group) => group.categories).find((row) => row.category.id === mcStatus?.categoryId);
-    expect(visaStatus).toMatchObject({ debt: 0, reserved: 60, unfunded: 0, overspent: 0 });
-    expect(visaRow?.activity).toBe(60);
-    expect(visaRow?.available).toBe(60);
+    expect(visaStatus).toMatchObject({ debt: 0, reserved: 0, unfunded: 0, overspent: 0 });
+    expect(visaRow?.activity).toBe(0);
+    expect(visaRow?.available).toBe(0);
     expect(mcStatus).toMatchObject({ debt: 25, reserved: 0, unfunded: 25, overspent: 0 });
     expect(mcRow?.activity).toBe(-10);
     expect(mcRow?.available).toBe(-10);

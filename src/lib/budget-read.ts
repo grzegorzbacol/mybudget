@@ -509,8 +509,8 @@ export function budgetMonthFromCore(
         core.trackingIncludesCardPayments === true,
         plan.externalCardPaymentOutflows
       );
-      // The budget page shows this replay, not whatever the loader stored.
-      // A one-leg payment is negative on the source account; the plan flips it.
+      // The budget page shows this replay. A payment and a transfer off the
+      // card are both outflows from the envelope.
       const displayed = new Map(core.activityMap);
       for (const category of plan.categories) {
         if (!isCreditPaymentCategory(category)) continue;
