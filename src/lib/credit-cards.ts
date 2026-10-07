@@ -786,8 +786,8 @@ export interface CreditCardPlan {
   borrowedCash: number;
   /**
    * Slice of cardPaymentOutflows whose source is outside the cash pool (negative).
-   * Positive payment activity grows the envelope. On-budget payments are offset
-   * twice because the cash balance already fell; external payments once.
+   * Payment activity is negative. These rows are not in the cash balance, so
+   * Ready to Assign must not rise when the envelope goes down.
    */
   externalCardPaymentOutflows: number;
 }
@@ -978,16 +978,16 @@ export function planCreditCardLedger(input: {
   }
 
   for (const event of creditCardPaymentEvents(transactions, accounts)) {
-    // One-leg rows are negative on the source account. The card is the destination,
-    // so the sign flips: a payment reduces debt and is positive activity.
-    addPayment(event.cardId, event.year, event.month, event.amount);
+    // Paying the card spends money set aside in the envelope. The source row is
+    // already negative; activity is negative too.
+    addPayment(event.cardId, event.year, event.month, -event.amount);
   }
   for (const move of creditToCreditTransferEvents(transactions, accounts)) {
     addPayment(move.fromId, move.year, move.month, move.amount);
     addPayment(move.toId, move.year, move.month, -move.amount);
   }
-  // Card → account increases debt and is negative activity. A payment onto the
-  // card is the opposite sign: positive activity, debt down.
+  // Card → another account is new debt the envelope must cover: negative activity.
+  // A payment onto the card is also an outflow (it uses up assigned money).
   let borrowedCash = 0;
   for (const event of creditCardOutboundEvents(transactions, accounts)) {
     addPayment(event.cardId, event.year, event.month, -event.amount);
@@ -1068,18 +1068,14 @@ export function trackingAfterCreditCards(
   trackingIncludesCardPayments: boolean,
   externalCardPaymentOutflows = 0
 ): number {
-  // Payment activity is positive, so the envelope grows by the payment. Cash that
-  // already left an on-budget account would otherwise lower Do rozdzielenia a
-  // second time. Signed outflows are negative: add them (twice for on-budget).
+  // Payment activity is negative, so the envelope shrinks by the payment. That
+  // matches cash leaving an on-budget account, and Do rozdzielenia stays flat.
+  // An off-budget payment is not in the cash balance; count it here so the
+  // negative envelope does not create Ready to Assign.
   const raw = Number(rawTracking) || 0;
-  const outflows = Number(cardPaymentOutflows) || 0;
   const external = Number(externalCardPaymentOutflows) || 0;
-  if (trackingIncludesCardPayments) {
-    // SQL tracking already contains each on-budget payment once.
-    return money(raw + outflows);
-  }
-  const onBudget = money(outflows - external);
-  return money(raw + onBudget + onBudget + external);
+  if (!trackingIncludesCardPayments) return money(raw - external);
+  return money(raw - (Number(cardPaymentOutflows) || 0));
 }
 
 export function describeCreditCards(

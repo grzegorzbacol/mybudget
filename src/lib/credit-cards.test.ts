@@ -147,10 +147,10 @@ describe("credit card budget", () => {
     );
     expect(row(data, "groceries").activity).toBe(-50);
     expect(row(data, "groceries").available).toBe(150);
-    expect(paymentCategory(data).available).toBe(100);
+    expect(paymentCategory(data).available).toBe(0);
     expect(data.incomeThisMonth).toBe(1000);
     expect(data.readyToAssign).toBe(800);
-    expect(data.creditCards?.[0]).toMatchObject({ debt: 0, reserved: 100, unfunded: 0, overspent: 0 });
+    expect(data.creditCards?.[0]).toMatchObject({ debt: 0, reserved: 0, unfunded: 0, overspent: 0 });
     expect(checkBudgetMonthAccounts(data, [checking, card]).matches).toBe(true);
     expect(contributionToSpending(tx({ amount: -50, transfer_id: "pay", account_id: "checking" }), [checking, card])).toBe(0);
   });
@@ -192,8 +192,8 @@ describe("credit card budget", () => {
     expect(creditCardRowStatus(september.creditCards![0])).toContain("9813,51");
 
     const october = buildBudgetMonthData(2026, 10, [payment], [], [checking, card], legs);
-    expect(paymentCategory(october).activity).toBe(6699.47);
-    expect(october.creditCards?.[0]).toMatchObject({ debt: 3114.04, reserved: 6699.47 });
+    expect(paymentCategory(october).activity).toBe(-6699.47);
+    expect(october.creditCards?.[0]).toMatchObject({ debt: 3114.04, reserved: 0 });
     expect(checkBudgetMonthAccounts(october, [checking, card]).matches).toBe(true);
   });
 
@@ -546,8 +546,8 @@ describe("one-sided production card transfer", () => {
     expect(september.creditCards?.[0]).toMatchObject({ debt: 9813.51, reserved: 0 });
 
     const october = monthFromRoute(source, credit, legs, 2026, 10);
-    expect(paymentCategory(october).activity).toBe(6699.47);
-    expect(october.creditCards?.[0]).toMatchObject({ debt: 3114.04, reserved: 6699.47 });
+    expect(paymentCategory(october).activity).toBe(-6699.47);
+    expect(october.creditCards?.[0]).toMatchObject({ debt: 3114.04, reserved: 0 });
     expect(creditCardRowStatus(october.creditCards![0])).toContain("3114,04");
   });
 
@@ -566,7 +566,7 @@ describe("one-sided production card transfer", () => {
       }),
     ];
     const october = monthFromRoute(source, credit, legs, 2026, 10);
-    expect(paymentCategory(october).activity).toBe(6699.47);
+    expect(paymentCategory(october).activity).toBe(-6699.47);
     expect(october.creditCards?.[0]?.debt).toBe(3114.04);
   });
 
@@ -613,7 +613,7 @@ describe("one-sided production card transfer", () => {
       tx({ amount: 1000, date: "2026-10-01", account_id: "checking" }),
       ...legs,
     ]);
-    expect(paymentCategory(data).activity).toBe(6699.47);
+    expect(paymentCategory(data).activity).toBe(-6699.47);
     expect(data.creditCards?.[0]?.debt).toBe(3114.04);
     expect(data.readyToAssign).toBe(1000);
     expect(checkBudgetMonthAccounts(data, [checking, source, credit]).matches).toBe(true);
@@ -746,13 +746,13 @@ describe("several credit cards", () => {
 
     expect(row(data, "groceries").activity).toBe(-70);
     expect(row(data, "groceries").available).toBe(-20);
-    expect(paymentRow(data, "visa").activity).toBe(70);
-    expect(paymentRow(data, "visa").available).toBe(70);
+    expect(paymentRow(data, "visa").activity).toBe(30);
+    expect(paymentRow(data, "visa").available).toBe(30);
     expect(paymentRow(data, "mc").activity).toBe(0);
     expect(paymentRow(data, "mc").available).toBe(0);
     expect(cardStatus(data, "visa")).toMatchObject({
       debt: 30,
-      reserved: 70,
+      reserved: 30,
       unfunded: 0,
       overspent: 0,
       accountName: "Visa",
@@ -929,7 +929,7 @@ describe("several credit cards", () => {
         }),
       ]
     );
-    expect(paymentRow(data, "visa").available).toBe(80);
+    expect(paymentRow(data, "visa").available).toBe(0);
     expect(paymentRow(data, "mc").available).toBe(30);
     expect(cardStatus(data, "visa").debt).toBe(0);
     expect(cardStatus(data, "mc").debt).toBe(30);
