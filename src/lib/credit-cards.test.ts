@@ -149,7 +149,7 @@ describe("credit card budget", () => {
     expect(row(data, "groceries").available).toBe(150);
     expect(paymentCategory(data).available).toBe(100);
     expect(data.incomeThisMonth).toBe(1000);
-    expect(data.readyToAssign).toBe(700);
+    expect(data.readyToAssign).toBe(800);
     expect(data.creditCards?.[0]).toMatchObject({ debt: 0, reserved: 100, unfunded: 0, overspent: 0 });
     expect(checkBudgetMonthAccounts(data, [checking, card]).matches).toBe(true);
     expect(contributionToSpending(tx({ amount: -50, transfer_id: "pay", account_id: "checking" }), [checking, card])).toBe(0);
@@ -769,7 +769,7 @@ describe("several credit cards", () => {
     expect(creditCardFundingBanner(cardStatus(data, "mc"))).toContain("„Płatność: Mastercard”");
     expect(creditCardOverspendNote(cardStatus(data, "visa"))).toContain("„Płatność: Visa”");
     expect(data.incomeThisMonth).toBe(1000);
-    expect(data.readyToAssign).toBe(910);
+    expect(data.readyToAssign).toBe(950);
     expect(checkBudgetMonthAccounts(data, [checking, visa, mastercard]).matches).toBe(true);
   });
 
@@ -933,7 +933,7 @@ describe("several credit cards", () => {
     expect(paymentRow(data, "mc").available).toBe(30);
     expect(cardStatus(data, "visa").debt).toBe(0);
     expect(cardStatus(data, "mc").debt).toBe(30);
-    expect(data.readyToAssign).toBe(1080);
+    expect(data.readyToAssign).toBe(1160);
     expect(checkBudgetMonthAccounts(data, [checking, savings, visa, mastercard]).matches).toBe(true);
   });
 

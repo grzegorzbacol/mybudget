@@ -786,9 +786,8 @@ export interface CreditCardPlan {
   borrowedCash: number;
   /**
    * Slice of cardPaymentOutflows whose source is outside the cash pool (negative).
-   * Payment activity is the opposite sign, so Ready to Assign adds this negative
-   * amount back. Otherwise an off-budget payment inflates the envelope and
-   * Do rozdzielenia falls by the same amount twice.
+   * Positive payment activity grows the envelope. On-budget payments are offset
+   * twice because the cash balance already fell; external payments once.
    */
   externalCardPaymentOutflows: number;
 }
@@ -1069,14 +1068,18 @@ export function trackingAfterCreditCards(
   trackingIncludesCardPayments: boolean,
   externalCardPaymentOutflows = 0
 ): number {
-  if (!trackingIncludesCardPayments) return money(rawTracking || 0);
-  // SQL tracking already includes on-budget payments (negative on the cash account).
-  // Add those back. External payments are absent from that sum; keep them as the
-  // same negative so positive payment activity does not lower Do rozdzielenia.
+  // Payment activity is positive, so the envelope grows by the payment. Cash that
+  // already left an on-budget account would otherwise lower Do rozdzielenia a
+  // second time. Signed outflows are negative: add them (twice for on-budget).
+  const raw = Number(rawTracking) || 0;
   const outflows = Number(cardPaymentOutflows) || 0;
   const external = Number(externalCardPaymentOutflows) || 0;
-  const onBudgetPayments = money(outflows - external);
-  return money((Number(rawTracking) || 0) - onBudgetPayments + external);
+  if (trackingIncludesCardPayments) {
+    // SQL tracking already contains each on-budget payment once.
+    return money(raw + outflows);
+  }
+  const onBudget = money(outflows - external);
+  return money(raw + onBudget + onBudget + external);
 }
 
 export function describeCreditCards(

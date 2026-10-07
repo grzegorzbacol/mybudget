@@ -1059,9 +1059,10 @@ export function buildBudgetMonthData(
       plan.borrowedCash
     ),
     trackingInflows: trackingAfterCreditCards(
-      money(transferInflowsFromTracking(through, accountList) + plan.externalCardPaymentOutflows),
+      transferInflowsFromTracking(through, accountList),
       plan.cardPaymentOutflows,
-      false
+      false,
+      plan.externalCardPaymentOutflows
     ),
   });
   return {

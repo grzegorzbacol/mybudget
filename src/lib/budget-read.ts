@@ -9,6 +9,7 @@ import {
   assembleBudgetMonthData,
   categoryIdKeptOnInflow,
   expandCategorySplits,
+  isCreditPaymentCategory,
   isExpenseCategory,
   isLiabilityAccountType,
   isTransferTx,
@@ -23,6 +24,7 @@ import {
   describeCreditCards,
   isOnBudgetCreditAccount,
   liabilityAfterCreditCards,
+  mergeActivityMaps,
   nonCreditOutflows,
   planCreditCardLedger,
   trackingAfterCreditCards,
@@ -467,6 +469,7 @@ export function budgetMonthFromCore(
   const upcoming = upcomingByCategory(core.scheduled, start, addDays(end, -1));
   const planned = plannedMonthTotals(core.scheduled, year, month, accounts);
 
+  let activityMap = core.activityMap;
   let liabilityDelta = core.liabilityDelta;
   let trackingInflows = core.trackingInflows;
   let uncovered = core.uncoveredByAccount ?? {};
@@ -506,6 +509,15 @@ export function budgetMonthFromCore(
         core.trackingIncludesCardPayments === true,
         plan.externalCardPaymentOutflows
       );
+      // The budget page shows this replay, not whatever the loader stored.
+      // A one-leg payment is negative on the source account; the plan flips it.
+      const displayed = new Map(core.activityMap);
+      for (const category of plan.categories) {
+        if (!isCreditPaymentCategory(category)) continue;
+        displayed.delete(normalizeBudgetId(category.id));
+      }
+      mergeActivityMaps(displayed, plan.paymentActivity);
+      activityMap = displayed;
       uncovered = plan.uncoveredByAccount;
     } else {
       liabilityDelta = rawLiability;
@@ -519,7 +531,7 @@ export function budgetMonthFromCore(
     categories: core.categories,
     allocations: core.allocations,
     accounts,
-    activityMap: core.activityMap,
+    activityMap,
     incomeThisMonth: monthAmount(core.income, year, month),
     uncategorizedCount: core.transferMarkersMissing ? 0 : monthCount(core.uncategorized, year, month),
     upcomingByCategory: upcoming,

@@ -363,7 +363,7 @@ describe("YNAB envelope math", () => {
       ]
     );
     expect(paid.incomeThisMonth).toBe(1000);
-    expect(paid.readyToAssign).toBe(800);
+    expect(paid.readyToAssign).toBe(1000);
     expect(paid.onBudgetBalance).toBe(500);
     expect(checkBudgetMonthAccounts(paid, [checking, cc]).matches).toBe(true);
 

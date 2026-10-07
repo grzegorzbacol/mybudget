@@ -37,7 +37,8 @@ const PAYCHECK = 10000;
 /** Korekta 12 512,98 + card → Revolut 4 000 − payment 6 699,47. Stale column is not added. */
 const OCTOBER_DEBT = 9813.51;
 const CHECKING_NOW = 3747.14;
-const READY = -9651.8;
+/** Checking cash after the payment. The payment must not be subtracted again in Do rozdzielenia. */
+const READY = 3747.14;
 const OCTOBER_ACTIVITY = 2699.47; // payment +6 699,47 − card → Revolut 4 000
 const OCTOBER_AVAILABLE = 9398.94;
 const OCTOBER_SHORTFALL = 414.57;
@@ -290,7 +291,7 @@ describe("October 2026 card balance", () => {
 
     const withoutCash = octoberLedger({ includeCashAdjustment: false });
     const noCash = buildBudgetMonthData(2026, 10, withoutCash.categories, withoutCash.allocations, withoutCash.accounts, withoutCash.txs);
-    expect(noCash.readyToAssign).toBe(-10098.41);
+    expect(noCash.readyToAssign).toBe(3300.53);
     expect(noCash.creditCards?.[0]?.debt).toBe(OCTOBER_DEBT);
 
     const truth = accountsWithCreditTruth(world.accounts, world.txs);
@@ -358,6 +359,50 @@ describe("October 2026 card balance", () => {
       expect(september.creditCards?.[0]?.debt).toBe(0);
       expect(paymentRow(september).activity).toBe(0);
     }
+  });
+
+  it("budget page assembly flips a one-leg source payment even when stored activity is both negatives", () => {
+    const world = octoberLedger();
+    const flows = ledgerHistoryBuckets(world.txs, world.accounts);
+    const creditIds = new Set(world.accounts.filter((item) => item.type === "credit").map((item) => item.id));
+    const creditLines = world.txs.filter(
+      (item) => creditIds.has(item.account_id) || creditIds.has(item.transfer_account_id ?? "")
+    );
+    const stored = money(-(PAYMENT + TRANSFER_OUT));
+    const activityMap = new Map<string, Map<string, number>>([["pay", new Map([["2026-10", stored]])]]);
+    const core: FamilyBudgetCore = {
+      categories: world.categories,
+      allocations: world.allocations,
+      accounts: world.accounts,
+      scheduled: [],
+      activityMap,
+      income: [
+        { year: 2026, month: 9, amount: PAYCHECK },
+        { year: 2026, month: 10, amount: CASH_ADJUSTMENT },
+      ],
+      spending: [],
+      uncategorized: [],
+      source: "sql",
+      liabilityDelta: onBudgetLiabilityLedgerDelta(world.txs, world.accounts),
+      trackingInflows: -PAYMENT,
+      accountFlows: flows.accountFlows,
+      liabilityByMonth: flows.liabilityByMonth,
+      trackingByMonth: [{ year: 2026, month: 10, amount: -PAYMENT }],
+      trackingIncludesCardPayments: true,
+      creditLines,
+      creditSeparateCashOutflows: true,
+    };
+    const october = budgetMonthFromCore(core, 2026, 10);
+    expect(stored).toBe(-10699.47);
+    expectAgreed(october, world.accounts, world.txs, 2026, 10, {
+      debt: OCTOBER_DEBT,
+      activity: OCTOBER_ACTIVITY,
+      available: OCTOBER_AVAILABLE,
+      assigned: ASSIGNED,
+    });
+    expect(october.readyToAssign).toBe(READY);
+    expect(creditLines.some((item) => item.account_id === "checking" && item.amount === -PAYMENT)).toBe(true);
+    expect(creditLines.some((item) => item.account_id === "cc" && item.amount === -TRANSFER_OUT)).toBe(true);
   });
 
   it("does not double-count a payment that also posted on the card", () => {
@@ -452,7 +497,7 @@ describe("October 2026 card balance", () => {
     expect(mcRow?.activity).toBe(-10);
     expect(mcRow?.available).toBe(-10);
     expect(october.groups.flatMap((group) => group.categories).find((row) => row.category.id === "groceries")?.available).toBe(10);
-    expect(october.readyToAssign).toBe(900);
+    expect(october.readyToAssign).toBe(960);
     expect(checkBudgetMonthAccounts(october, accountsForBudgetMonth(accounts, accountFlowsFromTransactions(txs), txs, 2026, 10)).matches).toBe(true);
     expect(contributionToSpending(txs.find((item) => item.payee === "Korekta salda")!, accounts)).toBe(0);
   });
