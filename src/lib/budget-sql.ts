@@ -285,7 +285,7 @@ SELECT json_build_object(
     SELECT json_agg(x) FROM (
       SELECT category_id, year, month, SUM(amount)::float8 AS activity
       FROM ledger
-      WHERE category_id IS NOT NULL AND amount < 0
+      WHERE category_id IS NOT NULL AND amount < 0 AND NOT is_adjustment
       GROUP BY 1, 2, 3
     ) x
   ), '[]'::json),

@@ -647,10 +647,13 @@ function flowSumByAccount(flows: AccountMonthFlow[] | null | undefined): Map<str
 type BalanceAccount = { id: string; balance: number; type?: string | null; on_budget?: boolean | null };
 
 /**
- * On-budget credit cards: when the ledger and `accounts.balance` disagree, the
- * ledger wins. A balance with no card rows is kept (opening debt, one-sided
- * payments). Pass `flows` when the transaction list might be only the card
- * subset — we replace the balance only if those flows tell the same story.
+ * On-budget credit cards. Opening debt often lives only in `accounts.balance`
+ * (no "Saldo początkowe" row). When that balance disagrees with the sum of
+ * rows posted on the card, add those rows — replacing the balance drops the
+ * opening and ignores a later payment that never posted on the card.
+ * If the signed balance already equals the card rows, leave it (the column
+ * already absorbed them). Pass `flows` when the transaction list might be only
+ * the card subset: skip the adjustment unless those flows tell the same story.
  * Cash and tracking accounts are left alone.
  */
 export function reconcileOnBudgetCreditBalances<T extends BalanceAccount>(
@@ -663,22 +666,24 @@ export function reconcileOnBudgetCreditBalances<T extends BalanceAccount>(
   let changed = false;
   const next = accounts.map((account) => {
     if (account.type !== "credit" || account.on_budget === false) return account;
-    const row = sums.get(normalizeBudgetId(account.id));
+    const id = normalizeBudgetId(account.id);
+    const row = sums.get(id);
     if (!row?.count) return account;
     if (flowSums) {
-      const flow = flowSums.get(normalizeBudgetId(account.id)) ?? 0;
+      const flow = flowSums.get(id) ?? 0;
       if (Math.abs(flow - row.sum) > BALANCE_EPS) return account;
     }
-    if (Math.abs(row.sum - Number(account.balance)) <= BALANCE_EPS) return account;
+    const signed = signedAccountBalance({ type: account.type, balance: Number(account.balance) });
+    if (Math.abs(row.sum - signed) <= BALANCE_EPS) return account;
     changed = true;
-    return { ...account, balance: row.sum };
+    return { ...account, balance: money(signed + row.sum) };
   });
   return changed ? next : accounts;
 }
 
 /**
- * Month-end balances for the budget. Credit cards share one figure: ledger
- * (when it disagrees with the stored balance), rewind of later months, then
+ * Month-end balances for the budget. Credit cards share one figure: stored
+ * opening plus card rows (when they disagree), rewind of later months, then
  * one-sided transfers that never posted on the card.
  */
 export function accountsForBudgetMonth<T extends BalanceAccount>(
@@ -777,6 +782,11 @@ export interface CreditCardPlan {
   /** Signed transfers onto a card (negative), including off-budget sources. */
   cardPaymentOutflows: number;
   /**
+   * Cash moved off the card (positive). Activity records it as a negative hole
+   * on Płatność; subtract it here so that hole does not become Do rozdzielenia.
+   */
+  borrowedCash: number;
+  /**
    * Slice of cardPaymentOutflows whose source is outside the cash pool (negative).
    * Those rows are not in the cash balance, so Ready to Assign must not rise by them.
    */
@@ -806,6 +816,7 @@ export function planCreditCardLedger(input: {
     creditActivity: creditLiabilityActivity(transactions, accounts),
     cardPaymentOutflows: 0,
     externalCardPaymentOutflows: 0,
+    borrowedCash: 0,
   };
   const cards = accounts.filter(isOnBudgetCreditAccount);
   if (!cards.length) return empty;
@@ -909,7 +920,7 @@ export function planCreditCardLedger(input: {
         for (const tx of txs) {
           const ym = parseYearMonthFromDate(tx.date);
           if (!ym || ym.year !== year || ym.month !== month) continue;
-          if (isTransferTx(tx) || isOpeningBalanceTx(tx)) continue;
+          if (isTransferTx(tx) || isOpeningBalanceTx(tx) || isBalanceAdjustmentTx(tx)) continue;
           const account = byId.get(normalizeBudgetId(tx.account_id));
           if (!account || !isOnBudget(account)) continue;
           const amount = Number(tx.amount);
@@ -974,7 +985,14 @@ export function planCreditCardLedger(input: {
     addPayment(move.fromId, move.year, move.month, move.amount);
     addPayment(move.toId, move.year, move.month, -move.amount);
   }
-  // Card → account is borrowed cash. It increases debt and does not fund Płatność.
+  // Card → account increases debt. YNAB records it as negative activity on the
+  // payment category (a hole to fund), never as money set aside. A payment onto
+  // the card is also negative: it spends the envelope.
+  let borrowedCash = 0;
+  for (const event of creditCardOutboundEvents(transactions, accounts)) {
+    addPayment(event.cardId, event.year, event.month, -event.amount);
+    borrowedCash = money(borrowedCash + event.amount);
+  }
 
   const pairs = transferPairs(transactions);
   let cardPaymentOutflows = 0;
@@ -1008,6 +1026,7 @@ export function planCreditCardLedger(input: {
     creditActivity: empty.creditActivity,
     cardPaymentOutflows,
     externalCardPaymentOutflows,
+    borrowedCash,
   };
 }
 
@@ -1028,9 +1047,19 @@ export function mergeActivityMaps(
   }
 }
 
-/** Replace raw credit-card activity inside Ready to Assign with uncovered debt only. */
-export function liabilityAfterCreditCards(rawLiability: number, creditActivity: number, uncovered: number): number {
-  return money((Number(rawLiability) || 0) - (Number(creditActivity) || 0) - (Number(uncovered) || 0));
+/**
+ * Replace raw credit-card activity inside Ready to Assign with uncovered debt only.
+ * `borrowedCash` is card → account activity already taken out of the payment envelope.
+ */
+export function liabilityAfterCreditCards(
+  rawLiability: number,
+  creditActivity: number,
+  uncovered: number,
+  borrowedCash = 0
+): number {
+  return money(
+    (Number(rawLiability) || 0) - (Number(creditActivity) || 0) - (Number(uncovered) || 0) - (Number(borrowedCash) || 0)
+  );
 }
 
 export function trackingAfterCreditCards(
@@ -1110,7 +1139,7 @@ export function nonCreditOutflows(
 ): Map<string, Map<MonthKey, number>> {
   const map = cloneActivityMap(activityMap);
   for (const tx of creditTransactions) {
-    if (isTransferTx(tx) || isOpeningBalanceTx(tx)) continue;
+    if (isTransferTx(tx) || isOpeningBalanceTx(tx) || isBalanceAdjustmentTx(tx)) continue;
     const amount = Number(tx.amount);
     if (!Number.isFinite(amount) || amount === 0) continue;
     if (amount > 0 && !options?.includeInflows) continue;
@@ -1196,7 +1225,12 @@ export function applyCreditCardBudget(input: {
   return {
     categories: plan.categories,
     activityMap,
-    liabilityDelta: liabilityAfterCreditCards(input.liabilityDelta ?? 0, plan.creditActivity, plan.uncovered),
+    liabilityDelta: liabilityAfterCreditCards(
+      input.liabilityDelta ?? 0,
+      plan.creditActivity,
+      plan.uncovered,
+      plan.borrowedCash
+    ),
     trackingInflows: trackingAfterCreditCards(
       input.trackingInflows ?? 0,
       plan.cardPaymentOutflows,

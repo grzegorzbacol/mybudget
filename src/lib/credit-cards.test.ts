@@ -422,8 +422,8 @@ describe("credit card budget", () => {
       ]
     );
     expect(data.incomeThisMonth).toBe(1000);
-    expect(paymentCategory(data).activity).toBe(0);
-    expect(paymentCategory(data).available).toBe(0);
+    expect(paymentCategory(data).activity).toBe(-100);
+    expect(paymentCategory(data).available).toBe(-100);
     expect(data.readyToAssign).toBe(1000);
     expect(data.creditCards?.[0]).toMatchObject({ debt: 600, reserved: 0, unfunded: 600 });
     expect(checkBudgetMonthAccounts(data, [checking, card]).matches).toBe(true);
@@ -575,8 +575,8 @@ describe("one-sided production card transfer", () => {
     const credit = card(-9813.51);
     const legs = [productionRow(6699.47, "Transfer ← BONEA VAT")];
     const october = monthFromRoute(source, credit, legs, 2026, 10);
-    expect(paymentCategory(october).activity).toBe(0);
-    expect(paymentCategory(october).available).toBe(0);
+    expect(paymentCategory(october).activity).toBe(-6699.47);
+    expect(paymentCategory(october).available).toBe(-6699.47);
     expect(october.creditCards?.[0]?.debt).toBe(16512.98);
     const both = monthFromRoute(
       source,
@@ -595,8 +595,8 @@ describe("one-sided production card transfer", () => {
       2026,
       10
     );
-    expect(paymentCategory(both).activity).toBe(0);
-    expect(paymentCategory(both).available).toBe(0);
+    expect(paymentCategory(both).activity).toBe(-6699.47);
+    expect(paymentCategory(both).available).toBe(-6699.47);
     expect(both.creditCards?.[0]?.debt).toBe(16512.98);
   });
 

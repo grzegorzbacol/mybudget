@@ -304,7 +304,7 @@ export function activityByCategoryMonth(
   const map = new Map<string, Map<MonthKey, number>>();
   for (const tx of transactions) {
     const categoryId = normalizeBudgetId(tx.category_id);
-    if (!categoryId || isTransferTx(tx) || paymentIds.has(categoryId)) continue;
+    if (!categoryId || isTransferTx(tx) || isBalanceAdjustmentTx(tx) || paymentIds.has(categoryId)) continue;
     const amount = Number(tx.amount);
     if (!Number.isFinite(amount) || amount === 0) continue;
     if (amount > 0 && !isExpenseCategoryRefund(tx, accounts, categories)) continue;
@@ -1055,7 +1055,8 @@ export function buildBudgetMonthData(
     liabilityDelta: liabilityAfterCreditCards(
       onBudgetLiabilityLedgerDelta(through, accountList),
       plan.creditActivity,
-      plan.uncovered
+      plan.uncovered,
+      plan.borrowedCash
     ),
     trackingInflows: trackingAfterCreditCards(
       money(transferInflowsFromTracking(through, accountList) - plan.externalCardPaymentOutflows),
